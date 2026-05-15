@@ -1,0 +1,125 @@
+/* ═══════════════════════════════════════════
+   HEADER (kept dark for contrast/anchor)
+   ═══════════════════════════════════════════ */
+
+.header {
+    background: var(--bg-header);
+    padding: 14px 28px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: relative;
+    z-index: 10;
+}
+
+.header::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--teal), var(--gold), var(--teal));
+    background-size: 200% 100%;
+    animation: shimmer 4s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+    0%, 100% { background-position: 200% 0; }
+    50% { background-position: -200% 0; }
+}
+
+.header h1 {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    color: #FFFFFF;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.header h1 .logo-icon {
+    width: 28px;
+    height: 28px;
+    background: linear-gradient(135deg, var(--teal), #10B981);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: #FFFFFF;
+}
+
+.header h1 .title-accent {
+    color: #FBBF24;
+}
+
+/* ═══════════════════════════════════════════
+   STATUS BADGE
+   ═══════════════════════════════════════════ */
+
+.status-badge {
+    padding: 5px 14px;
+    border-radius: 20px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.status-idle {
+    background: rgba(255,255,255,0.1);
+    color: #9CA3AF;
+    border: 1px solid rgba(255,255,255,0.15);
+}
+
+.status-aegis {
+    background: rgba(124, 58, 237, 0.2);
+    color: #C4B5FD;
+    border: 1px solid rgba(124, 58, 237, 0.3);
+}
+
+.status-spear {
+    background: rgba(16, 163, 74, 0.2);
+    color: #86EFAC;
+    border: 1px solid rgba(16, 163, 74, 0.3);
+}
+
+/* ═══════════════════════════════════════════
+   CONFIG SELECTOR
+   ═══════════════════════════════════════════ */
+
+.config-selector {
+    display: flex;
+    gap: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 3px;
+}
+
+.config-btn {
+    padding: 6px 16px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.5);
+    cursor: pointer;
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.25s ease;
+}
+
+.config-btn:hover {
+    color: #FFFFFF;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.config-btn.active {
+    background: var(--teal);
+    color: #FFFFFF;
+    font-weight: 600;
+}

@@ -1,0 +1,37 @@
+/* ═══════════════════════════════════════════
+   RESPONSIVE
+   ═══════════════════════════════════════════ */
+
+@media (max-width: 1200px) {
+    .container {
+        grid-template-columns: repeat(2, 1fr);
+        padding: 16px;
+    }
+    .full-width, .status-bar {
+        grid-column: span 2;
+    }
+}
+
+@media (max-width: 768px) {
+    .container {
+        grid-template-columns: 1fr;
+        padding: 12px;
+    }
+    .trades-section, .full-width, .half-width, .status-bar {
+        grid-column: span 1;
+    }
+    .header {
+        padding: 12px 16px;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+    .portfolio-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .portfolio-item::after {
+        display: none;
+    }
+    .perf-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}

@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BTC 神盾-长矛 监控系统</title>
+    <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.min.js"></script>
+    <link rel="stylesheet" href="/static/css/base.css?v=20260514c">
+    <link rel="stylesheet" href="/static/css/header.css?v=20260514c">
+    <link rel="stylesheet" href="/static/css/layout.css?v=20260514c">
+    <link rel="stylesheet" href="/static/css/ai_analysis.css?v=20260514d">
+    <link rel="stylesheet" href="/static/css/indicators.css?v=20260514h">
+    <link rel="stylesheet" href="/static/css/trades.css?v=20260514c">
+    <link rel="stylesheet" href="/static/css/responsive.css?v=20260514c">
+</head>
+<body>
+    <header class="header">
+        <h1>
+            <span class="logo-icon">&#9878;</span>
+            BTC <span class="title-accent">神盾-长矛</span> 监控系统
+        </h1>
+        <div style="display: flex; align-items: center; gap: 16px;">
+            <div class="config-selector">
+                <button class="config-btn" data-preset="conservative">保守</button>
+                <button class="config-btn" data-preset="standard">标准</button>
+                <button class="config-btn active" data-preset="aggressive">激进</button>
+            </div>
+            <span id="mode-badge" class="status-badge status-idle">IDLE</span>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- 状态栏 -->
+        <div class="status-bar">
+            <div class="status-item">
+                <div class="pulse"></div>
+                <span>系统运行中</span>
+            </div>
+            <div class="status-item">
+                <span>运行时间: <strong id="uptime">0.0h</strong></span>
+            </div>
+            <div class="status-item">
+                <span>总交易: <strong id="total-trades">0</strong></span>
+            </div>
+            <div class="status-item">
+                <span>总盈亏: <strong id="total-pnl" class="green">$0.00</strong></span>
+            </div>
+            <div class="status-item">
+                <span>最后更新: <strong id="last-update">--</strong></span>
+            </div>
+        </div>
+
+        <!-- AI 综合研判 -->
+        <div class="card ai-analysis-card" style="grid-column: span 2;">
+            <div class="card-header">
+                <span class="card-title">AI 综合研判 <span class="ai-horizon" id="ai-horizon">4H~24H</span></span>
+                <div class="ai-header-actions">
+                    <button id="ai-refresh-btn" class="ai-refresh-btn" type="button" title="立即重新分析">
+                        <span class="ai-refresh-icon">&#x21bb;</span>
+                        <span class="ai-refresh-label">立即分析</span>
+                    </button>
+                    <span class="card-icon icon-ai">&#129302;</span>
+                </div>
+            </div>
+            <div class="ai-panel">
+                <div class="ai-headline">
+                    <div class="ai-bias-block">
+                        <span class="ai-bias neutral" id="ai-bias">--</span>
+                        <span class="ai-confidence" id="ai-confidence">--</span>
+                    </div>
+                    <div class="ai-action-block">
+                        <span class="ai-action-label">建议动作</span>
+                        <span class="ai-action neutral" id="ai-action">等待分析</span>
+                    </div>
+                </div>
+                <div class="ai-summary" id="ai-summary">等待首次 AI 综合研判...</div>
+                <div class="ai-factors" id="ai-factors">
+                    <div class="ai-factors-col">
+                        <div class="ai-factors-title green">📈 关键多头驱动</div>
+                        <ul class="ai-factors-list" id="ai-bull-list"></ul>
+                    </div>
+                    <div class="ai-factors-col">
+                        <div class="ai-factors-title red">📉 关键空头/风险</div>
+                        <ul class="ai-factors-list" id="ai-risk-list"></ul>
+                    </div>
+                </div>
+                <div class="ai-meta" id="ai-updated-at"></div>
+            </div>
+        </div>
+
+        <!-- 新闻多空分析 -->
+        <div class="card" style="grid-column: span 2;">
+            <div class="card-header">
+                <span class="card-title">新闻多空分析</span>
+                <span class="card-icon">&#128240;</span>
+            </div>
+            <div class="news-panel">
+                <div class="news-score-row">
+                    <span class="news-sentiment" id="news-sentiment">--</span>
+                    <span class="news-score" id="news-score">0</span>
+                </div>
+                <div class="news-factors" id="news-factors">
+                    <div class="news-factors-col">
+                        <div class="news-factors-title green">📈 利多</div>
+                        <ul class="news-factors-list" id="news-bullish-list"></ul>
+                    </div>
+                    <div class="news-factors-col">
+                        <div class="news-factors-title red">📉 利空</div>
+                        <ul class="news-factors-list" id="news-bearish-list"></ul>
+                    </div>
+                </div>
+                <div class="news-reasoning" id="news-reasoning">等待首次分析...</div>
+                <div class="news-meta" id="news-updated-at"></div>
+            </div>
+        </div>
+
+
+        <!-- K线图 -->
+        <div class="card" style="grid-column: span 2;">
+            <div class="card-header">
+                <span class="card-title">BTC/USDT K线图</span>
+                <div class="kline-toolbar">
+                    <div class="kline-tabs" id="kline-interval-tabs">
+                        <button class="kline-tab" data-interval="1h">1H</button>
+                        <button class="kline-tab active" data-interval="4h">4H</button>
+                        <button class="kline-tab" data-interval="1d">1D</button>
+                    </div>
+                    <div class="kline-tabs" id="kline-tabs">
+                        <button class="kline-tab active" data-overlay="ma">MA</button>
+                        <button class="kline-tab" data-overlay="boll">BOLL</button>
+                        <button class="kline-tab" data-overlay="none">关</button>
+                    </div>
+                </div>
+            </div>
+            <div class="kline-wrap">
+                <div class="kline-legend" id="kline-legend-ma">
+                    <span class="kline-legend-item"><span class="kline-dot" style="background:#F59E0B"></span>MA(7): <span id="ma7-val">--</span></span>
+                    <span class="kline-legend-item"><span class="kline-dot" style="background:#A855F7"></span>MA(25): <span id="ma25-val">--</span></span>
+                    <span class="kline-legend-item"><span class="kline-dot" style="background:#2563EB"></span>MA(99): <span id="ma99-val">--</span></span>
+                </div>
+                <div class="kline-legend" id="kline-legend-boll" style="display:none;">
+                    <span class="kline-legend-title">BOLL(20,2)</span>
+                    <span class="kline-legend-item"><span class="kline-dot" style="background:#F59E0B"></span>UP: <span id="boll-up-val">--</span></span>
+                    <span class="kline-legend-item"><span class="kline-dot" style="background:#A855F7"></span>MB: <span id="boll-mid-val">--</span></span>
+                    <span class="kline-legend-item"><span class="kline-dot" style="background:#2563EB"></span>DN: <span id="boll-dn-val">--</span></span>
+                </div>
+                <div id="chart-container" style="height: 300px;"></div>
+            </div>
+            <div class="macd-wrap">
+                <div class="macd-legend">
+                    <span class="macd-legend-title">MACD(12,26,9)</span>
+                    <span class="macd-legend-item"><span class="macd-dot" style="background:#F59E0B"></span>DIF: <span id="macd-dif-val">--</span></span>
+                    <span class="macd-legend-item"><span class="macd-dot" style="background:#A855F7"></span>DEA: <span id="macd-dea-val">--</span></span>
+                    <span class="macd-legend-item">MACD: <span id="macd-hist-val">--</span></span>
+                </div>
+                <div id="macd-container" style="height: 120px;"></div>
+            </div>
+            <div class="vol-wrap">
+                <div class="macd-legend">
+                    <span class="macd-legend-title">Vol: <span id="vol-val">--</span></span>
+                    <span class="macd-legend-item"><span class="macd-dot" style="background:#F59E0B"></span>MA(5): <span id="vol-ma5-val">--</span></span>
+                    <span class="macd-legend-item"><span class="macd-dot" style="background:#A855F7"></span>MA(10): <span id="vol-ma10-val">--</span></span>
+                </div>
+                <div id="vol-container" style="height: 110px;"></div>
+            </div>
+        </div>
+
+        <!-- 信号指标 -->
+        <div class="card" style="grid-column: span 2;">
+            <div class="card-header">
+                <span class="card-title">信号指标</span>
+                <span class="card-icon icon-signal">&#9670;</span>
+            </div>
+            <div class="indicator-grid scrollable" style="grid-template-columns: repeat(4, 1fr);">
+                <div class="indicator-item">
+                    <div class="indicator-label">恐惧 & 贪婪</div>
+                    <div class="indicator-value" id="fear-greed">--</div>
+                    <div class="indicator-sub" id="fear-greed-class">--</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">资金费率</div>
+                    <div class="indicator-value" id="funding-rate">--</div>
+                    <div class="indicator-sub">年化: <span id="funding-annual">--</span></div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">聪明钱多空比</div>
+                    <div class="indicator-value" id="top-trader-ratio">--</div>
+                    <div class="indicator-sub" id="top-trader-sentiment">--</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">ATR (14×4H)</div>
+                    <div class="indicator-value" id="atr-value">--</div>
+                    <div class="indicator-sub">波动率指标</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">Taker买入占比 (4H)</div>
+                    <div class="indicator-value" id="taker-ratio">--</div>
+                    <div class="indicator-sub">B:<span class="green" id="taker-buy">--</span> / S:<span class="red" id="taker-sell">--</span> / T:<span id="taker-total">--</span></div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">合约未平仓量</div>
+                    <div class="indicator-value" id="oi-value">--</div>
+                    <div class="indicator-sub">1h:<span id="oi-1h">--</span> 4h:<span id="oi-4h">--</span> 24h:<span id="oi-24h">--</span></div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">价格变化 (6×4H)</div>
+                    <div class="indicator-value" id="price-change">--</div>
+                    <div class="indicator-sub" id="price-change-status">--</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">CVD 变化 (6×4H)</div>
+                    <div class="indicator-value" id="cvd-change">--</div>
+                    <div class="indicator-sub" id="cvd-change-status">--</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">背离状态</div>
+                    <div class="indicator-value" id="divergence-status">--</div>
+                    <div class="indicator-sub">CVD 背离</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">MACD (12,26,9)</div>
+                    <div class="indicator-value" id="macd-signal">--</div>
+                    <div class="indicator-sub" id="macd-sub">--</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">RSI (14)</div>
+                    <div class="indicator-value" id="rsi-signal">--</div>
+                    <div class="indicator-sub" id="rsi-sub">--</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">布林带 (20,2)</div>
+                    <div class="indicator-value" id="bollinger-signal">--</div>
+                    <div class="indicator-sub" id="bollinger-sub">--</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">MA (7/25)</div>
+                    <div class="indicator-value" id="ma-signal">--</div>
+                    <div class="indicator-sub" id="ma-sub">--</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">成交量</div>
+                    <div class="indicator-value" id="volume-signal">--</div>
+                    <div class="indicator-sub" id="volume-sub">--</div>
+                </div>
+                <div class="indicator-item etf-indicator">
+                    <div class="indicator-label">ETF 净流入</div>
+                    <div class="etf-row"><span class="etf-tag">当日</span><span class="etf-val" id="etf-daily-flow">--</span></div>
+                    <div class="etf-row"><span class="etf-tag">3日</span><span class="etf-val" id="etf-flow-3d">--</span></div>
+                </div>
+                <div class="indicator-item etf-indicator">
+                    <div class="indicator-label">ETF 累计</div>
+                    <div class="etf-row"><span class="etf-tag">7日</span><span class="etf-val" id="etf-flow-7d">--</span></div>
+                    <div class="etf-row"><span class="etf-tag">总量</span><span class="etf-val" id="etf-cum-flow">--</span></div>
+                    <div class="etf-row"><span class="etf-tag">AUM</span><span class="etf-val" id="etf-total-assets">--</span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 权益曲线 -->
+        <div class="card" style="grid-column: span 2;">
+            <div class="card-header">
+                <span class="card-title">模拟资金曲线</span>
+                <span class="card-icon icon-equity">&#9650;</span>
+            </div>
+            <div class="equity-header">
+                <span class="equity-range" id="equity-range">$1,000 → $1,000</span>
+                <span class="equity-return" id="equity-return">+0.00%</span>
+            </div>
+            <div id="equity-chart-container" style="height: 300px;"></div>
+        </div>
+
+        <!-- 策略绩效 + 交易记录 -->
+        <div class="card trades-section">
+            <div class="card-header">
+                <span class="card-title">策略绩效</span>
+                <span class="card-icon icon-perf">&#9733;</span>
+            </div>
+            <div id="perf-panel">
+                <div class="perf-grid">
+                    <div class="perf-item">
+                        <div class="perf-label">夏普率</div>
+                        <div class="perf-value" id="perf-sharpe">--</div>
+                    </div>
+                    <div class="perf-item">
+                        <div class="perf-label">总收益</div>
+                        <div class="perf-value" id="perf-return">--</div>
+                        <div class="perf-sub" id="perf-return-pct"></div>
+                    </div>
+                    <div class="perf-item">
+                        <div class="perf-label">最大回撤</div>
+                        <div class="perf-value" id="perf-drawdown">--</div>
+                    </div>
+                    <div class="perf-item">
+                        <div class="perf-label">胜率</div>
+                        <div class="perf-value" id="perf-winrate">--</div>
+                        <div class="perf-sub" id="perf-winrate-detail"></div>
+                    </div>
+                    <div class="perf-item">
+                        <div class="perf-label">盈亏比</div>
+                        <div class="perf-value" id="perf-pf">--</div>
+                    </div>
+                    <div class="perf-item">
+                        <div class="perf-label">平均盈亏</div>
+                        <div class="perf-value" id="perf-avg-pnl">--</div>
+                    </div>
+                    <div class="perf-item">
+                        <div class="perf-label">平均持仓</div>
+                        <div class="perf-value" id="perf-hold">--</div>
+                    </div>
+                    <div class="perf-item">
+                        <div class="perf-label">交易笔数</div>
+                        <div class="perf-value" id="perf-count">--</div>
+                    </div>
+                </div>
+            </div>
+            <div class="card-header section-divider">
+                <span class="card-title">交易记录</span>
+                <span class="card-icon icon-trade">&#9998;</span>
+            </div>
+            <div id="trades-list">
+                <div style="text-align: center; padding: 40px; color: var(--text-secondary);">
+                    暂无交易记录
+                </div>
+            </div>
+        </div>
+
+        <!-- 持仓信息 -->
+        <div class="card" style="grid-column: span 4;">
+            <div class="card-header">
+                <span class="card-title">持仓信息</span>
+                <span class="card-icon icon-pos">&#9632;</span>
+            </div>
+            <div class="portfolio-grid" style="grid-template-columns: repeat(4, 1fr);">
+                <div class="portfolio-item">
+                    <div class="portfolio-label">现货 BTC</div>
+                    <div class="portfolio-value" id="spot-btc">0.0000</div>
+                </div>
+                <div class="portfolio-item">
+                    <div class="portfolio-label">合约余额</div>
+                    <div class="portfolio-value" id="futures-btc">0.0000</div>
+                </div>
+                <div class="portfolio-item">
+                    <div class="portfolio-label">持仓方向</div>
+                    <div class="portfolio-value" id="position-dir">--</div>
+                </div>
+                <div class="portfolio-item">
+                    <div class="portfolio-label">未实现盈亏</div>
+                    <div class="portfolio-value" id="unrealized-pnl">$0.00</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/config.js?v=20260514h"></script>
+    <script src="/static/js/utils.js?v=20260514c"></script>
+    <script src="/static/js/charts.js?v=20260514i"></script>
+    <script src="/static/js/indicators.js?v=20260514c"></script>
+    <script src="/static/js/ai_analysis.js?v=20260514d"></script>
+    <script src="/static/js/portfolio.js?v=20260514c"></script>
+    <script src="/static/js/performance.js?v=20260514c"></script>
+    <script src="/static/js/trades.js?v=20260514c"></script>
+    <script src="/static/js/data_loader.js?v=20260514c"></script>
+    <script src="/static/js/main.js?v=20260514i"></script>
+</body>
+</html>

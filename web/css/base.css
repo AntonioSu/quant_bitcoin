@@ -1,0 +1,68 @@
+/* ═══════════════════════════════════════════
+   FONTS, RESET, ROOT VARIABLES, COLOR UTILITIES
+   ═══════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
+
+:root {
+    --bg-body: #F5F6FA;
+    --bg-card: #FFFFFF;
+    --bg-card-hover: #FFFFFF;
+    --bg-inset: #F0F1F5;
+    --bg-header: #1B1F2A;
+    --border: #E2E4EB;
+    --border-hover: #0D9488;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.03);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04);
+    --shadow-hover: 0 8px 24px rgba(13,148,136,0.08), 0 2px 6px rgba(0,0,0,0.04);
+    --text-primary: #1A1D26;
+    --text-secondary: #6B7280;
+    --text-dim: #9CA3AF;
+    --teal: #0D9488;
+    --teal-light: #CCFBF1;
+    --teal-dim: rgba(13, 148, 136, 0.08);
+    --gold: #B8860B;
+    --gold-light: #FEF3C7;
+    --green: #16A34A;
+    --green-bg: #F0FDF4;
+    --red: #DC2626;
+    --red-bg: #FEF2F2;
+    --yellow: #D97706;
+    --yellow-bg: #FFFBEB;
+    --blue: #2563EB;
+    --purple: #7C3AED;
+    --card-radius: 12px;
+    --font-display: 'Outfit', 'Noto Sans SC', sans-serif;
+    --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: var(--font-display);
+    background: var(--bg-body);
+    color: var(--text-primary);
+    min-height: 100vh;
+}
+
+/* ═══════════════════════════════════════════
+   COLOR UTILITIES
+   ═══════════════════════════════════════════ */
+
+.green { color: var(--green); }
+.red { color: var(--red); }
+.yellow { color: var(--yellow); }
+.blue { color: var(--blue); }
+.purple { color: var(--purple); }
+.cyan { color: var(--teal); }
+
+/* ═══════════════════════════════════════════
+   FULL / HALF WIDTH
+   ═══════════════════════════════════════════ */
+
+.full-width { grid-column: span 4; }
+.half-width { grid-column: span 2; }

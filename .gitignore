@@ -1,0 +1,20 @@
+# 数据目录 (状态文件)
+data/
+
+# 日志
+logs/
+
+# 缓存
+__pycache__/
+*.pyc
+
+# 环境
+.env
+*.toml
+
+# 配置 (含密钥，使用 config.example.json 作为模板)
+*/config/config.json
+*/config/*
+*/config.json
+# PID 文件
+.daemon.pid

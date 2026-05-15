@@ -1,0 +1,341 @@
+"""市场综合分析器
+
+把 MarketData 的所有指标(技术面/资金面/情绪面/链上)精简后丢给 LLM,
+得到一份 4H~24H 周期的综合多空研判。
+
+输出:
+  - bias:        LONG / SHORT / NEUTRAL
+  - confidence:  0~100
+  - summary:     一句话研判
+  - action:      建议动作
+  - key_drivers: 关键驱动因素列表
+  - risks:       反向风险列表
+  - horizon:     时间周期
+"""
+
+import json
+import os
+from datetime import datetime
+from typing import Dict, Optional, Any
+
+from dotenv import load_dotenv
+
+from ..data_sources.base import DataPoint
+from ..utils import logger
+from ..utils.common_utils import read_file_prompt
+from ..utils.llm_client import LLMClient
+
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+
+_PROMPT_DIR = os.path.join(os.path.dirname(__file__), '..', 'prompts')
+
+
+class MarketAnalyzer:
+    """市场综合分析器
+
+    输入: MarketData 实例 (或其 to_dict 结果)
+    输出: DataPoint
+        - value: confidence (0~100, NEUTRAL 时 0)
+        - raw:   完整 JSON 分析结果
+    """
+
+    def __init__(self, model_name: Optional[str] = None):
+        self.name = "Market Analyzer"
+        self.llm = LLMClient(
+            model_name=model_name or os.getenv("LLM_MODEL_NAME"),
+            key=os.getenv("LLM_API_KEY"),
+            api_url=os.getenv("LLM_API_URL"),
+            timeout=120,
+        )
+
+    def fetch(self, market) -> DataPoint:
+        """对当前 market 数据做一次综合分析
+
+        Args:
+            market: stock_btc.core.market_data.MarketData 实例
+        """
+        if not market.is_ready():
+            logger.warning("📊 market 数据未就绪，跳过 AI 分析")
+            return self._neutral("market 数据未就绪")
+
+        snapshot = self._build_snapshot(market)
+        prompt = self._build_prompt(snapshot)
+        analysis = self._analyze(prompt)
+
+        bias = analysis.get("bias", "NEUTRAL")
+        confidence = analysis.get("confidence", 0)
+        summary = analysis.get("summary", "")
+
+        logger.info(
+            f"🤖 市场综合分析: {bias} ({confidence}%) — {summary[:50]}"
+        )
+
+        return DataPoint(
+            value=float(confidence) if bias != "NEUTRAL" else 0.0,
+            timestamp=datetime.now(),
+            source=self.name,
+            raw=analysis,
+        )
+
+    @staticmethod
+    def _neutral(reason: str) -> DataPoint:
+        return DataPoint(
+            value=0.0,
+            timestamp=datetime.now(),
+            source="Market Analyzer",
+            raw={
+                "bias": "NEUTRAL",
+                "confidence": 0,
+                "summary": reason,
+                "action": "持仓观望",
+                "key_drivers": [],
+                "risks": [],
+                "horizon": "4H~24H",
+            },
+        )
+
+    def _build_snapshot(self, market) -> Dict[str, Any]:
+        """把 MarketData 精简成 LLM 友好的字典"""
+        snap: Dict[str, Any] = {}
+
+        if market.fear_greed:
+            raw = market.fear_greed.raw or {}
+            snap["fear_greed"] = {
+                "value": market.fear_greed.value,
+                "classification": raw.get("classification"),
+            }
+
+        if market.funding_rate:
+            raw = market.funding_rate.raw or {}
+            snap["funding_rate"] = {
+                "rate": market.funding_rate.value,
+                "annual_yield_pct": raw.get("annual_yield"),
+            }
+
+        if market.top_trader:
+            raw = market.top_trader.raw or {}
+            snap["top_trader"] = {
+                "long_short_ratio": market.top_trader.value,
+                "long_account": raw.get("long_account"),
+                "short_account": raw.get("short_account"),
+            }
+
+        if market.open_interest:
+            raw = market.open_interest.raw or {}
+            snap["open_interest"] = {
+                "value_usd": raw.get("value_usd"),
+                "change_1h_pct": raw.get("change_1h"),
+                "change_4h_pct": raw.get("change_4h"),
+                "change_24h_pct": raw.get("change_24h"),
+            }
+
+        if market.etf_flow:
+            raw = market.etf_flow.raw or {}
+            snap["etf_flow"] = {
+                "daily_flow_usd": raw.get("daily_flow"),
+                "flow_3d_usd": raw.get("flow_3d"),
+                "flow_7d_usd": raw.get("flow_7d"),
+                "cum_flow_usd": raw.get("cum_flow"),
+                "streak_days": raw.get("streak_days"),
+            }
+
+        if market.news:
+            raw = market.news.raw or {}
+            snap["news"] = {
+                "score": market.news.value,
+                "sentiment": raw.get("sentiment"),
+                "reasoning": raw.get("reasoning"),
+                "bullish_factors": [
+                    f.get("factor") if isinstance(f, dict) else f
+                    for f in (raw.get("bullish_factors") or [])
+                ][:3],
+                "bearish_factors": [
+                    f.get("factor") if isinstance(f, dict) else f
+                    for f in (raw.get("bearish_factors") or [])
+                ][:3],
+            }
+
+        if market.macd:
+            snap["macd_4h"] = {
+                "signal": market.macd.signal_type.value,
+                "above_zero": market.macd.above_zero,
+                "histogram_rising": market.macd.histogram_rising,
+                "strength": market.macd.strength,
+            }
+
+        if market.rsi:
+            snap["rsi_4h"] = {
+                "signal": market.rsi.signal_type.value,
+                "value": market.rsi.rsi_value,
+                "above_center": market.rsi.above_center,
+                "trend_strength": market.rsi.trend_strength,
+                "strength": market.rsi.strength,
+            }
+
+        if market.bollinger:
+            snap["bollinger_4h"] = {
+                "signal": market.bollinger.signal_type.value,
+                "percent_b": market.bollinger.percent_b,
+                "bandwidth": market.bollinger.bandwidth,
+                "is_squeeze": market.bollinger.is_squeeze,
+                "strength": market.bollinger.strength,
+            }
+
+        if market.ma:
+            snap["ma_4h"] = {
+                "signal": market.ma.signal_type.value,
+                "trend": market.ma.trend,
+                "fast_ma": market.ma.fast_ma,
+                "slow_ma": market.ma.slow_ma,
+                "price_deviation": market.ma.price_deviation,
+                "strength": market.ma.strength,
+            }
+
+        if market.volume:
+            snap["volume_4h"] = {
+                "signal": market.volume.signal_type.value,
+                "vol_ratio": market.volume.vol_ratio,
+                "obv_trend": market.volume.obv_trend,
+                "price_change_pct": market.volume.price_change_pct,
+                "strength": market.volume.strength,
+            }
+
+        if market.cvd:
+            snap["cvd_6x4h"] = {
+                "divergence": market.cvd.divergence.value,
+                "price_change_pct": market.cvd.price_change_pct,
+                "cvd_change_pct": market.cvd.cvd_change_pct,
+                "is_valid_signal": market.cvd.is_valid_signal,
+            }
+
+        if market.taker:
+            taker_dict = market.taker.to_dict()
+            snap["taker_4h"] = {
+                "buy_btc": taker_dict.get("taker_buy_btc"),
+                "sell_btc": taker_dict.get("taker_sell_btc"),
+                "buy_ratio": taker_dict.get("taker_buy_ratio"),
+            }
+
+        if market.atr:
+            snap["atr_4h"] = {
+                "value": market.atr.value,
+                "period": market.atr.period,
+            }
+
+        snap["last_update"] = (
+            market.last_update.isoformat() if market.last_update else None
+        )
+
+        return snap
+
+    @staticmethod
+    def _build_prompt(snapshot: Dict[str, Any]) -> str:
+        """把 snapshot 渲染成 LLM 提示"""
+        body = json.dumps(snapshot, ensure_ascii=False, indent=2)
+        return (
+            "以下是当前 BTC 市场的多维度指标快照（4H 周期为主），"
+            "请按照系统提示词的规则做综合多空研判：\n\n"
+            f"```json\n{body}\n```"
+        )
+
+    def _analyze(self, prompt: str) -> Dict[str, Any]:
+        try:
+            sys_prompt = read_file_prompt(
+                os.path.join(_PROMPT_DIR, 'market_analyzer.md')
+            )
+            resp = self.llm.chat(system_prompt=sys_prompt, prompt=prompt)
+            parsed = self._parse_json(resp)
+            return self._normalize(parsed)
+        except Exception as e:
+            logger.error(f"🤖 LLM 市场分析失败: {e}")
+            return {
+                "bias": "NEUTRAL",
+                "confidence": 0,
+                "summary": f"LLM 调用失败: {e}",
+                "action": "持仓观望",
+                "key_drivers": [],
+                "risks": [],
+                "horizon": "4H~24H",
+            }
+
+    @staticmethod
+    def _parse_json(text: str) -> Dict[str, Any]:
+        if "```json" in text:
+            text = text.split("```json", 1)[1].split("```", 1)[0]
+        elif "```" in text:
+            text = text.split("```", 1)[1].split("```", 1)[0]
+        try:
+            return json.loads(text.strip())
+        except json.JSONDecodeError:
+            return {
+                "bias": "NEUTRAL",
+                "confidence": 0,
+                "summary": f"JSON 解析失败: {text[:120]}",
+                "action": "持仓观望",
+                "key_drivers": [],
+                "risks": [],
+                "horizon": "4H~24H",
+            }
+
+    @staticmethod
+    def _normalize(data: Dict[str, Any]) -> Dict[str, Any]:
+        """字段兜底，避免前端拿到空字段炸"""
+        bias = str(data.get("bias", "NEUTRAL")).upper()
+        if bias not in ("LONG", "SHORT", "NEUTRAL"):
+            bias = "NEUTRAL"
+
+        try:
+            confidence = int(data.get("confidence", 0))
+        except (TypeError, ValueError):
+            confidence = 0
+        confidence = max(0, min(100, confidence))
+
+        return {
+            "bias": bias,
+            "confidence": confidence,
+            "summary": str(data.get("summary", "")),
+            "action": str(data.get("action", "持仓观望")),
+            "key_drivers": data.get("key_drivers") or [],
+            "risks": data.get("risks") or [],
+            "horizon": str(data.get("horizon", "4H~24H")),
+        }
+
+
+def main():
+    """独立测试: 拉一遍真实数据后跑一次分析"""
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    from ..core.market_data import refresh_market_data, market
+
+    refresh_market_data()
+    analyzer = MarketAnalyzer()
+    result = analyzer.fetch(market)
+
+    raw = result.raw or {}
+    print(f"\n{'=' * 70}")
+    print(f"  研判: {raw.get('bias')}  |  置信度: {raw.get('confidence')}%")
+    print(f"  动作: {raw.get('action')}")
+    print(f"{'=' * 70}")
+    print(f"\n  💡 {raw.get('summary')}")
+
+    if raw.get("key_drivers"):
+        print("\n  🎯 关键驱动:")
+        for d in raw["key_drivers"]:
+            if isinstance(d, dict):
+                side = d.get("side", "")
+                weight = d.get("weight", "")
+                print(f"     [{side}/{weight}] {d.get('factor', '')}")
+            else:
+                print(f"     - {d}")
+
+    if raw.get("risks"):
+        print("\n  ⚠️  风险:")
+        for r in raw["risks"]:
+            print(f"     - {r}")
+
+    print(f"\n{'=' * 70}\n")
+
+
+if __name__ == "__main__":
+    main()
