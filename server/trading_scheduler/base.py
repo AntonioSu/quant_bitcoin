@@ -9,6 +9,7 @@ from typing import Optional
 from stock_btc.core import (
     TradingConfig, ParameterSet, TradingMode,
     SignalAggregator,
+    get_analysis_memory, get_strategy_summarizer,
 )
 from stock_btc.core.market_data import market
 from stock_btc.indicators import LongLevel, ShortLevel
@@ -259,6 +260,48 @@ class BaseTradingScheduler(ABC):
             self.trades.append(trade)
             await self._emit(self._on_trade_callbacks, trade)
 
+            # 平仓时：关联交易结果到研判记忆 + 触发异步复盘
+            action = trade.get("action", "")
+            if action in ("CLOSE", "TP1_HALF"):
+                self._link_trade_to_memory(trade)
+
+    def _link_trade_to_memory(self, trade: dict):
+        """将平仓结果关联到研判记忆，并异步触发复盘"""
+        try:
+            memory = get_analysis_memory()
+            if not memory:
+                return
+
+            # 找到对应的研判记录并关联交易结果
+            latest_id = memory.get_latest_analysis_id()
+            if latest_id:
+                memory.attach_trade_result(latest_id, trade)
+                logger.info(f"📝 交易结果已关联到研判 {latest_id}")
+
+                # 异步触发复盘（不阻塞交易主循环）
+                asyncio.ensure_future(self._async_reflect(latest_id))
+        except Exception as e:
+            logger.warning(f"📝 关联交易记忆失败: {e}")
+
+    async def _async_reflect(self, record_id: str):
+        """异步复盘，不影响交易主流程"""
+        try:
+            from stock_btc.indicators.reflector import Reflector
+            memory = get_analysis_memory()
+            reflector = Reflector(memory=memory)
+            await asyncio.to_thread(reflector.reflect_on_trade, record_id)
+
+            # 检查是否需要更新策略备忘录（每 5 笔有复盘的交易触发一次）
+            all_reflections = memory.get_all_reflections(since_days=30)
+            if len(all_reflections) >= 3 and len(all_reflections) % 5 == 0:
+                summarizer = get_strategy_summarizer()
+                if summarizer:
+                    from stock_btc.core.performance import PerformanceTracker
+                    perf = PerformanceTracker().calculate(self.trades, self.equity - self.total_pnl)
+                    await asyncio.to_thread(summarizer.generate, perf)
+        except Exception as e:
+            logger.warning(f"🔍 异步复盘失败: {e}")
+
     async def check_and_execute(self):
         """检查信号并执行"""
         self.last_check_time = datetime.now()
@@ -338,36 +381,121 @@ class BaseTradingScheduler(ABC):
             import traceback
             traceback.print_exc()
 
-    def _capture_market_indicators(self, signal) -> dict:
-        """从全局 market 和 SignalResult 中提取市场指标快照"""
+    def _capture_market_indicators(self, signal=None) -> dict:
+        """从全局 market 中提取完整的市场指标快照（开仓 / 平仓通用）"""
         try:
-            signal_values = signal.values or {}
-            fear_greed = signal_values.get("fear_greed", 50)
-            funding_rate = signal_values.get("funding_rate", 0.0)
-            top_trader_ratio = signal_values.get("top_trader_ratio", 1.0)
+            signal_values = (signal.values or {}) if signal else {}
+            fear_greed = signal_values.get("fear_greed",
+                                           market.fear_greed.value if market.fear_greed else 50)
+            funding_rate = signal_values.get("funding_rate",
+                                             market.funding_rate.value if market.funding_rate else 0.0)
+            top_trader_ratio = signal_values.get("top_trader_ratio",
+                                                  market.top_trader.value if market.top_trader else 1.0)
 
-            # 使用全局 market 数据
-            fg_status = market.fear_greed.raw.get("classification", "Unknown") if market.fear_greed and market.fear_greed.raw else "Unknown"
-            fr_predicted = (market.funding_rate.raw.get("predicted_rate", funding_rate) 
-                           if market.funding_rate and market.funding_rate.raw else funding_rate)
-            tt_long = (market.top_trader.raw.get("long_account", 0.5) * 100 
-                      if market.top_trader and market.top_trader.raw else 50.0)
-            tt_short = (market.top_trader.raw.get("short_account", 0.5) * 100 
-                       if market.top_trader and market.top_trader.raw else 50.0)
+            fg_raw = (market.fear_greed.raw or {}) if market.fear_greed else {}
+            fr_raw = (market.funding_rate.raw or {}) if market.funding_rate else {}
+            tt_raw = (market.top_trader.raw or {}) if market.top_trader else {}
 
-            return {
+            result: dict = {
+                # ── 情绪 / 资金面 ──
                 "fear_greed_index": int(fear_greed),
-                "fear_greed_status": fg_status,
+                "fear_greed_status": fg_raw.get("classification", "Unknown"),
                 "funding_rate": round(funding_rate, 5),
-                "funding_rate_predicted": round(fr_predicted, 5),
-                "top_trader_long_ratio": round(tt_long, 2),
-                "top_trader_short_ratio": round(tt_short, 2),
+                "funding_rate_predicted": round(fr_raw.get("predicted_rate", funding_rate), 5),
+                "funding_rate_annual": round(fr_raw.get("annual_yield", 0), 2),
+                "top_trader_long_pct": round(tt_raw.get("long_account", 0.5) * 100, 2),
+                "top_trader_short_pct": round(tt_raw.get("short_account", 0.5) * 100, 2),
                 "long_short_ratio": round(top_trader_ratio, 2),
-                "price_change_percent": round(signal_values.get("price_change_pct", 0.0), 2),
-                "cvd_change_percent": round(signal_values.get("cvd_change_pct", 0.0), 2),
+                "price_change_pct": round(signal_values.get("price_change_pct", 0.0), 2),
+                "cvd_change_pct": round(signal_values.get("cvd_change_pct", 0.0), 2),
                 "divergence_type": signal_values.get("divergence_type", "无"),
                 "divergence_strength": round(signal_values.get("divergence_strength", 0.0), 2),
             }
+
+            # ── 技术指标 (4H) ──
+            if market.macd:
+                result.update({
+                    "macd_signal": market.macd.signal_type.value,
+                    "macd_above_zero": market.macd.above_zero,
+                    "macd_histogram_rising": market.macd.histogram_rising,
+                    "macd_strength": round(market.macd.strength, 3),
+                })
+            if market.rsi:
+                result.update({
+                    "rsi_value": round(market.rsi.rsi_value, 2),
+                    "rsi_signal": market.rsi.signal_type.value,
+                    "rsi_above_center": market.rsi.above_center,
+                    "rsi_strength": round(market.rsi.strength, 3),
+                })
+            if market.bollinger:
+                result.update({
+                    "boll_signal": market.bollinger.signal_type.value,
+                    "boll_percent_b": round(market.bollinger.percent_b, 3),
+                    "boll_bandwidth": round(market.bollinger.bandwidth, 4),
+                    "boll_is_squeeze": market.bollinger.is_squeeze,
+                })
+            if market.ma:
+                result.update({
+                    "ma_signal": market.ma.signal_type.value,
+                    "ma_trend": market.ma.trend,
+                    "ma_price_deviation": round(market.ma.price_deviation, 4),
+                })
+            if market.volume:
+                result.update({
+                    "vol_signal": market.volume.signal_type.value,
+                    "vol_ratio": round(market.volume.vol_ratio, 2),
+                    "obv_trend": market.volume.obv_trend,
+                })
+
+            # ── Taker ──
+            if market.taker:
+                td = market.taker.to_dict()
+                result.update({
+                    "taker_buy_ratio": round(td.get("taker_buy_ratio", 0.5), 3),
+                })
+
+            # ── ETF ──
+            if market.etf_flow:
+                ef_raw = market.etf_flow.raw or {}
+                result.update({
+                    "etf_daily_flow_usd": ef_raw.get("daily_flow"),
+                    "etf_streak_days": ef_raw.get("streak_days"),
+                })
+
+            # ── 持仓量 ──
+            if market.open_interest:
+                oi_raw = market.open_interest.raw or {}
+                result.update({
+                    "oi_change_4h_pct": oi_raw.get("change_4h"),
+                    "oi_change_24h_pct": oi_raw.get("change_24h"),
+                })
+
+            # ── 爆仓 ──
+            if market.liquidation:
+                liq_raw = market.liquidation.raw or {}
+                result.update({
+                    "liq_total_usd": liq_raw.get("total_usd"),
+                    "liq_long_short_ratio": liq_raw.get("long_short_ratio"),
+                })
+
+            # ── 新闻情绪 ──
+            if market.news:
+                n_raw = market.news.raw or {}
+                result.update({
+                    "news_sentiment": n_raw.get("sentiment"),
+                    "news_score": market.news.value,
+                })
+
+            # ── AI 综合研判 ──
+            if market.ai_analysis:
+                ai_raw = market.ai_analysis.raw or {}
+                result.update({
+                    "ai_bias": ai_raw.get("bias"),
+                    "ai_confidence": ai_raw.get("confidence"),
+                    "ai_summary": ai_raw.get("summary"),
+                })
+
+            return result
         except Exception as e:
             logger.error(f"捕获市场指标失败: {e}")
             return {}

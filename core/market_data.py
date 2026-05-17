@@ -14,6 +14,7 @@ from ..data_sources.funding_rate import FundingRate
 from ..data_sources.top_trader import TopTraderRatio
 from ..data_sources.etf_flow import ETFFlow
 from ..data_sources.open_interest import OpenInterest
+from ..data_sources.liquidation import Liquidation
 from ..data_sources.btc_taker_kline import TakerData, taker_analyzer
 from ..indicators import ATRCalculator, CVDDivergenceDetector, MACDCalculator, RSICalculator, BollingerCalculator, MACalculator, VolumeCalculator
 from ..indicators.atr import ATRResult
@@ -25,6 +26,8 @@ from ..indicators.ma_signal import MAResult
 from ..indicators.volume_signal import VolumeResult
 from ..indicators.news_analyzer import NewsAnalyzer
 from ..indicators.market_analyzer import MarketAnalyzer
+from ..indicators.analysis_memory import AnalysisMemory
+from ..indicators.strategy_summarizer import StrategySummarizer
 from ..binance_utils import fetch_klines_sync
 from ..utils import logger
 
@@ -47,6 +50,7 @@ class MarketData:
     news: Optional[DataPoint] = None
     etf_flow: Optional[DataPoint] = None
     open_interest: Optional[DataPoint] = None
+    liquidation: Optional[DataPoint] = None
     ai_analysis: Optional[DataPoint] = None
     klines_4h: List[List] = field(default_factory=list)
     last_update: Optional[datetime] = None
@@ -130,6 +134,13 @@ class MarketData:
                 "bearish_factors": self.news.raw.get("bearish_factors", []) if self.news and self.news.raw else [],
                 "updated_at": self.news.timestamp.isoformat() if self.news else None,
             },
+            "liquidation": {
+                "total_usd": self.liquidation.raw.get("total_usd") if self.liquidation and self.liquidation.raw else None,
+                "long_liquidation_usd": self.liquidation.raw.get("long_liquidation_usd") if self.liquidation and self.liquidation.raw else None,
+                "short_liquidation_usd": self.liquidation.raw.get("short_liquidation_usd") if self.liquidation and self.liquidation.raw else None,
+                "long_short_ratio": self.liquidation.raw.get("long_short_ratio") if self.liquidation and self.liquidation.raw else None,
+                "total_count": self.liquidation.raw.get("total_count") if self.liquidation and self.liquidation.raw else None,
+            },
             "etf_flow": self.etf_flow.raw if self.etf_flow and self.etf_flow.raw else None,
             "ai_analysis": {
                 **(self.ai_analysis.raw or {}),
@@ -155,8 +166,11 @@ _bollinger_calc = BollingerCalculator(period=20, std_dev=2.0, timeframe="4h")
 _ma_calc = MACalculator(fast_period=7, slow_period=25, timeframe="4h")
 _volume_calc = VolumeCalculator(avg_period=20, surge_threshold=2.0, timeframe="4h")
 _news_analyzer = NewsAnalyzer()
-_market_analyzer = MarketAnalyzer()
+_analysis_memory = AnalysisMemory()
+_strategy_summarizer = StrategySummarizer(memory=_analysis_memory)
+_market_analyzer = MarketAnalyzer(memory=_analysis_memory, summarizer=_strategy_summarizer)
 _open_interest = OpenInterest(symbol="BTCUSDT", period="4h")
+_liquidation = Liquidation(symbol="BTCUSDT", lookback_minutes=60)
 
 # 全局数据实例
 market = MarketData()
@@ -200,6 +214,11 @@ def refresh_market_data() -> MarketData:
         market.open_interest = _open_interest.fetch()
     except Exception as e:
         logger.warning(f"获取未平仓量失败: {e}")
+
+    try:
+        market.liquidation = _liquidation.fetch()
+    except Exception as e:
+        logger.warning(f"获取爆仓数据失败: {e}")
     
     # 2. 获取 K线数据 (供 ATR/CVD/Taker 计算)
     try:
@@ -308,6 +327,16 @@ async def refresh_ai_analysis_async() -> None:
         logger.info(f"🤖 AI 综合分析完成: {bias} ({conf}%)")
     except Exception as e:
         logger.warning(f"AI 综合分析失败: {e}")
+
+
+def get_analysis_memory():
+    """获取全局研判记忆实例"""
+    return _analysis_memory
+
+
+def get_strategy_summarizer():
+    """获取全局策略备忘录实例"""
+    return _strategy_summarizer
 
 
 def get_sentiment() -> str:

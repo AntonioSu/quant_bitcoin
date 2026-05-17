@@ -39,7 +39,8 @@ class MarketAnalyzer:
         - raw:   完整 JSON 分析结果
     """
 
-    def __init__(self, model_name: Optional[str] = None):
+    def __init__(self, model_name: Optional[str] = None,
+                 memory=None, summarizer=None):
         self.name = "Market Analyzer"
         self.llm = LLMClient(
             model_name=model_name or os.getenv("LLM_MODEL_NAME"),
@@ -47,6 +48,8 @@ class MarketAnalyzer:
             api_url=os.getenv("LLM_API_URL"),
             timeout=120,
         )
+        self.memory = memory            # AnalysisMemory 实例
+        self.summarizer = summarizer    # StrategySummarizer 实例
 
     def fetch(self, market) -> DataPoint:
         """对当前 market 数据做一次综合分析
@@ -66,6 +69,16 @@ class MarketAnalyzer:
         confidence = analysis.get("confidence", 0)
         summary = analysis.get("summary", "")
 
+        # 写入研判记忆
+        if self.memory and bias != "NEUTRAL":
+            try:
+                record_id = self.memory.save_analysis(
+                    analysis, snapshot_digest=self._digest_snapshot(snapshot)
+                )
+                analysis["_memory_id"] = record_id
+            except Exception as e:
+                logger.warning(f"📝 研判记忆保存失败: {e}")
+
         logger.info(
             f"🤖 市场综合分析: {bias} ({confidence}%) — {summary[:50]}"
         )
@@ -76,6 +89,28 @@ class MarketAnalyzer:
             source=self.name,
             raw=analysis,
         )
+
+    @staticmethod
+    def _digest_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        """把完整 snapshot 压缩成关键字段，减少存储量"""
+        keys = [
+            "fear_greed", "funding_rate", "top_trader",
+            "macd_4h", "rsi_4h", "bollinger_4h", "ma_4h",
+            "cvd_6x4h", "etf_flow", "taker_4h", "news",
+        ]
+        digest = {}
+        for k in keys:
+            if k in snapshot:
+                v = snapshot[k]
+                if isinstance(v, dict):
+                    digest[k] = {kk: vv for kk, vv in v.items()
+                                 if kk in ("value", "signal", "rate",
+                                           "classification", "divergence",
+                                           "daily_flow_usd", "sentiment",
+                                           "score", "buy_ratio")}
+                else:
+                    digest[k] = v
+        return digest
 
     @staticmethod
     def _neutral(reason: str) -> DataPoint:
@@ -127,6 +162,16 @@ class MarketAnalyzer:
                 "change_1h_pct": raw.get("change_1h"),
                 "change_4h_pct": raw.get("change_4h"),
                 "change_24h_pct": raw.get("change_24h"),
+            }
+
+        if market.liquidation:
+            raw = market.liquidation.raw or {}
+            snap["liquidation_1h"] = {
+                "total_usd": raw.get("total_usd"),
+                "long_liquidation_usd": raw.get("long_liquidation_usd"),
+                "short_liquidation_usd": raw.get("short_liquidation_usd"),
+                "long_short_ratio": raw.get("long_short_ratio"),
+                "total_count": raw.get("total_count"),
             }
 
         if market.etf_flow:
@@ -243,6 +288,45 @@ class MarketAnalyzer:
             sys_prompt = read_file_prompt(
                 os.path.join(_PROMPT_DIR, 'market_analyzer.md')
             )
+
+            # 注入指标知识库
+            knowledge_dir = os.path.join(_PROMPT_DIR, 'knowledge')
+            for fname in ('indicator_guide.md', 'combination_rules.md', 'market_regimes.md'):
+                fpath = os.path.join(knowledge_dir, fname)
+                if os.path.exists(fpath):
+                    sys_prompt += "\n\n" + read_file_prompt(fpath)
+
+            # 注入策略备忘录（来自历史复盘）
+            if self.summarizer:
+                memo = self.summarizer.get_memo_text()
+                if memo:
+                    sys_prompt += (
+                        "\n\n# 近期策略备忘录（基于历史交易复盘）\n"
+                        "请将以下经验教训纳入本次研判的权重考量：\n\n"
+                        f"{memo}"
+                    )
+
+            # 注入最近几次研判 vs 实际结果（短期记忆）
+            if self.memory:
+                recent = self.memory.get_recent_with_results(n=3)
+                if recent:
+                    lines = []
+                    for r in recent:
+                        tr = r.get("trade_result", {})
+                        ref = r.get("reflection", {})
+                        pnl = tr.get("pnl", 0)
+                        lesson = ref.get("lesson", "") if ref else ""
+                        lines.append(
+                            f"- {r.get('bias')} {r.get('confidence')}% → "
+                            f"PnL ${pnl:+.2f} ({tr.get('trigger_reason', '?')})"
+                            f"{' | 教训: ' + lesson if lesson else ''}"
+                        )
+                    prompt += (
+                        "\n\n## 最近研判回顾\n"
+                        "以下是最近几次研判的实际结果，请参考但不要过度拟合：\n"
+                        + "\n".join(lines)
+                    )
+
             resp = self.llm.chat(system_prompt=sys_prompt, prompt=prompt)
             parsed = self._parse_json(resp)
             return self._normalize(parsed)

@@ -11,6 +11,8 @@ from .market_data import (
     refresh_news_data_async,
     refresh_ai_analysis_async,
     get_sentiment,
+    get_analysis_memory,
+    get_strategy_summarizer,
 )
 
 __all__ = [
@@ -27,4 +29,6 @@ __all__ = [
     "refresh_news_data_async",
     "refresh_ai_analysis_async",
     "get_sentiment",
+    "get_analysis_memory",
+    "get_strategy_summarizer",
 ]

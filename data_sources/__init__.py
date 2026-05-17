@@ -7,6 +7,7 @@ from .top_trader import TopTraderRatio
 from .crypto_news import CryptoNewsSentiment
 from .open_interest import OpenInterest
 from .etf_flow import ETFFlow
+from .liquidation import Liquidation
 
 __all__ = [
     "DataSourceBase",
@@ -17,4 +18,5 @@ __all__ = [
     "CryptoNewsSentiment",
     "OpenInterest",
     "ETFFlow",
+    "Liquidation",
 ]

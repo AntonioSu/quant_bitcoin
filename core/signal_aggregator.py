@@ -23,6 +23,32 @@ from ..indicators.cvd_divergence import DivergenceType
 from ..utils import logger
 
 
+def _ai_not_contrary(target_mode: str) -> tuple:
+    """检查 AI 研判是否与目标方向矛盾
+
+    规则:
+      - AI 方向一致或 NEUTRAL → 通过
+      - AI 方向相反 → 不通过
+      - AI 不可用（未刷新/报错） → 视为 NEUTRAL，通过
+
+    Returns: (passed: bool, ai_bias: str, ai_confidence: int)
+    """
+    if not market.ai_analysis or not market.ai_analysis.raw:
+        return True, "N/A", 0
+
+    raw = market.ai_analysis.raw
+    bias = raw.get("bias", "NEUTRAL")
+    confidence = raw.get("confidence", 0)
+
+    if bias == "NEUTRAL":
+        return True, bias, confidence
+
+    if target_mode == "LONG":
+        return bias != "SHORT", bias, confidence
+    else:
+        return bias != "LONG", bias, confidence
+
+
 def _build_result(
     target_mode: "TradingMode",
     conditions: Dict[str, bool],
@@ -103,6 +129,8 @@ class SignalAggregator:
             divergence_strength = 0.0
             divergence_type = "无"
 
+        ai_ok, ai_bias, ai_conf = _ai_not_contrary("SHORT")
+
         return _build_result(
             TradingMode.SHORT,
             conditions={
@@ -110,6 +138,7 @@ class SignalAggregator:
                 # "funding_rate": fr_value >= cfg.funding_rate_threshold,
                 "top_trader_ratio": tt_value <= cfg.top_trader_ratio_threshold,
                 "cvd_divergence": cvd_bearish,
+                "ai_not_contrary": ai_ok,
             },
             values={
                 "fear_greed": fg_value,
@@ -119,8 +148,10 @@ class SignalAggregator:
                 "price_change_pct": price_change,
                 "divergence_strength": divergence_strength,
                 "divergence_type": divergence_type,
+                "ai_bias": ai_bias,
+                "ai_confidence": ai_conf,
             },
-            ok_reason="🛡️ 做空模式触发: 聪明钱看空 + CVD 顶背离",
+            ok_reason="🛡️ 做空模式触发: 聪明钱看空 + CVD 顶背离 + AI 不矛盾",
             fail_prefix="做空模式未触发",
         )
     
@@ -154,16 +185,17 @@ class SignalAggregator:
             divergence_type = "无"
         
         # 条件判断
-        cond_fg = fg_value <= cfg.fear_greed_threshold
         cond_tt = tt_value > cfg.top_trader_ratio_threshold
         cond_cvd = cvd_bullish
-        
+        ai_ok, ai_bias, ai_conf = _ai_not_contrary("LONG")
+
         return _build_result(
             TradingMode.LONG,
             conditions={
-                # "fear_greed": cond_fg,
+                # "fear_greed": fg_value <= cfg.fear_greed_threshold,
                 "top_trader_ratio": cond_tt,
                 "cvd_divergence": cond_cvd,
+                "ai_not_contrary": ai_ok,
             },
             values={
                 "fear_greed": fg_value,
@@ -172,8 +204,10 @@ class SignalAggregator:
                 "price_change_pct": price_change,
                 "divergence_strength": divergence_strength,
                 "divergence_type": divergence_type,
+                "ai_bias": ai_bias,
+                "ai_confidence": ai_conf,
             },
-            ok_reason="⚔️ 做多模式触发: 聪明钱看多 + CVD 底背离",
+            ok_reason="⚔️ 做多模式触发: 聪明钱看多 + CVD 底背离 + AI 不矛盾",
             fail_prefix="做多模式未触发",
         )
     

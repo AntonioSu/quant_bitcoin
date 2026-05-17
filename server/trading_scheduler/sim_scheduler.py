@@ -151,7 +151,9 @@ class SimTradingScheduler(BaseTradingScheduler):
         )
 
         trade = self._make_trade(mode_str, action, btc_price, close_btc, pnl,
-                                 entry_price=self.position.entry_price)
+                                 entry_price=self.position.entry_price,
+                                 market_indicators=self._capture_market_indicators(),
+                                 trigger_reason=reason or None)
 
         if close_ratio >= 1.0:
             self.position.reset()

@@ -102,14 +102,14 @@ class TradingConfig:
                 short=ShortConfig(
                     fear_greed_threshold=70,
                     funding_rate_threshold=0.001, # 资金费率阈值大于0.001%时，跟随做空
-                    top_trader_ratio_threshold=0.70,  # 聪明钱多空比 < 0.75 (偏空，跟随做空)
+                    top_trader_ratio_threshold=0.8,  # 聪明钱多空比 < 0.75 (偏空，跟随做空)
                     max_loss_pct=5.0,
                     atr_multiplier=1.2,
                 ),
                 # 做多模式，跟随大户看多时做多
                 long=LongConfig(
                     fear_greed_threshold=32,
-                    top_trader_ratio_threshold=1.5,  # 聪明钱多空比 > 1.5 (偏多，跟随做多)
+                    top_trader_ratio_threshold=1.2,  # 聪明钱多空比 > 1.5 (偏多，跟随做多)
                     max_loss_pct=5,
                     atr_multiplier=1.2,
                 ),

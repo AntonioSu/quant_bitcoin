@@ -31,17 +31,17 @@ mkdir -p "$PROJECT_DIR/logs"
 
 start() {
     LISTENING_PID=$(ss -tlnp "sport = :$PORT" 2>/dev/null | awk '/LISTEN/{match($0,/pid=([0-9]+)/,a); print a[1]}')
-    if [ -n "$LISTENING_PID" ] && pgrep -f "stock_btc.bin.run_server" 2>/dev/null | grep -qw "$LISTENING_PID"; then
+    if [ -n "$LISTENING_PID" ] && pgrep -f "bin.run_server" 2>/dev/null | grep -qw "$LISTENING_PID"; then
         echo "服务已在运行 (端口 $PORT, PID: $LISTENING_PID)"
         return 1
     fi
     
     echo "启动服务..."
-    cd "$PROJECT_DIR/.."
+    cd "$PROJECT_DIR"
     # PYTHONUNBUFFERED=1 避免重定向到文件时 stdout 被全缓冲，导致日志不实时更新
     # 拼接所有 FLAG
     ALL_FLAGS="$SIM_FLAG $DEMO_FLAG $LIVE_FLAG"
-    PYTHONUNBUFFERED=1 nohup python -m stock_btc.bin.run_server --port $PORT $ALL_FLAGS > "$LOG_FILE" 2>&1 &
+    PYTHONPATH="$PROJECT_DIR/.." PYTHONUNBUFFERED=1 nohup python -m bin.run_server --port $PORT $ALL_FLAGS > "$LOG_FILE" 2>&1 &
     STARTED_PID=$!
     
     sleep 2
@@ -68,7 +68,7 @@ stop() {
     fi
 
     # 清理所有残留的同名服务进程
-    ZOMBIE_PIDS=$(pgrep -f "stock_btc.bin.run_server" 2>/dev/null)
+    ZOMBIE_PIDS=$(pgrep -f "bin.run_server" 2>/dev/null)
     if [ -n "$ZOMBIE_PIDS" ]; then
         echo "🧹 发现残留进程，清理中: $ZOMBIE_PIDS"
         echo "$ZOMBIE_PIDS" | xargs kill -9 2>/dev/null
@@ -80,7 +80,7 @@ stop() {
 
 status() {
     LISTENING_PID=$(ss -tlnp "sport = :$PORT" 2>/dev/null | awk '/LISTEN/{match($0,/pid=([0-9]+)/,a); print a[1]}')
-    PROCESS_PIDS=$(pgrep -f "stock_btc.bin.run_server" 2>/dev/null)
+    PROCESS_PIDS=$(pgrep -f "bin.run_server" 2>/dev/null)
 
     if [ -n "$LISTENING_PID" ] && echo "$PROCESS_PIDS" | grep -qw "$LISTENING_PID"; then
         echo "✅ 服务运行中 (端口 $PORT, PID: $LISTENING_PID)"
