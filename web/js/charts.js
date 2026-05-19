@@ -20,6 +20,7 @@ function initChart() {
         },
         rightPriceScale: {
             borderColor: THEME.border,
+            minimumWidth: 80,
         },
         timeScale: {
             borderColor: THEME.border,
@@ -102,6 +103,7 @@ function initMacdChart() {
         },
         rightPriceScale: {
             borderColor: THEME.border,
+            minimumWidth: 80,
             scaleMargins: { top: 0.1, bottom: 0.1 },
         },
         timeScale: {
@@ -162,6 +164,7 @@ function initVolChart() {
         },
         rightPriceScale: {
             borderColor: THEME.border,
+            minimumWidth: 80,
             scaleMargins: { top: 0.2, bottom: 0.0 },
         },
         timeScale: {
@@ -222,6 +225,7 @@ function ensureEtfChart() {
         },
         rightPriceScale: {
             borderColor: THEME.border,
+            minimumWidth: 80,
             scaleMargins: { top: 0.1, bottom: 0.1 },
         },
         timeScale: {
