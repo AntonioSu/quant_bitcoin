@@ -104,6 +104,18 @@ class MACDCalculator:
         elif prev_diff >= 0 > curr_diff:
             signal_type = MACDSignalType.BEARISH_CROSS
 
+        if signal_type == MACDSignalType.NONE:
+            lookback = min(4, len(macd_line) - 1)
+            for i in range(2, lookback + 1):
+                d_prev = macd_line[-(i + 1)] - signal_line[-(i + 1)]
+                d_curr = macd_line[-i] - signal_line[-i]
+                if d_prev <= 0 < d_curr and curr_diff > 0:
+                    signal_type = MACDSignalType.BULLISH_CROSS
+                    break
+                elif d_prev >= 0 > d_curr and curr_diff < 0:
+                    signal_type = MACDSignalType.BEARISH_CROSS
+                    break
+
         above_zero = cur_macd > 0
         histogram_rising = cur_hist > prev_hist
 
