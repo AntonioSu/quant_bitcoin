@@ -227,6 +227,22 @@ def _get_indicators_from_market() -> IndicatorData:
     history_store.add(HistoryStore.FUNDING_RATE, fr_value, extra={"annual": fr_annual})
     history_store.add(HistoryStore.TOP_TRADER_RATIO, tt_value, extra={"sentiment": tt_sentiment})
 
+    # 记录 ETF 历史（按交易日去重）
+    etf_raw_hist = market.etf_flow.raw if market.etf_flow and market.etf_flow.raw else {}
+    if etf_raw_hist.get("daily_flow_usd") is not None:
+        history_store.add(
+            HistoryStore.ETF_FLOW,
+            etf_raw_hist["daily_flow_usd"],
+            extra={
+                "date": etf_raw_hist.get("date"),
+                "flow_3d_usd": etf_raw_hist.get("flow_3d_usd"),
+                "flow_7d_usd": etf_raw_hist.get("flow_7d_usd"),
+                "cum_flow_usd": etf_raw_hist.get("cum_flow_usd"),
+                "total_net_assets_usd": etf_raw_hist.get("total_net_assets_usd"),
+                "streak_days": etf_raw_hist.get("streak_days"),
+            },
+        )
+
     # 新闻分析数据
     news_score = market.news.value if market.news else None
     news_sentiment = market.news.raw.get("sentiment") if market.news and market.news.raw else None
@@ -551,16 +567,68 @@ async def get_klines(
         return []
 
 @app.get("/api/etf-flow")
-async def get_etf_flow(limit: int = Query(default=30, le=60)):
-    """获取 BTC ETF 历史资金流数据"""
+async def get_etf_flow(limit: int = Query(default=0, le=9999)):
+    """获取 BTC ETF 历史资金流数据 (本地历史 + API 增量合并)
+
+    limit=0 返回全部历史, 否则返回最近 N 天 (newest first)
+    """
+    import json as _json
     from stock_btc.data_sources.etf_flow import ETFFlow
+
+    local_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "data", "etf_flow_history.json",
+    )
+
+    # 1) 读本地历史
+    local_data: list = []
+    try:
+        if os.path.exists(local_path):
+            with open(local_path, "r", encoding="utf-8") as f:
+                local_data = _json.load(f)
+    except Exception as e:
+        logger.warning(f"读取 ETF 本地历史失败: {e}")
+
+    # 2) 从 SoSoValue 拉最近数据做增量合并
     try:
         etf = ETFFlow()
-        history = await asyncio.to_thread(etf.fetch_history, limit)
-        return history
+        api_data = await asyncio.to_thread(etf.fetch_history, 60)
+        if api_data:
+            existing_dates = {d["date"] for d in local_data}
+            new_records = []
+            for item in api_data:
+                if item["date"] not in existing_dates:
+                    new_records.append({
+                        "date": item["date"],
+                        "daily_flow": item["daily_flow"],
+                        "daily_flow_m": round(item["daily_flow"] / 1e6, 1),
+                        "cum_flow": item.get("cum_flow", 0),
+                        "etf_flows": {},
+                    })
+            if new_records:
+                local_data.extend(new_records)
+                local_data.sort(key=lambda x: x["date"])
+                # 回写本地文件
+                try:
+                    with open(local_path, "w", encoding="utf-8") as f:
+                        _json.dump(local_data, f, ensure_ascii=False)
+                    logger.info(f"ETF 本地历史新增 {len(new_records)} 天")
+                except Exception as e:
+                    logger.warning(f"回写 ETF 本地历史失败: {e}")
     except Exception as e:
-        logger.error(f"获取 ETF 资金流数据失败: {e}")
-        return []
+        logger.warning(f"ETF API 增量更新失败: {e}")
+
+    # 3) 格式化返回 (newest first, 与前端兼容)
+    result = [
+        {"date": d["date"], "daily_flow": d["daily_flow"], "cum_flow": d.get("cum_flow", 0)}
+        for d in local_data
+    ]
+    result.sort(key=lambda x: x["date"], reverse=True)
+
+    if limit > 0:
+        result = result[:limit]
+
+    return result
 
 
 def _ai_analysis_payload() -> dict:

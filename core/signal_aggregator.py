@@ -1,77 +1,91 @@
 """信号聚合器
 
-整合所有数据源，判断交易模式触发条件:
-- 做空模式 (做空): 三灯全绿才触发
-  - 费率 >= 0.03%
-  - 聪明钱多空比 < 0.75 (大户看空，跟随做空)
-  - CVD 顶背离信号
-- 做多模式 (做多): 三灯全绿才触发
-  - 聪明钱多空比 > 1.5 (大户看多，跟随做多)
-  - CVD 底背离信号
-- 做多模式优先级 > 做空模式 > 空闲
+当前模式: 完全基于 AI 综合研判驱动开仓决策
+- AI bias=SHORT + confidence >= 阈值 → 触发做空
+- AI bias=LONG  + confidence >= 阈值 → 触发做多
+- 其余情况 → IDLE
+- 做多优先级 > 做空 > 空闲
 
-数据来源: 使用全局 market 实例，避免重复请求
+# [已注释] 传统指标模式:
+# - 做空: 聪明钱多空比 < 阈值 + CVD 顶背离
+# - 做多: 聪明钱多空比 > 阈值 + CVD 底背离
+
+数据来源: 使用全局 market 实例
 """
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from .config import TradingConfig, ParameterSet
 from .market_data import market
-from ..indicators.cvd_divergence import DivergenceType
+# from ..indicators.cvd_divergence import DivergenceType  # 传统指标模式需要
 from ..utils import logger
 
 
-def _ai_not_contrary(target_mode: str) -> tuple:
-    """检查 AI 研判是否与目标方向矛盾
+# 各参数组对应的 AI 置信度门槛
+_AI_CONFIDENCE_THRESHOLDS = {
+    ParameterSet.CONSERVATIVE: 75,
+    ParameterSet.STANDARD: 65,
+    ParameterSet.AGGRESSIVE: 55,
+}
 
-    规则:
-      - AI 方向一致或 NEUTRAL → 通过
-      - AI 方向相反 → 不通过
-      - AI 不可用（未刷新/报错） → 视为 NEUTRAL，通过
 
-    Returns: (passed: bool, ai_bias: str, ai_confidence: int)
+def _get_ai_signal() -> tuple:
+    """获取当前 AI 研判信号
+
+    Returns: (bias: str, confidence: int, summary: str)
+        bias: "LONG" / "SHORT" / "NEUTRAL" / "N/A"(不可用)
     """
     if not market.ai_analysis or not market.ai_analysis.raw:
-        return True, "N/A", 0
+        return "N/A", 0, "AI 研判未就绪"
 
     raw = market.ai_analysis.raw
-    bias = raw.get("bias", "NEUTRAL")
-    confidence = raw.get("confidence", 0)
-
-    if bias == "NEUTRAL":
-        return True, bias, confidence
-
-    if target_mode == "LONG":
-        return bias != "SHORT", bias, confidence
-    else:
-        return bias != "LONG", bias, confidence
-
-
-def _build_result(
-    target_mode: "TradingMode",
-    conditions: Dict[str, bool],
-    values: Dict[str, float],
-    ok_reason: str,
-    fail_prefix: str,
-) -> "SignalResult":
-    all_green = all(conditions.values())
-    confidence = sum(conditions.values()) / len(conditions)
-    if all_green:
-        logger.info(ok_reason)
-        reason = ok_reason
-    else:
-        failed = [k for k, v in conditions.items() if not v]
-        reason = f"{fail_prefix}: {', '.join(failed)} 条件不满足"
-        logger.debug(reason)
-    return SignalResult(
-        mode=target_mode if all_green else TradingMode.IDLE,
-        conditions=conditions,
-        values=values,
-        confidence=confidence,
-        reason=reason,
+    return (
+        raw.get("bias", "NEUTRAL"),
+        int(raw.get("confidence", 0)),
+        raw.get("summary", ""),
     )
+
+
+# ── [已注释] 传统指标辅助函数 ──────────────────────────────────
+# def _ai_not_contrary(target_mode: str) -> tuple:
+#     """检查 AI 研判是否与目标方向矛盾
+#     规则:
+#       - AI 方向一致或 NEUTRAL → 通过
+#       - AI 方向相反 → 不通过
+#       - AI 不可用（未刷新/报错） → 视为 NEUTRAL，通过
+#     Returns: (passed: bool, ai_bias: str, ai_confidence: int)
+#     """
+#     if not market.ai_analysis or not market.ai_analysis.raw:
+#         return True, "N/A", 0
+#     raw = market.ai_analysis.raw
+#     bias = raw.get("bias", "NEUTRAL")
+#     confidence = raw.get("confidence", 0)
+#     if bias == "NEUTRAL":
+#         return True, bias, confidence
+#     if target_mode == "LONG":
+#         return bias != "SHORT", bias, confidence
+#     else:
+#         return bias != "LONG", bias, confidence
+#
+#
+# def _build_result(target_mode, conditions, values, ok_reason, fail_prefix):
+#     all_green = all(conditions.values())
+#     confidence = sum(conditions.values()) / len(conditions)
+#     if all_green:
+#         logger.info(ok_reason)
+#         reason = ok_reason
+#     else:
+#         failed = [k for k, v in conditions.items() if not v]
+#         reason = f"{fail_prefix}: {', '.join(failed)} 条件不满足"
+#         logger.debug(reason)
+#     return SignalResult(
+#         mode=target_mode if all_green else TradingMode.IDLE,
+#         conditions=conditions, values=values,
+#         confidence=confidence, reason=reason,
+#     )
+# ── [已注释] 传统指标辅助函数 END ──────────────────────────────
 
 
 class TradingMode(Enum):
@@ -92,157 +106,171 @@ class SignalResult:
 
 
 class SignalAggregator:
-    """信号聚合器
-    
-    使用全局 market 实例获取数据，避免重复请求。
-    """
+    """信号聚合器 — 完全由 AI 综合研判驱动"""
     
     def __init__(
         self, 
-        config: Optional[TradingConfig] = None
+        config: Optional[TradingConfig] = None,
     ):
-        """
-        Args:
-            config: 交易配置 (默认使用 Standard)
-        """
         self.config = config or TradingConfig.get_preset(ParameterSet.STANDARD)
+        self._confidence_threshold = _AI_CONFIDENCE_THRESHOLDS.get(
+            self.config.preset, 65
+        )
     
-    def check_short_conditions(self) -> SignalResult:
-        """检查神盾模式触发条件（做空）- 三灯全绿"""
-        cfg = self.config.short
-        
+    def _check_ai_direction(self, target: str) -> SignalResult:
+        """检查 AI 是否给出指定方向的信号
+
+        Args:
+            target: "LONG" 或 "SHORT"
+        """
+        ai_bias, ai_conf, ai_summary = _get_ai_signal()
+
         fg_value = market.fear_greed.value if market.fear_greed else 50
         fr_value = market.funding_rate.value if market.funding_rate else 0
         tt_value = market.top_trader.value if market.top_trader else 1.0
-        
-        # CVD 顶背离检测 (使用全局 market 中的结果)
-        if market.cvd:
-            cvd_bearish = market.cvd.is_valid_signal and market.cvd.divergence == DivergenceType.BEARISH
-            cvd_value = market.cvd.cvd_change_pct
-            price_change = market.cvd.price_change_pct
-            divergence_strength = market.cvd.strength
-            divergence_type = "顶背离" if cvd_bearish else "无"
+
+        values = {
+            "fear_greed": fg_value,
+            "funding_rate": fr_value,
+            "top_trader_ratio": tt_value,
+            "ai_bias": ai_bias,
+            "ai_confidence": ai_conf,
+        }
+
+        mode = TradingMode.LONG if target == "LONG" else TradingMode.SHORT
+        direction_match = ai_bias == target
+        confidence_enough = ai_conf >= self._confidence_threshold
+
+        conditions = {
+            "ai_direction": direction_match,
+            "ai_confidence": confidence_enough,
+        }
+
+        all_green = direction_match and confidence_enough
+        if all_green:
+            tag = "⚔️ 做多" if target == "LONG" else "🛡️ 做空"
+            reason = (
+                f"{tag}模式触发: AI 研判 {ai_bias} "
+                f"(置信度 {ai_conf}% >= {self._confidence_threshold}%) "
+                f"| {ai_summary}"
+            )
+            logger.info(reason)
         else:
-            cvd_bearish = False
-            cvd_value = 0.0
-            price_change = 0.0
-            divergence_strength = 0.0
-            divergence_type = "无"
+            parts = []
+            if not direction_match:
+                parts.append(f"AI 方向={ai_bias} (需要 {target})")
+            if not confidence_enough:
+                parts.append(f"置信度 {ai_conf}% < {self._confidence_threshold}%")
+            reason = f"{'做多' if target == 'LONG' else '做空'}模式未触发: {', '.join(parts)}"
 
-        ai_ok, ai_bias, ai_conf = _ai_not_contrary("SHORT")
-
-        return _build_result(
-            TradingMode.SHORT,
-            conditions={
-                # "fear_greed": fg_value >= cfg.fear_greed_threshold,
-                # "funding_rate": fr_value >= cfg.funding_rate_threshold,
-                "top_trader_ratio": tt_value <= cfg.top_trader_ratio_threshold,
-                "cvd_divergence": cvd_bearish,
-                "ai_not_contrary": ai_ok,
-            },
-            values={
-                "fear_greed": fg_value,
-                "funding_rate": fr_value,
-                "top_trader_ratio": tt_value,
-                "cvd_change_pct": cvd_value,
-                "price_change_pct": price_change,
-                "divergence_strength": divergence_strength,
-                "divergence_type": divergence_type,
-                "ai_bias": ai_bias,
-                "ai_confidence": ai_conf,
-            },
-            ok_reason="🛡️ 做空模式触发: 聪明钱看空 + CVD 顶背离 + AI 不矛盾",
-            fail_prefix="做空模式未触发",
+        return SignalResult(
+            mode=mode if all_green else TradingMode.IDLE,
+            conditions=conditions,
+            values=values,
+            confidence=ai_conf / 100.0 if all_green else 0.0,
+            reason=reason,
         )
-    
+
     def check_long_conditions(self) -> SignalResult:
-        """
-        检查长矛模式触发条件（做多）- 三灯全绿
-        
-        1. 绝望冰点: F&G <= threshold   (暂时不使用)
-        2. 聪明钱看多: 多空比 > threshold
-        3. 微观底背离: CVD 底背离信号
-        
-        使用全局 market 中的 CVD 结果
-        """
-        cfg = self.config.long
-        
-        fg_value = market.fear_greed.value if market.fear_greed else 50
-        tt_value = market.top_trader.value if market.top_trader else 1.0
-        
-        # CVD 底背离检测 (使用全局 market 中的结果)
-        if market.cvd:
-            cvd_bullish = market.cvd.is_valid_signal and market.cvd.divergence == DivergenceType.BULLISH
-            cvd_value = market.cvd.cvd_change_pct
-            price_change = market.cvd.price_change_pct
-            divergence_strength = market.cvd.strength
-            divergence_type = "底背离" if cvd_bullish else "无"
-        else:
-            cvd_bullish = False
-            cvd_value = 0.0
-            price_change = 0.0
-            divergence_strength = 0.0
-            divergence_type = "无"
-        
-        # 条件判断
-        cond_tt = tt_value > cfg.top_trader_ratio_threshold
-        cond_cvd = cvd_bullish
-        ai_ok, ai_bias, ai_conf = _ai_not_contrary("LONG")
+        return self._check_ai_direction("LONG")
 
-        return _build_result(
-            TradingMode.LONG,
-            conditions={
-                # "fear_greed": fg_value <= cfg.fear_greed_threshold,
-                "top_trader_ratio": cond_tt,
-                "cvd_divergence": cond_cvd,
-                "ai_not_contrary": ai_ok,
-            },
-            values={
-                "fear_greed": fg_value,
-                "top_trader_ratio": tt_value,
-                "cvd_change_pct": cvd_value,
-                "price_change_pct": price_change,
-                "divergence_strength": divergence_strength,
-                "divergence_type": divergence_type,
-                "ai_bias": ai_bias,
-                "ai_confidence": ai_conf,
-            },
-            ok_reason="⚔️ 做多模式触发: 聪明钱看多 + CVD 底背离 + AI 不矛盾",
-            fail_prefix="做多模式未触发",
-        )
-    
+    # ── [已注释] 传统指标版 check_long_conditions ─────────────
+    # def check_long_conditions(self) -> SignalResult:
+    #     cfg = self.config.long
+    #     fg_value = market.fear_greed.value if market.fear_greed else 50
+    #     tt_value = market.top_trader.value if market.top_trader else 1.0
+    #     if market.cvd:
+    #         cvd_bullish = market.cvd.is_valid_signal and market.cvd.divergence == DivergenceType.BULLISH
+    #         cvd_value = market.cvd.cvd_change_pct
+    #         price_change = market.cvd.price_change_pct
+    #         divergence_strength = market.cvd.strength
+    #         divergence_type = "底背离" if cvd_bullish else "无"
+    #     else:
+    #         cvd_bullish = False
+    #         cvd_value = price_change = divergence_strength = 0.0
+    #         divergence_type = "无"
+    #     cond_tt = tt_value > cfg.top_trader_ratio_threshold
+    #     cond_cvd = cvd_bullish
+    #     ai_ok, ai_bias, ai_conf = _ai_not_contrary("LONG")
+    #     return _build_result(
+    #         TradingMode.LONG,
+    #         conditions={
+    #             "top_trader_ratio": cond_tt,
+    #             "cvd_divergence": cond_cvd,
+    #             "ai_not_contrary": ai_ok,
+    #         },
+    #         values={
+    #             "fear_greed": fg_value, "top_trader_ratio": tt_value,
+    #             "cvd_change_pct": cvd_value, "price_change_pct": price_change,
+    #             "divergence_strength": divergence_strength,
+    #             "divergence_type": divergence_type,
+    #             "ai_bias": ai_bias, "ai_confidence": ai_conf,
+    #         },
+    #         ok_reason="⚔️ 做多模式触发: 聪明钱看多 + CVD 底背离 + AI 不矛盾",
+    #         fail_prefix="做多模式未触发",
+    #     )
+    # ── [已注释] 传统指标版 check_long_conditions END ─────────
+
+    def check_short_conditions(self) -> SignalResult:
+        return self._check_ai_direction("SHORT")
+
+    # ── [已注释] 传统指标版 check_short_conditions ────────────
+    # def check_short_conditions(self) -> SignalResult:
+    #     cfg = self.config.short
+    #     fg_value = market.fear_greed.value if market.fear_greed else 50
+    #     fr_value = market.funding_rate.value if market.funding_rate else 0
+    #     tt_value = market.top_trader.value if market.top_trader else 1.0
+    #     if market.cvd:
+    #         cvd_bearish = market.cvd.is_valid_signal and market.cvd.divergence == DivergenceType.BEARISH
+    #         cvd_value = market.cvd.cvd_change_pct
+    #         price_change = market.cvd.price_change_pct
+    #         divergence_strength = market.cvd.strength
+    #         divergence_type = "顶背离" if cvd_bearish else "无"
+    #     else:
+    #         cvd_bearish = False
+    #         cvd_value = price_change = divergence_strength = 0.0
+    #         divergence_type = "无"
+    #     ai_ok, ai_bias, ai_conf = _ai_not_contrary("SHORT")
+    #     return _build_result(
+    #         TradingMode.SHORT,
+    #         conditions={
+    #             "top_trader_ratio": tt_value <= cfg.top_trader_ratio_threshold,
+    #             "cvd_divergence": cvd_bearish,
+    #             "ai_not_contrary": ai_ok,
+    #         },
+    #         values={
+    #             "fear_greed": fg_value, "funding_rate": fr_value,
+    #             "top_trader_ratio": tt_value,
+    #             "cvd_change_pct": cvd_value, "price_change_pct": price_change,
+    #             "divergence_strength": divergence_strength,
+    #             "divergence_type": divergence_type,
+    #             "ai_bias": ai_bias, "ai_confidence": ai_conf,
+    #         },
+    #         ok_reason="🛡️ 做空模式触发: 聪明钱看空 + CVD 顶背离 + AI 不矛盾",
+    #         fail_prefix="做空模式未触发",
+    #     )
+    # ── [已注释] 传统指标版 check_short_conditions END ────────
+
     def evaluate(self, current_mode: TradingMode = TradingMode.IDLE) -> SignalResult:
-        """
-        综合评估当前应处于什么模式
-        
-        优先级: 开仓模式 > 平仓模式 > 空闲
-        
-        使用全局 market 数据，无需传入 klines
-        """
-        # 检查做多触发条件
+        """综合评估: 做多优先 > 做空 > 空闲"""
         long_result = self.check_long_conditions()
         if long_result.mode == TradingMode.LONG:
             return long_result
 
-        # 检查做空触发条件
         short_result = self.check_short_conditions()
         if short_result.mode == TradingMode.SHORT:
             return short_result
         
-        # 无信号
-        fg_value = market.fear_greed.value if market.fear_greed else 50
-        fr_value = market.funding_rate.value if market.funding_rate else 0
-        tt_value = market.top_trader.value if market.top_trader else 1.0
-        
+        ai_bias, ai_conf, ai_summary = _get_ai_signal()
         return SignalResult(
             mode=TradingMode.IDLE,
             conditions={},
             values={
-                "fear_greed": fg_value,
-                "funding_rate": fr_value,
-                "top_trader_ratio": tt_value,
+                "ai_bias": ai_bias,
+                "ai_confidence": ai_conf,
             },
             confidence=0.0,
-            reason="无交易信号",
+            reason=f"无交易信号 (AI: {ai_bias} {ai_conf}%)"
+                   if ai_bias != "N/A"
+                   else "无交易信号 (AI 研判未就绪)",
         )
-

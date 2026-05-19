@@ -55,6 +55,7 @@ class TradingConfig:
     """交易系统完整配置"""
     short: ShortConfig
     long: LongConfig
+    preset: ParameterSet = ParameterSet.STANDARD
     
     @classmethod
     def get_preset(cls, preset: ParameterSet) -> "TradingConfig":
@@ -77,6 +78,7 @@ class TradingConfig:
                     max_loss_pct=1.0,
                     atr_multiplier=2.0,
                 ),
+                preset=ParameterSet.CONSERVATIVE,
             ),
             # 标准模式: 默认参数
             ParameterSet.STANDARD: cls(
@@ -95,6 +97,7 @@ class TradingConfig:
                     max_loss_pct=1.5,
                     atr_multiplier=1.5,
                 ),
+                preset=ParameterSet.STANDARD,
             ),
             # 激进模式: 低门槛，高风险
             ParameterSet.AGGRESSIVE: cls(
@@ -113,6 +116,7 @@ class TradingConfig:
                     max_loss_pct=5,
                     atr_multiplier=1.2,
                 ),
+                preset=ParameterSet.AGGRESSIVE,
             ),
         }
         return presets[preset]

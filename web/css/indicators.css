@@ -222,7 +222,25 @@
     background: var(--bg-inset, #FAFBFC);
 }
 
+.vol-wrap.no-bottom-radius {
+    border-radius: 0;
+    border-bottom: none;
+}
+
 #vol-container {
+    width: 100%;
+}
+
+.etf-wrap {
+    position: relative;
+    border: 1px solid var(--border);
+    border-top: 1px dashed var(--border);
+    border-radius: 0 0 10px 10px;
+    overflow: hidden;
+    background: var(--bg-inset, #FAFBFC);
+}
+
+#etf-container {
     width: 100%;
 }
 

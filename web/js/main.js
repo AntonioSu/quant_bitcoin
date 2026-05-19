@@ -37,7 +37,7 @@ async function init() {
 
     connectWebSocket();
 
-    setInterval(loadKlines, 60000);
+    setInterval(() => { loadKlines(); if (activeInterval === '1d') loadEtfFlow(); }, 60000);
     setInterval(loadPortfolio, 10000);
     setInterval(loadIndicators, 10000);
     setInterval(loadStatus, 10000);

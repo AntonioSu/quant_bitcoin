@@ -197,6 +197,120 @@ function initVolChart() {
     }).observe(container);
 }
 
+function ensureEtfChart() {
+    if (etfChart) return;
+    const container = document.getElementById('etf-container');
+    if (!container || container.clientWidth === 0) return;
+
+    etfChart = LightweightCharts.createChart(container, {
+        width: container.clientWidth,
+        height: 110,
+        layout: {
+            background: { type: 'solid', color: THEME.bg },
+            textColor: THEME.text,
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 11,
+        },
+        grid: {
+            vertLines: { color: THEME.grid },
+            horzLines: { color: THEME.grid },
+        },
+        crosshair: {
+            mode: LightweightCharts.CrosshairMode.Normal,
+            vertLine: { color: 'rgba(13, 148, 136, 0.25)', labelBackgroundColor: THEME.teal },
+            horzLine: { color: 'rgba(13, 148, 136, 0.25)', labelBackgroundColor: THEME.teal },
+        },
+        rightPriceScale: {
+            borderColor: THEME.border,
+            scaleMargins: { top: 0.1, bottom: 0.1 },
+        },
+        timeScale: {
+            borderColor: THEME.border,
+            timeVisible: false,
+            visible: true,
+        },
+    });
+
+    etfBarSeries = etfChart.addHistogramSeries({
+        priceFormat: {
+            type: 'custom',
+            formatter: v => {
+                const abs = Math.abs(v);
+                if (abs >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+                if (abs >= 1e6) return (v / 1e6).toFixed(0) + 'M';
+                if (abs >= 1e3) return (v / 1e3).toFixed(0) + 'K';
+                return v.toFixed(0);
+            },
+        },
+        priceLineVisible: false,
+        lastValueVisible: false,
+    });
+
+    new ResizeObserver(() => {
+        if (container.clientWidth > 0) {
+            etfChart.applyOptions({ width: container.clientWidth });
+        }
+    }).observe(container);
+
+    // 十字线与主图联动
+    if (chart) {
+        const mainSeries = candleSeries;
+        etfChart.subscribeCrosshairMove(param => {
+            if (!param.time) { chart.clearCrosshairPosition(); return; }
+            if (mainSeries) chart.setCrosshairPosition(NaN, param.time, mainSeries);
+        });
+        chart.subscribeCrosshairMove(param => {
+            if (!param.time) { etfChart.clearCrosshairPosition(); return; }
+            if (etfBarSeries) etfChart.setCrosshairPosition(NaN, param.time, etfBarSeries);
+        });
+    }
+}
+
+async function loadEtfFlow() {
+    try {
+        const resp = await fetch(`${API_BASE}/api/etf-flow?limit=0`);
+        const data = await resp.json();
+        if (!data || !data.length) return;
+
+        ensureEtfChart();
+        if (!etfChart || !etfBarSeries) return;
+
+        const sorted = data.slice().reverse();
+        const barData = sorted.map(d => {
+            const parts = d.date.split('-');
+            const ts = Date.UTC(+parts[0], +parts[1] - 1, +parts[2]) / 1000;
+            const flow = d.daily_flow;
+            return {
+                time: ts,
+                value: flow,
+                color: flow >= 0 ? 'rgba(22, 163, 74, 0.75)' : 'rgba(220, 38, 38, 0.75)',
+            };
+        });
+        etfBarSeries.setData(barData);
+
+        const last = sorted[sorted.length - 1];
+        const el = document.getElementById('etf-bar-val');
+        if (el && last) {
+            const v = last.daily_flow;
+            const abs = Math.abs(v);
+            let txt;
+            if (abs >= 1e9) txt = (v / 1e9).toFixed(2) + 'B';
+            else if (abs >= 1e6) txt = (v / 1e6).toFixed(1) + 'M';
+            else txt = v.toFixed(0);
+            el.textContent = (v >= 0 ? '+$' : '-$') + txt.replace('-', '');
+            el.className = 'macd-legend-item ' + (v >= 0 ? 'green' : 'red');
+        }
+
+        // 对齐到 K线的可见时间范围
+        if (chart) {
+            const tr = chart.timeScale().getVisibleRange();
+            if (tr) etfChart.timeScale().setVisibleRange(tr);
+        }
+    } catch (e) {
+        console.error('加载ETF资金流失败:', e);
+    }
+}
+
 function syncCharts() {
     const panes = [
         { chart: chart, anchor: () => candleSeries },
@@ -216,6 +330,10 @@ function syncCharts() {
                         tgt.chart.timeScale().setVisibleLogicalRange(range);
                     }
                 });
+                if (etfChart && chart) {
+                    const tr = chart.timeScale().getVisibleRange();
+                    if (tr) etfChart.timeScale().setVisibleRange(tr);
+                }
             } finally {
                 syncing = false;
             }
@@ -224,13 +342,14 @@ function syncCharts() {
         src.chart.subscribeCrosshairMove(param => {
             panes.forEach(tgt => {
                 if (tgt.chart === src.chart) return;
-                if (!param.time) {
-                    tgt.chart.clearCrosshairPosition();
-                    return;
-                }
+                if (!param.time) { tgt.chart.clearCrosshairPosition(); return; }
                 const series = tgt.anchor();
                 if (series) tgt.chart.setCrosshairPosition(NaN, param.time, series);
             });
+            if (etfChart && etfBarSeries) {
+                if (!param.time) { etfChart.clearCrosshairPosition(); return; }
+                etfChart.setCrosshairPosition(NaN, param.time, etfBarSeries);
+            }
         });
     });
 }
@@ -400,15 +519,27 @@ async function applyInterval(interval) {
     document.querySelectorAll('#kline-interval-tabs .kline-tab').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.interval === interval);
     });
+
+    const isDaily = interval === '1d';
+    const etfWrap = document.getElementById('etf-wrap');
+    const volWrap = document.querySelector('.vol-wrap');
+    if (etfWrap) etfWrap.style.display = isDaily ? '' : 'none';
+    if (volWrap) volWrap.classList.toggle('no-bottom-radius', isDaily);
+
+    if (volChart) volChart.applyOptions({ timeScale: { visible: !isDaily } });
+
     await loadKlines();
     if (chart) chart.timeScale().fitContent();
     if (macdChart) macdChart.timeScale().fitContent();
     if (volChart) volChart.timeScale().fitContent();
+
+    if (isDaily) await loadEtfFlow();
 }
 
 async function loadKlines() {
     try {
-        const resp = await fetch(`${API_BASE}/api/klines?interval=${activeInterval}&limit=500`);
+        const klineLimit = activeInterval === '1d' ? 120 : 500;
+        const resp = await fetch(`${API_BASE}/api/klines?interval=${activeInterval}&limit=${klineLimit}`);
         const data = await resp.json();
 
         const formatted = data.map(k => ({

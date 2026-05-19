@@ -138,25 +138,37 @@ class ETFFlow(DataSourceBase):
                 logger.warning(f"ETF API 返回格式异常: {type(data)}")
                 return []
 
-            return data
+            seen: set = set()
+            deduped: list = []
+            for item in data:
+                d = item.get("date")
+                if d and d not in seen:
+                    seen.add(d)
+                    deduped.append(item)
+            return deduped
         except Exception as e:
             logger.warning(f"获取 ETF 历史数据失败: {e}")
             return []
 
     @retry_request(max_retries=3, delay=2.0)
     def fetch_history(self, limit: int = 30) -> List[Dict]:
-        """获取 ETF 历史资金流 (格式化，供 API/图表使用)"""
+        """获取 ETF 历史资金流 (格式化，供 API/图表使用，按日期去重)"""
         raw = self._fetch_history(limit)
-        return [
-            {
-                "date": item["date"],
+        seen: set = set()
+        result: List[Dict] = []
+        for item in raw:
+            date = item["date"]
+            if date in seen:
+                continue
+            seen.add(date)
+            result.append({
+                "date": date,
                 "daily_flow": item["total_net_inflow"],
                 "cum_flow": item["cum_net_inflow"],
                 "total_assets": item["total_net_assets"],
                 "volume": item["total_value_traded"],
-            }
-            for item in raw
-        ]
+            })
+        return result
 
     def is_strong_inflow(self, threshold_usd: float = 200e6) -> bool:
         """是否出现大额净流入"""

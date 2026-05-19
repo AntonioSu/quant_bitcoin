@@ -50,6 +50,7 @@ class MarketAnalyzer:
         )
         self.memory = memory            # AnalysisMemory 实例
         self.summarizer = summarizer    # StrategySummarizer 实例
+        self._last_analysis: Optional[Dict[str, Any]] = None  # 上次研判结果
 
     def fetch(self, market) -> DataPoint:
         """对当前 market 数据做一次综合分析
@@ -79,8 +80,14 @@ class MarketAnalyzer:
             except Exception as e:
                 logger.warning(f"📝 研判记忆保存失败: {e}")
 
+        # 记录本次结果供下次锚定
+        prev_bias = self._last_analysis.get("bias") if self._last_analysis else None
+        self._last_analysis = analysis
+
+        direction_changed = prev_bias and prev_bias != bias and prev_bias != "NEUTRAL"
+        change_tag = f" (方向变化: {prev_bias}→{bias})" if direction_changed else ""
         logger.info(
-            f"🤖 市场综合分析: {bias} ({confidence}%) — {summary[:50]}"
+            f"🤖 市场综合分析: {bias} ({confidence}%) — {summary[:50]}{change_tag}"
         )
 
         return DataPoint(
@@ -305,6 +312,29 @@ class MarketAnalyzer:
                         "请将以下经验教训纳入本次研判的权重考量：\n\n"
                         f"{memo}"
                     )
+
+            # 注入上次研判结果（锚定一致性）
+            if self._last_analysis:
+                last = self._last_analysis
+                drivers_text = ""
+                if last.get("key_drivers"):
+                    drivers_text = "\n".join(
+                        f"  - [{d.get('side','?')}/{d.get('weight','?')}] {d.get('factor','')}"
+                        for d in last["key_drivers"] if isinstance(d, dict)
+                    )
+                prompt += (
+                    "\n\n## 上次研判结果（请遵守一致性规则）\n"
+                    f"- 方向: {last.get('bias')}  置信度: {last.get('confidence')}%\n"
+                    f"- 研判: {last.get('summary', '')}\n"
+                    f"- 动作: {last.get('action', '')}\n"
+                )
+                if drivers_text:
+                    prompt += f"- 关键驱动:\n{drivers_text}\n"
+                prompt += (
+                    "\n请对比当前指标与上次研判时的情况，"
+                    "如果市场条件没有发生实质性变化，请维持上次方向。"
+                    "如果需要改变方向，必须在 key_drivers 中明确说明变化原因。"
+                )
 
             # 注入最近几次研判 vs 实际结果（短期记忆）
             if self.memory:
