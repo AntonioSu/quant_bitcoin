@@ -109,6 +109,23 @@ class IndicatorData(BaseModel):
     ai_risks: Optional[list] = None
     ai_horizon: Optional[str] = None
     ai_updated_at: Optional[str] = None
+    # 新增指标
+    netflow_btc: Optional[float] = None
+    netflow_signal: Optional[str] = None
+    macro_dxy: Optional[float] = None
+    macro_dxy_trend: Optional[str] = None
+    macro_m2_change: Optional[float] = None
+    macro_signal: Optional[str] = None
+    options_pc_ratio: Optional[float] = None
+    options_max_pain: Optional[float] = None
+    options_price_vs_mp: Optional[float] = None
+    options_signal: Optional[str] = None
+    stablecoin_supply_b: Optional[float] = None
+    stablecoin_change_7d: Optional[float] = None
+    stablecoin_signal: Optional[str] = None
+    mvrv_value: Optional[float] = None
+    mvrv_zone: Optional[str] = None
+    mvrv_signal: Optional[str] = None
     timestamp: str
 
 
@@ -280,6 +297,37 @@ def _get_indicators_from_market() -> IndicatorData:
     ai_horizon = ai_raw.get("horizon")
     ai_updated_at = market.ai_analysis.timestamp.isoformat() if market.ai_analysis else None
 
+    # 交易所净流入
+    nf_raw = market.exchange_netflow.raw if market.exchange_netflow and market.exchange_netflow.raw else {}
+    netflow_btc = nf_raw.get("netflow_btc")
+    netflow_signal = nf_raw.get("signal")
+
+    # 宏观数据
+    macro_raw = market.macro.raw if market.macro and market.macro.raw else {}
+    macro_dxy = macro_raw.get("dxy", {}).get("value") if isinstance(macro_raw.get("dxy"), dict) else None
+    macro_dxy_trend = macro_raw.get("dxy", {}).get("trend") if isinstance(macro_raw.get("dxy"), dict) else None
+    macro_m2_change = macro_raw.get("m2", {}).get("change_pct_4w") if isinstance(macro_raw.get("m2"), dict) else None
+    macro_signal = macro_raw.get("signal")
+
+    # 期权数据
+    opt_raw = market.options.raw if market.options and market.options.raw else {}
+    options_pc_ratio = opt_raw.get("put_call_ratio")
+    options_max_pain = opt_raw.get("max_pain")
+    options_price_vs_mp = opt_raw.get("price_vs_maxpain_pct")
+    options_signal = opt_raw.get("signal")
+
+    # 稳定币
+    sc_raw = market.stablecoin.raw if market.stablecoin and market.stablecoin.raw else {}
+    stablecoin_supply_b = sc_raw.get("total_supply_b")
+    stablecoin_change_7d = sc_raw.get("change_7d_pct")
+    stablecoin_signal = sc_raw.get("signal")
+
+    # MVRV
+    mvrv_raw = market.mvrv.raw if market.mvrv and market.mvrv.raw else {}
+    mvrv_value = mvrv_raw.get("mvrv")
+    mvrv_zone = mvrv_raw.get("zone")
+    mvrv_signal = mvrv_raw.get("signal")
+
     return IndicatorData(
         fear_greed=fg_value,
         fear_greed_class=fg_class,
@@ -347,6 +395,22 @@ def _get_indicators_from_market() -> IndicatorData:
         ai_risks=ai_risks,
         ai_horizon=ai_horizon,
         ai_updated_at=ai_updated_at,
+        netflow_btc=netflow_btc,
+        netflow_signal=netflow_signal,
+        macro_dxy=macro_dxy,
+        macro_dxy_trend=macro_dxy_trend,
+        macro_m2_change=macro_m2_change,
+        macro_signal=macro_signal,
+        options_pc_ratio=options_pc_ratio,
+        options_max_pain=options_max_pain,
+        options_price_vs_mp=options_price_vs_mp,
+        options_signal=options_signal,
+        stablecoin_supply_b=stablecoin_supply_b,
+        stablecoin_change_7d=stablecoin_change_7d,
+        stablecoin_signal=stablecoin_signal,
+        mvrv_value=mvrv_value,
+        mvrv_zone=mvrv_zone,
+        mvrv_signal=mvrv_signal,
         timestamp=market.last_update.isoformat() if market.last_update else datetime.now().isoformat(),
     )
 
@@ -804,7 +868,10 @@ WEB_DIR = os.path.join(os.path.dirname(__file__), "..", "web")
 @app.get("/")
 async def index():
     """返回前端页面"""
-    return FileResponse(os.path.join(WEB_DIR, "index.html"))
+    return FileResponse(
+        os.path.join(WEB_DIR, "index.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 if os.path.exists(WEB_DIR):

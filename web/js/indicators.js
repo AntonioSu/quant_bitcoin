@@ -309,6 +309,89 @@ function updateIndicators(data) {
         etfAssetsEl.textContent = (etfAssets / 1e9).toFixed(1) + 'B';
     }
 
+    // Exchange Netflow
+    const nfEl = document.getElementById('netflow-value');
+    const nfBtc = data.netflow_btc;
+    if (nfBtc !== null && nfBtc !== undefined) {
+        const nfAbs = Math.abs(nfBtc);
+        const nfText = (nfBtc >= 0 ? '+' : '-') + (nfAbs >= 1000 ? (nfAbs / 1000).toFixed(1) + 'K' : nfAbs.toFixed(0));
+        nfEl.textContent = nfText + ' BTC';
+        nfEl.className = 'indicator-value ' + (nfBtc > 2000 ? 'red' : nfBtc < -2000 ? 'green' : '');
+    }
+    const nfSigEl = document.getElementById('netflow-signal');
+    const nfSigMap = {
+        strong_sell_pressure: '强卖压',
+        moderate_sell_pressure: '中等卖压',
+        strong_accumulation: '强囤币',
+        moderate_accumulation: '囤币中',
+        neutral: '中性',
+    };
+    nfSigEl.textContent = nfSigMap[data.netflow_signal] || data.netflow_signal || '--';
+
+    // Options P/C + Max Pain
+    const optPcEl = document.getElementById('options-pc');
+    const pcRatio = data.options_pc_ratio;
+    if (pcRatio !== null && pcRatio !== undefined) {
+        optPcEl.textContent = pcRatio.toFixed(3);
+        optPcEl.className = 'indicator-value ' + (pcRatio > 1.0 ? 'red' : pcRatio < 0.7 ? 'green' : '');
+    }
+    const optSubEl = document.getElementById('options-sub');
+    const maxPain = data.options_max_pain;
+    const priceVsMp = data.options_price_vs_mp;
+    if (maxPain) {
+        const mpText = 'MP:$' + (maxPain / 1000).toFixed(0) + 'K';
+        const vsText = priceVsMp != null ? ` ${priceVsMp >= 0 ? '+' : ''}${priceVsMp.toFixed(1)}%` : '';
+        optSubEl.textContent = mpText + vsText;
+    }
+
+    // Stablecoin
+    const scEl = document.getElementById('stablecoin-value');
+    const scSupply = data.stablecoin_supply_b;
+    if (scSupply !== null && scSupply !== undefined) {
+        scEl.textContent = '$' + scSupply.toFixed(0) + 'B';
+        scEl.className = 'indicator-value';
+    }
+    const scSubEl = document.getElementById('stablecoin-sub');
+    const sc7d = data.stablecoin_change_7d;
+    if (sc7d !== null && sc7d !== undefined) {
+        scSubEl.textContent = `7d: ${sc7d >= 0 ? '+' : ''}${sc7d.toFixed(2)}%`;
+        scSubEl.className = 'indicator-sub ' + (sc7d > 0.3 ? 'green' : sc7d < -0.3 ? 'red' : '');
+    }
+
+    // MVRV
+    const mvrvEl = document.getElementById('mvrv-value');
+    const mvrvVal = data.mvrv_value;
+    if (mvrvVal !== null && mvrvVal !== undefined) {
+        mvrvEl.textContent = mvrvVal.toFixed(3);
+        mvrvEl.className = 'indicator-value ' + (mvrvVal > 2.5 ? 'red' : mvrvVal < 1.0 ? 'green' : '');
+    }
+    const mvrvSubEl = document.getElementById('mvrv-sub');
+    const zoneMap = {
+        extreme_top: '极度高估', overvalued: '高估', fair_high: '正常偏高',
+        fair_low: '正常偏低', undervalued: '低估', extreme_bottom: '极度低估',
+    };
+    mvrvSubEl.textContent = zoneMap[data.mvrv_zone] || data.mvrv_zone || '--';
+
+    // DXY
+    const dxyEl = document.getElementById('dxy-value');
+    const dxyVal = data.macro_dxy;
+    if (dxyVal !== null && dxyVal !== undefined) {
+        dxyEl.textContent = dxyVal.toFixed(1);
+        dxyEl.className = 'indicator-value ' + (data.macro_dxy_trend === 'strengthening' ? 'red' : 'green');
+    }
+    const dxySubEl = document.getElementById('dxy-sub');
+    dxySubEl.textContent = data.macro_dxy_trend === 'strengthening' ? '走强 (BTC承压)' : '走弱 (BTC利好)';
+
+    // M2
+    const m2El = document.getElementById('m2-value');
+    const m2Change = data.macro_m2_change;
+    if (m2Change !== null && m2Change !== undefined) {
+        m2El.textContent = (m2Change >= 0 ? '+' : '') + m2Change.toFixed(2) + '%';
+        m2El.className = 'indicator-value ' + (m2Change > 0 ? 'green' : 'red');
+    }
+    const m2SubEl = document.getElementById('m2-sub');
+    m2SubEl.textContent = m2Change > 0 ? '流动性扩张' : '流动性紧缩';
+
     // News sentiment
     const sentimentEl = document.getElementById('news-sentiment');
     const scoreEl = document.getElementById('news-score');

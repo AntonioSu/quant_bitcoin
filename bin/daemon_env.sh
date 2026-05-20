@@ -1,6 +1,11 @@
 #!/bin/bash
 # 服务运维公共配置，被 start/stop/restart/status/logs 引用
 export HTTPS_PROXY=http://gfw.in.zhihu.com:18080
+
+# Python 环境（改成你需要的 conda 环境名）
+CONDA_ENV="base"
+eval "$(conda shell.bash hook 2>/dev/null)"
+conda activate "$CONDA_ENV"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR/.."
 LOG_FILE="$PROJECT_DIR/logs/daemon.log"

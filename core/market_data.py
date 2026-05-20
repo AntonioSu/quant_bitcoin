@@ -16,6 +16,11 @@ from ..data_sources.etf_flow import ETFFlow
 from ..data_sources.open_interest import OpenInterest
 from ..data_sources.liquidation import Liquidation
 from ..data_sources.btc_taker_kline import TakerData, taker_analyzer
+from ..data_sources.exchange_netflow import ExchangeNetflow
+from ..data_sources.macro_data import MacroData
+from ..data_sources.options_data import OptionsData
+from ..data_sources.stablecoin_flow import StablecoinFlow
+from ..data_sources.mvrv_data import MVRVData
 from ..indicators import ATRCalculator, CVDDivergenceDetector, MACDCalculator, RSICalculator, BollingerCalculator, MACalculator, VolumeCalculator
 from ..indicators.atr import ATRResult
 from ..indicators.cvd_divergence import CVDResult
@@ -52,6 +57,11 @@ class MarketData:
     open_interest: Optional[DataPoint] = None
     liquidation: Optional[DataPoint] = None
     ai_analysis: Optional[DataPoint] = None
+    exchange_netflow: Optional[DataPoint] = None
+    macro: Optional[DataPoint] = None
+    options: Optional[DataPoint] = None
+    stablecoin: Optional[DataPoint] = None
+    mvrv: Optional[DataPoint] = None
     klines_4h: List[List] = field(default_factory=list)
     last_update: Optional[datetime] = None
     
@@ -146,6 +156,11 @@ class MarketData:
                 **(self.ai_analysis.raw or {}),
                 "updated_at": self.ai_analysis.timestamp.isoformat() if self.ai_analysis else None,
             } if self.ai_analysis else None,
+            "exchange_netflow": self.exchange_netflow.raw if self.exchange_netflow and self.exchange_netflow.raw else None,
+            "macro": self.macro.raw if self.macro and self.macro.raw else None,
+            "options": self.options.raw if self.options and self.options.raw else None,
+            "stablecoin": self.stablecoin.raw if self.stablecoin and self.stablecoin.raw else None,
+            "mvrv": self.mvrv.raw if self.mvrv and self.mvrv.raw else None,
             "last_update": self.last_update.isoformat() if self.last_update else None,
         }
 
@@ -171,6 +186,14 @@ _strategy_summarizer = StrategySummarizer(memory=_analysis_memory)
 _market_analyzer = MarketAnalyzer(memory=_analysis_memory, summarizer=_strategy_summarizer)
 _open_interest = OpenInterest(symbol="BTCUSDT", period="4h")
 _liquidation = Liquidation(symbol="BTCUSDT", lookback_minutes=60)
+
+# 新增数据源
+import os as _os
+_exchange_netflow = ExchangeNetflow()  # CoinMetrics 免费 API
+_macro_data = MacroData(fred_api_key=_os.getenv("FRED_API_KEY", ""))
+_options_data = OptionsData()  # Deribit 公开 API
+_stablecoin_flow = StablecoinFlow()  # DefiLlama 免费 API
+_mvrv_data = MVRVData()  # CoinMetrics 免费 API
 
 # 全局数据实例
 market = MarketData()
@@ -219,7 +242,32 @@ def refresh_market_data() -> MarketData:
         market.liquidation = _liquidation.fetch()
     except Exception as e:
         logger.warning(f"获取爆仓数据失败: {e}")
-    
+
+    try:
+        market.exchange_netflow = _exchange_netflow.fetch()
+    except Exception as e:
+        logger.warning(f"获取交易所净流入数据失败: {e}")
+
+    try:
+        market.options = _options_data.fetch()
+    except Exception as e:
+        logger.warning(f"获取期权数据失败: {e}")
+
+    try:
+        market.stablecoin = _stablecoin_flow.fetch()
+    except Exception as e:
+        logger.warning(f"获取稳定币供应数据失败: {e}")
+
+    try:
+        market.mvrv = _mvrv_data.fetch()
+    except Exception as e:
+        logger.warning(f"获取MVRV数据失败: {e}")
+
+    try:
+        market.macro = _macro_data.fetch()
+    except Exception as e:
+        logger.warning(f"获取宏观经济数据失败: {e}")
+
     # 2. 获取 K线数据 (供 ATR/CVD/Taker 计算)
     try:
         market.klines_4h = fetch_klines_sync(

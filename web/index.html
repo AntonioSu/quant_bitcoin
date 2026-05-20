@@ -5,13 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BTC 神盾-长矛 监控系统</title>
     <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.min.js"></script>
-    <link rel="stylesheet" href="/static/css/base.css?v=20260514c">
-    <link rel="stylesheet" href="/static/css/header.css?v=20260514c">
-    <link rel="stylesheet" href="/static/css/layout.css?v=20260514c">
-    <link rel="stylesheet" href="/static/css/ai_analysis.css?v=20260514d">
-    <link rel="stylesheet" href="/static/css/indicators.css?v=20260519a">
-    <link rel="stylesheet" href="/static/css/trades.css?v=20260514c">
-    <link rel="stylesheet" href="/static/css/responsive.css?v=20260514c">
+    <link rel="stylesheet" href="/static/css/base.css?v=20260520a">
+    <link rel="stylesheet" href="/static/css/header.css?v=20260520a">
+    <link rel="stylesheet" href="/static/css/layout.css?v=20260520a">
+    <link rel="stylesheet" href="/static/css/ai_analysis.css?v=20260520a">
+    <link rel="stylesheet" href="/static/css/indicators.css?v=20260520a">
+    <link rel="stylesheet" href="/static/css/trades.css?v=20260520a">
+    <link rel="stylesheet" href="/static/css/responsive.css?v=20260520a">
 </head>
 <body>
     <header class="header">
@@ -260,6 +260,36 @@
                     <div class="etf-row"><span class="etf-tag">总量</span><span class="etf-val" id="etf-cum-flow">--</span></div>
                     <div class="etf-row"><span class="etf-tag">AUM</span><span class="etf-val" id="etf-total-assets">--</span></div>
                 </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">交易所净流入</div>
+                    <div class="indicator-value" id="netflow-value">--</div>
+                    <div class="indicator-sub" id="netflow-signal">--</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">期权 P/C Ratio</div>
+                    <div class="indicator-value" id="options-pc">--</div>
+                    <div class="indicator-sub" id="options-sub">--</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">稳定币供应</div>
+                    <div class="indicator-value" id="stablecoin-value">--</div>
+                    <div class="indicator-sub" id="stablecoin-sub">--</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">MVRV</div>
+                    <div class="indicator-value" id="mvrv-value">--</div>
+                    <div class="indicator-sub" id="mvrv-sub">--</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">DXY 美元指数</div>
+                    <div class="indicator-value" id="dxy-value">--</div>
+                    <div class="indicator-sub" id="dxy-sub">--</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">M2 货币供应</div>
+                    <div class="indicator-value" id="m2-value">--</div>
+                    <div class="indicator-sub" id="m2-sub">--</div>
+                </div>
             </div>
         </div>
 
@@ -358,15 +388,15 @@
         </div>
     </div>
 
-    <script src="/static/js/config.js?v=20260519a"></script>
-    <script src="/static/js/utils.js?v=20260514c"></script>
-    <script src="/static/js/charts.js?v=20260519c"></script>
-    <script src="/static/js/indicators.js?v=20260514c"></script>
-    <script src="/static/js/ai_analysis.js?v=20260514d"></script>
-    <script src="/static/js/portfolio.js?v=20260514c"></script>
-    <script src="/static/js/performance.js?v=20260514c"></script>
-    <script src="/static/js/trades.js?v=20260514c"></script>
-    <script src="/static/js/data_loader.js?v=20260514c"></script>
-    <script src="/static/js/main.js?v=20260519c"></script>
+    <script src="/static/js/config.js?v=20260520a"></script>
+    <script src="/static/js/utils.js?v=20260520a"></script>
+    <script src="/static/js/charts.js?v=20260520a"></script>
+    <script src="/static/js/indicators.js?v=20260520b"></script>
+    <script src="/static/js/ai_analysis.js?v=20260520a"></script>
+    <script src="/static/js/portfolio.js?v=20260520a"></script>
+    <script src="/static/js/performance.js?v=20260520a"></script>
+    <script src="/static/js/trades.js?v=20260520a"></script>
+    <script src="/static/js/data_loader.js?v=20260520a"></script>
+    <script src="/static/js/main.js?v=20260520a"></script>
 </body>
 </html>

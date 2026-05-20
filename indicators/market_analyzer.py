@@ -104,6 +104,7 @@ class MarketAnalyzer:
             "fear_greed", "funding_rate", "top_trader",
             "macd_4h", "rsi_4h", "bollinger_4h", "ma_4h",
             "cvd_6x4h", "etf_flow", "taker_4h", "news",
+            "exchange_netflow", "macro", "options", "stablecoin", "mvrv",
         ]
         digest = {}
         for k in keys:
@@ -272,6 +273,51 @@ class MarketAnalyzer:
             snap["atr_4h"] = {
                 "value": market.atr.value,
                 "period": market.atr.period,
+            }
+
+        # 新增数据维度
+        if market.exchange_netflow:
+            raw = market.exchange_netflow.raw or {}
+            snap["exchange_netflow"] = {
+                "netflow_btc": raw.get("netflow_btc"),
+                "signal": raw.get("signal"),
+            }
+
+        if market.macro:
+            raw = market.macro.raw or {}
+            snap["macro"] = {
+                "dxy_value": raw.get("dxy", {}).get("value") if isinstance(raw.get("dxy"), dict) else None,
+                "dxy_trend": raw.get("dxy", {}).get("trend") if isinstance(raw.get("dxy"), dict) else None,
+                "m2_change_pct": raw.get("m2", {}).get("change_pct_4w") if isinstance(raw.get("m2"), dict) else None,
+                "m2_trend": raw.get("m2", {}).get("trend") if isinstance(raw.get("m2"), dict) else None,
+                "signal": raw.get("signal"),
+            }
+
+        if market.options:
+            raw = market.options.raw or {}
+            snap["options"] = {
+                "put_call_ratio": raw.get("put_call_ratio"),
+                "max_pain": raw.get("max_pain"),
+                "price_vs_maxpain_pct": raw.get("price_vs_maxpain_pct"),
+                "signal": raw.get("signal"),
+            }
+
+        if market.stablecoin:
+            raw = market.stablecoin.raw or {}
+            snap["stablecoin"] = {
+                "total_supply_b": raw.get("total_supply_b"),
+                "change_7d_pct": raw.get("change_7d_pct"),
+                "change_30d_pct": raw.get("change_30d_pct"),
+                "signal": raw.get("signal"),
+            }
+
+        if market.mvrv:
+            raw = market.mvrv.raw or {}
+            snap["mvrv"] = {
+                "value": raw.get("mvrv"),
+                "z_score_30d": raw.get("z_score_30d"),
+                "zone": raw.get("zone"),
+                "signal": raw.get("signal"),
             }
 
         snap["last_update"] = (
