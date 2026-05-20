@@ -30,7 +30,7 @@ from ..indicators.bollinger_signal import BollingerResult
 from ..indicators.ma_signal import MAResult
 from ..indicators.volume_signal import VolumeResult
 from ..indicators.news_analyzer import NewsAnalyzer
-from ..indicators.market_analyzer import MarketAnalyzer
+from ..multi_agent.market_analyzer import MarketAnalyzer
 from ..indicators.analysis_memory import AnalysisMemory
 from ..indicators.strategy_summarizer import StrategySummarizer
 from ..binance_utils import fetch_klines_sync

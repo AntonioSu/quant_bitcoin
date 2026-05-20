@@ -28,6 +28,8 @@ from ..utils.llm_client import LLMClient
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 _PROMPT_DIR = os.path.join(os.path.dirname(__file__), '..', 'prompts')
+_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
+_LAST_ANALYSIS_FILE = os.path.join(_DATA_DIR, 'last_analysis.json')
 
 
 class MarketAnalyzer:
@@ -50,7 +52,7 @@ class MarketAnalyzer:
         )
         self.memory = memory            # AnalysisMemory 实例
         self.summarizer = summarizer    # StrategySummarizer 实例
-        self._last_analysis: Optional[Dict[str, Any]] = None  # 上次研判结果
+        self._last_analysis: Optional[Dict[str, Any]] = self._load_last_analysis()
 
     def fetch(self, market) -> DataPoint:
         """对当前 market 数据做一次综合分析
@@ -80,9 +82,10 @@ class MarketAnalyzer:
             except Exception as e:
                 logger.warning(f"📝 研判记忆保存失败: {e}")
 
-        # 记录本次结果供下次锚定
+        # 记录本次结果供下次锚定（同时持久化到磁盘）
         prev_bias = self._last_analysis.get("bias") if self._last_analysis else None
         self._last_analysis = analysis
+        self._save_last_analysis(analysis)
 
         direction_changed = prev_bias and prev_bias != bias and prev_bias != "NEUTRAL"
         change_tag = f" (方向变化: {prev_bias}→{bias})" if direction_changed else ""
@@ -96,6 +99,32 @@ class MarketAnalyzer:
             source=self.name,
             raw=analysis,
         )
+
+    @staticmethod
+    def _load_last_analysis() -> Optional[Dict[str, Any]]:
+        """启动时从磁盘恢复上次研判结果"""
+        if not os.path.exists(_LAST_ANALYSIS_FILE):
+            return None
+        try:
+            with open(_LAST_ANALYSIS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            logger.info(
+                f"🔄 恢复上次研判: {data.get('bias')} ({data.get('confidence')}%)"
+            )
+            return data
+        except Exception as e:
+            logger.warning(f"加载上次研判失败: {e}")
+            return None
+
+    @staticmethod
+    def _save_last_analysis(analysis: Dict[str, Any]):
+        """将本次研判结果持久化到磁盘"""
+        try:
+            os.makedirs(os.path.dirname(_LAST_ANALYSIS_FILE), exist_ok=True)
+            with open(_LAST_ANALYSIS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(analysis, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"保存上次研判失败: {e}")
 
     @staticmethod
     def _digest_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
@@ -314,8 +343,7 @@ class MarketAnalyzer:
         if market.mvrv:
             raw = market.mvrv.raw or {}
             snap["mvrv"] = {
-                "value": raw.get("mvrv"),
-                "z_score_30d": raw.get("z_score_30d"),
+                "mvrv_ratio": raw.get("mvrv"),
                 "zone": raw.get("zone"),
                 "signal": raw.get("signal"),
             }
@@ -343,7 +371,7 @@ class MarketAnalyzer:
             )
 
             # 注入指标知识库
-            knowledge_dir = os.path.join(_PROMPT_DIR, 'knowledge')
+            knowledge_dir = os.path.join(os.path.dirname(__file__), 'knowledge')
             for fname in ('indicator_guide.md', 'combination_rules.md', 'market_regimes.md'):
                 fpath = os.path.join(knowledge_dir, fname)
                 if os.path.exists(fpath):
