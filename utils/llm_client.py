@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional
 import requests
 from dotenv import load_dotenv
 
-from .log_util import logger
+from utils.log_util import logger
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 

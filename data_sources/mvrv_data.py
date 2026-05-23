@@ -21,8 +21,8 @@ import requests
 from datetime import datetime
 from typing import Optional, Dict
 
-from .base import DataSourceBase, DataPoint
-from ..utils import logger, retry_request
+from data_sources.base import DataSourceBase, DataPoint
+from utils import logger, retry_request
 
 
 class MVRVData(DataSourceBase):

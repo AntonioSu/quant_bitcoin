@@ -3,11 +3,11 @@
 
 import sys
 import os
-# tests/ -> stock_btc/ -> agent/
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# tests/ -> quant_bitcoin/
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from stock_btc.server.scheduler import _load_binance_config
-from stock_btc.utils import logger
+from server.scheduler import _load_binance_config
+from utils import logger
 
 
 def test_config_loading():
@@ -45,7 +45,7 @@ def test_executor_creation():
     print("=" * 60)
     
     try:
-        from stock_btc.binance_utils import create_futures_executor
+        from binance_utils import create_futures_executor
         
         # 加载 Demo 配置，使用 demo_api_key
         demo_cfg = _load_binance_config("binance_demo", use_demo_key=True)

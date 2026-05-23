@@ -19,10 +19,10 @@ import time
 import asyncio
 from datetime import datetime
 from typing import Dict, List, Optional, Any
-from stock_btc.core import TradingConfig, ParameterSet, TradingMode, refresh_market_data_async, refresh_news_data_async, refresh_ai_analysis_async
-from stock_btc.utils import logger
+from core import TradingConfig, ParameterSet, TradingMode, refresh_market_data_async, refresh_news_data_async, refresh_ai_analysis_async
+from utils import logger
 
-from .trading_scheduler import SimTradingScheduler, LiveTradingScheduler
+from server.trading_scheduler import SimTradingScheduler, LiveTradingScheduler
 
 
 # ══════════════════════════════════════════════════════════════
@@ -209,7 +209,7 @@ def _create_sim_scheduler(preset_name: str, config: TradingConfig, app_state) ->
     Returns:
         SimTradingScheduler 实例
     """
-    from .trading_scheduler import SimTradingScheduler
+    from server.trading_scheduler import SimTradingScheduler
     
     # 状态文件路径
     state_file = os.path.join(
@@ -263,8 +263,8 @@ def _create_demo_scheduler(preset_name: str, config: TradingConfig,
     Returns:
         LiveTradingScheduler 实例
     """
-    from .trading_scheduler import LiveTradingScheduler
-    from stock_btc.binance_utils import create_futures_executor
+    from server.trading_scheduler import LiveTradingScheduler
+    from binance_utils import create_futures_executor
     
     try:
         # 加载 Demo 配置，使用 demo_api_key
@@ -337,8 +337,8 @@ def _create_live_scheduler(preset_name: str, config: TradingConfig,
     Returns:
         LiveTradingScheduler 实例
     """
-    from .trading_scheduler import LiveTradingScheduler
-    from stock_btc.binance_utils import create_futures_executor
+    from server.trading_scheduler import LiveTradingScheduler
+    from binance_utils import create_futures_executor
     
     try:
         # 加载主网配置
@@ -409,7 +409,7 @@ def create_integrated_app(use_sim=True, use_demo=False, use_live=False,
         live_preset: 真实主网使用的预设 (默认 aggressive)
         max_capital: 实盘/Demo盘资金上限
     """
-    from .api import app
+    from server.api import app
 
     preset_configs = {
         "conservative": TradingConfig.get_preset(ParameterSet.CONSERVATIVE),

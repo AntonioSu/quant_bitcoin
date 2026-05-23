@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 from threading import Lock
 
-from stock_btc.utils import logger
+from utils import logger
 
 
 class StateStore:

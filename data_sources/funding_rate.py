@@ -14,8 +14,8 @@ import requests
 from datetime import datetime
 from typing import Optional, List, Dict
 
-from stock_btc.data_sources.base import DataSourceBase, DataPoint
-from stock_btc.utils import logger, retry_request
+from data_sources.base import DataSourceBase, DataPoint
+from utils import logger, retry_request
 
 
 class FundingRate(DataSourceBase):

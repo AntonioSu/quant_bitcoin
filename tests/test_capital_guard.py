@@ -14,10 +14,10 @@ import os
 import asyncio
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from stock_btc.core import TradingConfig, ParameterSet, TradingMode
-from stock_btc.server.trading_scheduler.live_scheduler import LiveTradingScheduler, OPEN_COOLDOWN_SEC
+from core import TradingConfig, ParameterSet, TradingMode
+from server.trading_scheduler.live_scheduler import LiveTradingScheduler, OPEN_COOLDOWN_SEC
 
 
 class FakeExecutor:

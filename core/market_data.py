@@ -1,41 +1,41 @@
 """全局市场数据管理
 
 统一管理所有数据源，避免重复实例化和重复请求。
-所有模块通过 `from stock_btc.core.market_data import market` 获取数据。
+所有模块通过 `from core.market_data import market` 获取数据。
 """
 
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional
 
-from ..data_sources.base import DataPoint
-from ..data_sources.fear_greed import FearGreedIndex
-from ..data_sources.funding_rate import FundingRate
-from ..data_sources.top_trader import TopTraderRatio
-from ..data_sources.etf_flow import ETFFlow
-from ..data_sources.open_interest import OpenInterest
-from ..data_sources.liquidation import Liquidation
-from ..data_sources.btc_taker_kline import TakerData, taker_analyzer
-from ..data_sources.exchange_netflow import ExchangeNetflow
-from ..data_sources.macro_data import MacroData
-from ..data_sources.options_data import OptionsData
-from ..data_sources.stablecoin_flow import StablecoinFlow
-from ..data_sources.mvrv_data import MVRVData
-from ..indicators import ATRCalculator, CVDDivergenceDetector, MACDCalculator, RSICalculator, BollingerCalculator, MACalculator, VolumeCalculator, SupportResistanceCalculator
-from ..indicators.atr import ATRResult
-from ..indicators.cvd_divergence import CVDResult
-from ..indicators.macd_signal import MACDResult
-from ..indicators.rsi_signal import RSIResult
-from ..indicators.bollinger_signal import BollingerResult
-from ..indicators.ma_signal import MAResult
-from ..indicators.volume_signal import VolumeResult
-from ..indicators.support_resistance import SupportResistanceResult
-from ..indicators.news_analyzer import NewsAnalyzer
-from ..multi_agent.market_analyzer import MarketAnalyzer
-from ..indicators.analysis_memory import AnalysisMemory
-from ..indicators.strategy_summarizer import StrategySummarizer
-from ..binance_utils import fetch_klines_sync
-from ..utils import logger
+from data_sources.base import DataPoint
+from data_sources.fear_greed import FearGreedIndex
+from data_sources.funding_rate import FundingRate
+from data_sources.top_trader import TopTraderRatio
+from data_sources.etf_flow import ETFFlow
+from data_sources.open_interest import OpenInterest
+from data_sources.liquidation import Liquidation
+from data_sources.btc_taker_kline import TakerData, taker_analyzer
+from data_sources.exchange_netflow import ExchangeNetflow
+from data_sources.macro_data import MacroData
+from data_sources.options_data import OptionsData
+from data_sources.stablecoin_flow import StablecoinFlow
+from data_sources.mvrv_data import MVRVData
+from indicators import ATRCalculator, CVDDivergenceDetector, MACDCalculator, RSICalculator, BollingerCalculator, MACalculator, VolumeCalculator, SupportResistanceCalculator
+from indicators.atr import ATRResult
+from indicators.cvd_divergence import CVDResult
+from indicators.macd_signal import MACDResult
+from indicators.rsi_signal import RSIResult
+from indicators.bollinger_signal import BollingerResult
+from indicators.ma_signal import MAResult
+from indicators.volume_signal import VolumeResult
+from indicators.support_resistance import SupportResistanceResult
+from multi_agent.news_analyzer import NewsAnalyzer
+from multi_agent.market_analyzer import MarketAnalyzer
+from indicators.analysis_memory import AnalysisMemory
+from multi_agent.strategy_summarizer import StrategySummarizer
+from binance_utils import fetch_klines_sync
+from utils import logger
 
 
 @dataclass
@@ -182,7 +182,14 @@ _macd_calc = MACDCalculator(fast_period=12, slow_period=26, signal_period=9, tim
 _rsi_calc = RSICalculator(period=14, overbought=70.0, oversold=30.0, timeframe="4h")
 _bollinger_calc = BollingerCalculator(period=20, std_dev=2.0, timeframe="4h")
 _ma_calc = MACalculator(fast_period=7, slow_period=25, timeframe="4h")
-_volume_calc = VolumeCalculator(avg_period=20, surge_threshold=2.0, timeframe="4h")
+_volume_calc = VolumeCalculator(
+    avg_period=20,
+    surge_threshold=2.0,
+    timeframe="4h",
+    time_normalize=True,        # 按当根 K线已走时长摊薄历史均量, 消除 K线进度偏置
+    kline_duration_min=240.0,   # 4h = 240 min
+    min_elapsed_min=10.0,       # 前 10 分钟视为 warmup, 返回中性量比 1.0
+)
 _support_resistance_calc = SupportResistanceCalculator(lookback=80, timeframe="4h")
 _news_analyzer = NewsAnalyzer()
 _analysis_memory = AnalysisMemory()

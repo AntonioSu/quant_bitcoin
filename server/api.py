@@ -27,12 +27,12 @@ from pydantic import BaseModel
 
 import os
 
-from stock_btc.core import market, refresh_market_data_async, refresh_ai_analysis_async
-from stock_btc.binance_utils import fetch_price_sync, fetch_klines_sync
-from stock_btc.core import TradingMode
-from stock_btc.utils import logger
-from stock_btc.server.history_store import history_store, HistoryStore
-from stock_btc.server.scheduler import app_state, DEFAULT_INITIAL_USDT
+from core import market, refresh_market_data_async, refresh_ai_analysis_async
+from binance_utils import fetch_price_sync, fetch_klines_sync
+from core import TradingMode
+from utils import logger
+from server.history_store import history_store, HistoryStore
+from server.scheduler import app_state, DEFAULT_INITIAL_USDT
 
 
 AI_MANUAL_COOLDOWN_SEC = 30
@@ -175,7 +175,7 @@ async def _get_btc_price() -> float:
 
 def _get_indicators_from_market() -> IndicatorData:
     """从全局 market 获取指标数据"""
-    from stock_btc.indicators.cvd_divergence import DivergenceType
+    from indicators.cvd_divergence import DivergenceType
     
     # 恐惧贪婪指数
     fg_value = int(market.fear_greed.value) if market.fear_greed else 50
@@ -602,7 +602,7 @@ async def get_trades(
 async def get_performance(preset: Optional[str] = None):
     """获取策略绩效指标 (从调度器读取)"""
     scheduler = app_state.get_scheduler(preset)
-    from ..core.performance import PerformanceTracker
+    from core.performance import PerformanceTracker
     tracker = PerformanceTracker()
     if scheduler:
         return tracker.calculate(scheduler.trades, DEFAULT_INITIAL_USDT)
@@ -658,7 +658,7 @@ async def get_etf_flow(limit: int = Query(default=0, le=9999)):
     limit=0 返回全部历史, 否则返回最近 N 天 (newest first)
     """
     import json as _json
-    from stock_btc.data_sources.etf_flow import ETFFlow
+    from data_sources.etf_flow import ETFFlow
 
     local_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -795,8 +795,8 @@ async def set_config(preset: str):
 async def get_account():
     """获取 Binance 账户余额 (Demo Trading 或 真实主网)"""
     try:
-        from stock_btc.binance_utils.binance_client import BinanceClient
-        from stock_btc.server.scheduler import _load_binance_config
+        from binance_utils.binance_client import BinanceClient
+        from server.scheduler import _load_binance_config
         
         if app_state.live_preset:
             binance_cfg = _load_binance_config("binance_mainnet")

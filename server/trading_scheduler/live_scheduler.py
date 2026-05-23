@@ -4,10 +4,10 @@ import asyncio
 import time
 from typing import Optional
 
-from stock_btc.core import TradingConfig, TradingMode
-from stock_btc.utils import logger
+from core import TradingConfig, TradingMode
+from utils import logger
 
-from .base import BaseTradingScheduler
+from server.trading_scheduler.base import BaseTradingScheduler
 
 OPEN_COOLDOWN_SEC = 120
 
@@ -248,7 +248,7 @@ class LiveTradingScheduler(BaseTradingScheduler):
     
     async def _recalculate_levels(self, direction: str, entry_price: float, leverage: int):
         """重新计算止盈止损价位（用于重启后恢复）"""
-        from stock_btc.binance_utils import fetch_klines
+        from binance_utils import fetch_klines
         
         try:
             klines = await fetch_klines(symbol="BTCUSDT", interval="4h", limit=100, use_cache=True)

@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Any
 from threading import Lock
 from collections import defaultdict
 
-from stock_btc.utils import logger
+from utils import logger
 
 # 历史数据存储
 class HistoryStore:

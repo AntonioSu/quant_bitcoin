@@ -2,9 +2,9 @@
 
 from typing import Optional
 
-from stock_btc.utils import logger
+from utils import logger
 
-from .base import BaseTradingScheduler
+from server.trading_scheduler.base import BaseTradingScheduler
 
 
 class SimTradingScheduler(BaseTradingScheduler):

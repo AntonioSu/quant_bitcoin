@@ -1,4 +1,4 @@
-# stock_btc 问题总结与修复说明
+# quant_bitcoin 问题总结与修复说明
 
 ## 一、核心交易逻辑 Bug
 
@@ -71,7 +71,7 @@
 ### 11. `bin/` 目录迁移后路径全部断裂
 - **现象**: 日志目录、`.env` 路径、模块路径、测试 `sys.path` 全部指向旧位置
 - **涉及文件**: `bin/run_daemon.sh`, `bin/commit.sh`, `bin/run_server.py`, `tests/test_*.py`
-- **修复**: 引入 `PROJECT_DIR`；`commit.sh` 修正 `cd`；`load_env()` 指向 `bin/` 上级；添加 `bin/__init__.py`；daemon 改用 `python -m stock_btc.bin.run_server`
+- **修复**: 引入 `PROJECT_DIR`；`commit.sh` 修正 `cd`；`load_env()` 指向 `bin/` 上级；添加 `bin/__init__.py`；daemon 改用 `python -m bin.run_server`
 
 ### 12. 冗余 helper `get_fear_greed_class()` 函数
 - **现象**: 重复了 `market.fear_greed.raw` 已有的逻辑

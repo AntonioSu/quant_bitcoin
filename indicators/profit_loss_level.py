@@ -17,8 +17,8 @@
 
 from typing import List
 
-from .atr import ATRCalculator
-from ..utils import logger
+from indicators.atr import ATRCalculator
+from utils import logger
 
 
 def calc_maintenance_margin_rate(notional_value: float) -> float:

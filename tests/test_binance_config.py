@@ -4,11 +4,11 @@
 import sys
 import os
 
-# 添加项目路径 (tests/ -> stock_btc/ -> agent/)
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# 添加项目路径 (tests/ -> quant_bitcoin/)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from stock_btc.binance_utils import BinanceClient
-from stock_btc.utils import logger
+from binance_utils import BinanceClient
+from utils import logger
 
 
 def test_demo_config():

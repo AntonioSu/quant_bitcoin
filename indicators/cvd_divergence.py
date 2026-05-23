@@ -19,7 +19,7 @@ from typing import List, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
-from ..utils import logger
+from utils import logger
 
 
 class DivergenceType(Enum):

@@ -1,7 +1,8 @@
 import sys
-sys.path.insert(0, '/data1/suwenyuan/agent')
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from stock_btc.data_sources.funding_rate import FundingRate
+from data_sources.funding_rate import FundingRate
 
 # 测试 U本位合约 (与币安截图一致)
 print('=== U本位合约 (BTCUSDT) ===')

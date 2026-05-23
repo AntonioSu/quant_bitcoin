@@ -32,7 +32,7 @@ from typing import List, Optional
 from dataclasses import dataclass
 from enum import Enum
 
-from ..utils import logger
+from utils import logger
 
 
 class VolumeSignalType(Enum):

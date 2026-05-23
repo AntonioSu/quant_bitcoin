@@ -73,7 +73,7 @@ taker_analyzer = TakerAnalyzer()
 
 
 if __name__ == "__main__":
-    from ..binance_utils import fetch_klines_sync
+    from binance_utils import fetch_klines_sync
     
     klines = fetch_klines_sync("BTCUSDT", "4h", limit=10)
     data = taker_analyzer.calculate(klines, periods=1)

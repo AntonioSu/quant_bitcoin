@@ -1,10 +1,12 @@
 import sys
 import os
-sys.path.insert(0, '/data1/suwenyuan/agent')
-
-# 加载 .env
 from pathlib import Path
-env_file = Path('/data1/suwenyuan/agent/stock_btc/.env')
+
+# tests/ -> quant_bitcoin/
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_PROJECT_ROOT))
+
+env_file = _PROJECT_ROOT / ".env"
 if env_file.exists():
     with open(env_file) as f:
         for line in f:
@@ -13,7 +15,7 @@ if env_file.exists():
                 key, value = line.split("=", 1)
                 os.environ[key.strip()] = value.strip()
 
-from stock_btc.data_sources import WhaleAlert, WhaleDataProvider
+from data_sources import WhaleAlert, WhaleDataProvider
 
 print("=" * 60)
 print("测试 Bitquery API")

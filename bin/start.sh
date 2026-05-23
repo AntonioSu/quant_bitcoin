@@ -12,7 +12,7 @@ echo "启动服务..."
 cd "$PROJECT_DIR"
 ALL_FLAGS="$SIM_FLAG $DEMO_FLAG $LIVE_FLAG"
 # PYTHONUNBUFFERED=1 避免重定向到文件时 stdout 被全缓冲，导致日志不实时更新
-PYTHONPATH="$PROJECT_DIR/.." PYTHONUNBUFFERED=1 nohup python -m bin.run_server --port $PORT $ALL_FLAGS > "$LOG_FILE" 2>&1 &
+PYTHONPATH="$PROJECT_DIR" PYTHONUNBUFFERED=1 nohup python -m bin.run_server --port $PORT $ALL_FLAGS > "$LOG_FILE" 2>&1 &
 STARTED_PID=$!
 
 sleep 2

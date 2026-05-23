@@ -29,8 +29,8 @@ from typing import Dict, List, Optional, Tuple
 
 import aiohttp
 
-from .base import DataSourceBase, DataPoint
-from ..utils import logger
+from data_sources.base import DataSourceBase, DataPoint
+from utils import logger
 
 
 # 最大保留 24h 数据

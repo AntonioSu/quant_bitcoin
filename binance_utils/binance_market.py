@@ -12,8 +12,8 @@ Binance 市场数据 API 封装
 import time
 from typing import List, Optional
 
-from stock_btc.utils import logger
-from stock_btc.utils.http_client import async_get, sync_get
+from utils import logger
+from utils.http_client import async_get, sync_get
 
 
 # ══════════════════════════════════════════════════════════════

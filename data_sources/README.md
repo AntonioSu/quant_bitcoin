@@ -410,7 +410,7 @@ wss://fstream.binance.com/ws/!forceOrder@arr         (有代理时)
 | `raw.headlines` | 前 5 条标题 |
 | `raw.articles` | `[{title, url, summary}, ...]` 最多 20-30 条 |
 
-> 注: 此模块只获取新闻原文, 情感分析由 `indicators/news_analyzer.py` 通过 LLM 完成。
+> 注: 此模块只获取新闻原文, 情感分析由 `multi_agent/news_analyzer.py` 通过 LLM 完成。
 
 ### 环境变量
 

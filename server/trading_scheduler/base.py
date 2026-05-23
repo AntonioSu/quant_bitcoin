@@ -6,16 +6,16 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional
 
-from stock_btc.core import (
+from core import (
     TradingConfig, ParameterSet, TradingMode,
     SignalAggregator,
     get_analysis_memory, get_strategy_summarizer,
 )
-from stock_btc.core.market_data import market
-from stock_btc.indicators import LongLevel, ShortLevel
-from stock_btc.binance_utils import fetch_klines, fetch_price
-from stock_btc.server.state_store import StateStore
-from stock_btc.utils import logger
+from core.market_data import market
+from indicators import LongLevel, ShortLevel
+from binance_utils import fetch_klines, fetch_price
+from server.state_store import StateStore
+from utils import logger
 
 
 class Position:
@@ -83,7 +83,7 @@ class BaseTradingScheduler(ABC):
         self.signal_aggregator = SignalAggregator(config=self.config)
         # ATR 使用全局 market 中的计算结果
         # LongLevel/ShortLevel 仍需要 ATR，但可从 market.atr 获取
-        from stock_btc.indicators import ATRCalculator
+        from indicators import ATRCalculator
         self._atr_calc_fallback = ATRCalculator(period=14, timeframe="4h")
         self.long_level = LongLevel(self._atr_calc_fallback)
         self.short_level = ShortLevel(self._atr_calc_fallback)
@@ -286,7 +286,7 @@ class BaseTradingScheduler(ABC):
     async def _async_reflect(self, record_id: str):
         """异步复盘，不影响交易主流程"""
         try:
-            from stock_btc.indicators.reflector import Reflector
+            from multi_agent.reflector import Reflector
             memory = get_analysis_memory()
             reflector = Reflector(memory=memory)
             await asyncio.to_thread(reflector.reflect_on_trade, record_id)
@@ -296,7 +296,7 @@ class BaseTradingScheduler(ABC):
             if len(all_reflections) >= 3 and len(all_reflections) % 5 == 0:
                 summarizer = get_strategy_summarizer()
                 if summarizer:
-                    from stock_btc.core.performance import PerformanceTracker
+                    from core.performance import PerformanceTracker
                     perf = PerformanceTracker().calculate(self.trades, self.equity - self.total_pnl)
                     await asyncio.to_thread(summarizer.generate, perf)
         except Exception as e:
@@ -484,6 +484,10 @@ class BaseTradingScheduler(ABC):
                 result.update({
                     "news_sentiment": n_raw.get("sentiment"),
                     "news_score": market.news.value,
+                    "news_reasoning": n_raw.get("reasoning"),
+                    "news_key_signals": n_raw.get("key_signals", []),
+                    "news_bullish_factors": n_raw.get("bullish_factors", []),
+                    "news_bearish_factors": n_raw.get("bearish_factors", []),
                 })
 
             # ── AI 综合研判 ──

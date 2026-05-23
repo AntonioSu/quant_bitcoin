@@ -6,7 +6,7 @@ Binance 合约执行器适配器
 import time
 from typing import Dict, Optional
 
-from stock_btc.utils.log_util import logger
+from utils.log_util import logger
 
 
 class BinanceFuturesExecutorAdapter:
@@ -347,7 +347,7 @@ def create_futures_executor(
         demo: 是否使用 Demo Trading
         leverage: 杠杆倍数
     """
-    from stock_btc.binance_utils.binance_client import BinanceClient
+    from binance_utils.binance_client import BinanceClient
     client = BinanceClient(
         binance_cfg=binance_cfg,
         market_type="future",

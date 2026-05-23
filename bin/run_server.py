@@ -120,7 +120,7 @@ def main():
             print("❌ 已取消")
             sys.exit(0)
     
-    from stock_btc.server.scheduler import create_integrated_app
+    from server.scheduler import create_integrated_app
     app = create_integrated_app(
         use_sim=use_sim,
         use_demo=args.demo,

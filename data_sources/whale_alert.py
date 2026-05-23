@@ -20,8 +20,8 @@ from typing import Optional, Dict, List
 from abc import abstractmethod
 from enum import Enum
 
-from .base import DataSourceBase, DataPoint
-from ..utils import logger, retry_request
+from data_sources.base import DataSourceBase, DataPoint
+from utils import logger, retry_request
 
 
 class WhaleDataProvider(Enum):

@@ -22,8 +22,8 @@ from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
-from stock_btc.data_sources.base import DataSourceBase, DataPoint
-from stock_btc.utils import logger, retry_request
+from data_sources.base import DataSourceBase, DataPoint
+from utils import logger, retry_request
 
 
 class ETFFlow(DataSourceBase):

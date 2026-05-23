@@ -26,7 +26,7 @@ python run_server.py
 ## 模块结构
 
 ```
-stock_btc/
+quant_bitcoin/
 ├── utils/              # 工具 (日志、重试)
 ├── data_sources/       # 数据源
 │   ├── fear_greed.py   # F&G 指数

@@ -5,7 +5,7 @@ from datetime import datetime
 from functools import wraps
 from typing import Callable, Any
 
-from .log_util import logger
+from utils.log_util import logger
 
 
 def retry_request(max_retries: int = 3, delay: float = 1.0):

@@ -15,8 +15,8 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Optional, List, Dict, Tuple
 
-from .base import DataSourceBase, DataPoint
-from ..utils import logger, retry_request
+from data_sources.base import DataSourceBase, DataPoint
+from utils import logger, retry_request
 
 
 class CryptoNewsSentiment(DataSourceBase):

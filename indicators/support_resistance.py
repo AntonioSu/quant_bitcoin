@@ -7,7 +7,7 @@ levels by touches, recency, volume, and distance from the current price.
 from dataclasses import dataclass
 from typing import List, Optional
 
-from ..utils import logger
+from utils import logger
 
 
 @dataclass

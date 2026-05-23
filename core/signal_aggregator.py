@@ -17,10 +17,10 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Optional
 
-from .config import TradingConfig, ParameterSet
-from .market_data import market
+from core.config import TradingConfig, ParameterSet
+from core.market_data import market
 # from ..indicators.cvd_divergence import DivergenceType  # 传统指标模式需要
-from ..utils import logger
+from utils import logger
 
 
 # 各参数组对应的 AI 置信度门槛

@@ -17,7 +17,7 @@ from typing import List
 from dataclasses import dataclass
 from enum import Enum
 
-from ..utils import logger
+from utils import logger
 
 
 class MACDSignalType(Enum):

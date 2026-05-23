@@ -1,9 +1,9 @@
 """核心模块"""
 
-from .config import TradingConfig, ParameterSet
-from .signal_aggregator import SignalAggregator, TradingMode, SignalResult
-from .performance import PerformanceTracker
-from .market_data import (
+from core.config import TradingConfig, ParameterSet
+from core.signal_aggregator import SignalAggregator, TradingMode, SignalResult
+from core.performance import PerformanceTracker
+from core.market_data import (
     market,
     MarketData,
     refresh_market_data,

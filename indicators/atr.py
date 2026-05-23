@@ -6,7 +6,7 @@ ATR 用途: 衡量市场波动性
 from typing import List
 from dataclasses import dataclass
 
-from ..utils import logger
+from utils import logger
 
 
 @dataclass

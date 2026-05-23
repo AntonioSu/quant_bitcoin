@@ -1,11 +1,11 @@
 """币安交易所工具模块"""
 
-from .binance_client import BinanceClient
-from .binance_adapter import (
+from binance_utils.binance_client import BinanceClient
+from binance_utils.binance_adapter import (
     BinanceFuturesExecutorAdapter,
     create_futures_executor,
 )
-from .binance_market import (
+from binance_utils.binance_market import (
     fetch_klines,
     fetch_price,
     fetch_24h_ticker,

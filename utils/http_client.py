@@ -10,7 +10,7 @@ from typing import Optional
 import aiohttp
 import requests
 
-from .log_util import logger
+from utils.log_util import logger
 
 
 def _get_proxy() -> Optional[str]:

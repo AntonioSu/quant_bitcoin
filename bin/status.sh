@@ -14,5 +14,5 @@ else
     echo "❌ 服务异常"
     [ -n "$LISTENING_PID" ] && echo "   ⚠️  端口 $PORT 被非目标进程占用 (PID: $LISTENING_PID)"
     [ -z "$LISTENING_PID" ] && echo "   ⚠️  端口 $PORT 无进程监听"
-    [ -n "$PROCESS_PIDS" ] && echo "   ⚠️  存在残留 stock_btc 进程: $PROCESS_PIDS"
+    [ -n "$PROCESS_PIDS" ] && echo "   ⚠️  存在残留 quant_bitcoin 进程: $PROCESS_PIDS"
 fi

@@ -10,7 +10,7 @@ Binance 客户端 - 简化版
 
 import os
 
-from stock_btc.utils import logger
+from utils import logger
 
 os.environ["CRYPTOGRAPHY_OPENSSL_NO_LEGACY"] = "1"
 
