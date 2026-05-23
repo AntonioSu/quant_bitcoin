@@ -8,6 +8,30 @@
     gap: 10px;
 }
 
+.indicator-group-title {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--teal);
+    padding: 14px 2px 4px;
+    letter-spacing: 0.5px;
+    font-family: var(--font-display);
+}
+
+.indicator-group-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(to right, rgba(13, 148, 136, 0.25), transparent);
+}
+
+.indicator-group-title:first-child {
+    padding-top: 2px;
+}
+
 .indicator-item {
     background: var(--bg-inset);
     padding: 8px 10px;
