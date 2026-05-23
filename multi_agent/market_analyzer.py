@@ -146,6 +146,15 @@ class MarketAnalyzer:
         for k in keys:
             if k in snapshot:
                 v = snapshot[k]
+                if k == "news" and isinstance(v, dict):
+                    digest[k] = {
+                        "score": v.get("score"),
+                        "sentiment": v.get("sentiment"),
+                        "key_signals": v.get("key_signals", [])[:3],
+                        "bullish_factors": v.get("bullish_factors", [])[:3],
+                        "bearish_factors": v.get("bearish_factors", [])[:3],
+                    }
+                    continue
                 if isinstance(v, dict):
                     digest[k] = {kk: vv for kk, vv in v.items()
                                  if kk in ("value", "signal", "rate",
@@ -155,6 +164,43 @@ class MarketAnalyzer:
                 else:
                     digest[k] = v
         return digest
+
+    @staticmethod
+    def _compact_news_factors(factors: Any, limit: int = 3) -> list:
+        """Keep enough news provenance for market analysis and later reflection."""
+        if not isinstance(factors, list):
+            return []
+
+        compacted = []
+        for item in factors:
+            if len(compacted) >= limit:
+                break
+
+            if isinstance(item, str):
+                factor = item.strip()
+                if factor:
+                    compacted.append({"factor": factor})
+                continue
+
+            if not isinstance(item, dict):
+                continue
+
+            factor = str(item.get("factor") or "").strip()
+            if not factor:
+                continue
+
+            compacted.append({
+                "factor": factor,
+                "category": item.get("category"),
+                "weight": item.get("weight"),
+                "source_authority": item.get("source_authority"),
+                "truth_level": item.get("truth_level"),
+                "impact_scope": item.get("impact_scope"),
+                "score_contribution": item.get("score_contribution"),
+                "url": item.get("url"),
+            })
+
+        return compacted
 
     @staticmethod
     def _neutral(reason: str) -> DataPoint:
@@ -236,14 +282,9 @@ class MarketAnalyzer:
                 "score": market.news.value,
                 "sentiment": raw.get("sentiment"),
                 "reasoning": raw.get("reasoning"),
-                "bullish_factors": [
-                    f.get("factor") if isinstance(f, dict) else f
-                    for f in (raw.get("bullish_factors") or [])
-                ][:3],
-                "bearish_factors": [
-                    f.get("factor") if isinstance(f, dict) else f
-                    for f in (raw.get("bearish_factors") or [])
-                ][:3],
+                "key_signals": raw.get("key_signals", [])[:3],
+                "bullish_factors": self._compact_news_factors(raw.get("bullish_factors")),
+                "bearish_factors": self._compact_news_factors(raw.get("bearish_factors")),
             }
 
         if market.macd:

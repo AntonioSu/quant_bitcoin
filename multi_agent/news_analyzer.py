@@ -10,8 +10,8 @@
 输出:
   - sentiment:        bullish / bearish / neutral
   - score:            -100 ~ +100 (负=看空, 正=看多)
-  - bullish_factors:  [{factor, weight, url}]
-  - bearish_factors:  [{factor, weight, url}]
+  - bullish_factors:  [{factor, category, weight, source_authority, truth_level, impact_scope, score_contribution, url}]
+  - bearish_factors:  [{factor, category, weight, source_authority, truth_level, impact_scope, score_contribution, url}]
   - key_signals:      关键信号列表
   - reasoning:        分析理由
 """
@@ -167,7 +167,7 @@ class NewsAnalyzer(DataSourceBase):
 
         stripped = text.strip()
         try:
-            return json.loads(stripped)
+            return NewsAnalyzer._normalize_analysis(json.loads(stripped))
         except json.JSONDecodeError as e:
             total_len = len(stripped)
             ends_well = stripped.endswith("}")
@@ -189,6 +189,100 @@ class NewsAnalyzer(DataSourceBase):
                     f"len={total_len}, tail={tail[-120:]}"
                 ),
             }
+
+    @staticmethod
+    def _normalize_analysis(raw: Dict) -> Dict:
+        """Return a stable shape for downstream market analysis and UI rendering."""
+        if not isinstance(raw, dict):
+            return {
+                "sentiment": "neutral",
+                "score": 0,
+                "bullish_factors": [],
+                "bearish_factors": [],
+                "key_signals": [],
+                "reasoning": "LLM 输出不是 JSON 对象，已按中性处理",
+            }
+
+        score = NewsAnalyzer._coerce_score(raw.get("score", 0))
+        sentiment = raw.get("sentiment")
+        if sentiment not in {"bullish", "bearish", "neutral"}:
+            sentiment = "bullish" if score >= 20 else "bearish" if score <= -20 else "neutral"
+
+        normalized = dict(raw)
+        normalized["sentiment"] = sentiment
+        normalized["score"] = score
+        normalized["bullish_factors"] = NewsAnalyzer._normalize_factors(raw.get("bullish_factors"))
+        normalized["bearish_factors"] = NewsAnalyzer._normalize_factors(raw.get("bearish_factors"))
+        normalized["key_signals"] = NewsAnalyzer._normalize_strings(raw.get("key_signals"))[:3]
+        normalized["reasoning"] = str(raw.get("reasoning") or "")[:300]
+        return normalized
+
+    @staticmethod
+    def _normalize_factors(factors) -> list:
+        if not isinstance(factors, list):
+            return []
+
+        allowed_weights = {"high", "medium", "low"}
+        allowed_sources = {"official", "tier1_media", "crypto_media", "social", "unknown"}
+        allowed_truth = {"confirmed", "multi_source", "single_source", "rumor", "false"}
+        allowed_impact = {"market_wide", "sector", "single_project", "minor"}
+
+        normalized = []
+        for item in factors:
+            if isinstance(item, str):
+                factor = item.strip()
+                if not factor:
+                    continue
+                normalized.append({
+                    "factor": factor,
+                    "category": "其他",
+                    "weight": "low",
+                    "source_authority": "unknown",
+                    "truth_level": "single_source",
+                    "impact_scope": "single_project",
+                    "score_contribution": 0,
+                    "url": "",
+                })
+                continue
+
+            if not isinstance(item, dict):
+                continue
+
+            factor = str(item.get("factor") or item.get("description") or "").strip()
+            if not factor:
+                continue
+
+            weight = item.get("weight") if item.get("weight") in allowed_weights else "low"
+            source = item.get("source_authority") if item.get("source_authority") in allowed_sources else "unknown"
+            truth = item.get("truth_level") if item.get("truth_level") in allowed_truth else "single_source"
+            impact = item.get("impact_scope") if item.get("impact_scope") in allowed_impact else "single_project"
+
+            normalized.append({
+                "factor": factor,
+                "category": str(item.get("category") or "其他"),
+                "weight": weight,
+                "source_authority": source,
+                "truth_level": truth,
+                "impact_scope": impact,
+                "score_contribution": NewsAnalyzer._coerce_score(item.get("score_contribution", 0)),
+                "url": str(item.get("url") or ""),
+            })
+
+        return normalized
+
+    @staticmethod
+    def _normalize_strings(value) -> list:
+        if not isinstance(value, list):
+            return []
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    @staticmethod
+    def _coerce_score(value) -> int:
+        try:
+            score = int(round(float(value)))
+        except (TypeError, ValueError):
+            score = 0
+        return max(-100, min(100, score))
 
 
 def main():

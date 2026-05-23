@@ -64,7 +64,47 @@
 
 ---
 
-## 3. 噪音剔除规则（不计入或权重置 low）
+## 3. 来源、真实性与影响面修正规则
+
+事件本身的 `high / medium / low` 只表示**内容重要性**；最终 score 还必须按来源权威度、信息真实性、影响面大小进行修正。
+
+### 3.1 来源权威度 source_authority
+
+| 来源类型 | source_authority | source_coef |
+|---|---|---:|
+| 官方公告 / 监管文件 / 交易所公告 / ETF 发行商披露 / 链上原始数据 | official | 1.2 |
+| Bloomberg / Reuters / WSJ / FT 等一线财经媒体 | tier1_media | 1.0 |
+| CoinDesk / The Block / CoinTelegraph 等行业媒体 | crypto_media | 0.8 |
+| KOL / 社交媒体 / Telegram / X 单条爆料 | social | 0.4 |
+| 来源不明 / 聚合站无原始链接 | unknown | 0.2 |
+
+### 3.2 信息真实性 truth_level
+
+| 真实性 | truth_level | truth_coef |
+|---|---|---:|
+| 官方确认 / 可查原始文件 | confirmed | 1.0 |
+| 多家独立可信来源交叉验证 | multi_source | 0.8 |
+| 单一媒体报道，暂无官方确认 | single_source | 0.5 |
+| 匿名爆料 / 截图 / 市场传闻 | rumor | 0.2 |
+| 已证伪 / 与原始来源冲突 | false | 0 |
+
+硬规则：
+- `rumor` / 匿名爆料不得给 high 权重
+- `truth_coef = 0` 的新闻直接归入 noise
+- 没有原始链接的聚合新闻，最多 medium，通常 low
+
+### 3.3 影响面 impact_scope
+
+| 影响面 | impact_scope | impact_coef |
+|---|---|---:|
+| 影响 BTC 全市场流动性 / 美国监管 / ETF / 宏观风险偏好 | market_wide | 1.3 |
+| 影响主要板块或头部生态 | sector | 1.0 |
+| 只影响单个项目 / 单个交易所局部业务 | single_project | 0.6 |
+| 小范围舆论 / 非核心项目 / 短期营销事件 | minor | 0.3 |
+
+---
+
+## 4. 噪音剔除规则（不计入或权重置 low）
 
 下列内容**不要计入 score**：
 
@@ -77,14 +117,18 @@
 
 ---
 
-## 4. score 计算公式
+## 5. score 计算公式
 
 ```
-score = clip( Σ ( side_sign × weight_value × decay ), -100, +100 )
+score = clip(
+  Σ ( side_sign × weight_value × decay × source_coef × truth_coef × impact_coef ),
+  -100,
+  +100
+)
 
-side_sign    = +1 (bullish)  /  -1 (bearish)
+side_sign   = +1 (bullish)  /  -1 (bearish)
 weight_value = high: 25  /  medium: 15  /  low: 5
-decay        = 1.0 (≤24h)  /  0.5 (24~72h)  /  0.2 (>72h)
+decay       = 1.0 (≤24h)  /  0.5 (24~72h)  /  0.2 (>72h)
 ```
 
 聚合后映射到 `sentiment`：
@@ -97,7 +141,7 @@ decay        = 1.0 (≤24h)  /  0.5 (24~72h)  /  0.2 (>72h)
 
 ---
 
-## 5. 绝对禁止规则
+## 6. 绝对禁止规则
 
 1. **同源重复**：同一事件多家媒体转载，只计 1 次（按最高权重）
 2. **价格预测**：含具体目标价的文章一律归 noise，不进入因素列表
@@ -105,10 +149,13 @@ decay        = 1.0 (≤24h)  /  0.5 (24~72h)  /  0.2 (>72h)
    "极端情绪释放完毕，存在反向风险"
 4. **样本不足**：实际可用新闻条数 < 3 时，sentiment 强制 neutral，score 强制 0
 5. **未发生事件**：尚未发生的预期事件不得作为 high 权重因素
+6. **未经证实不得高权重**：匿名爆料、截图、单一社交媒体消息不得作为 high 权重因素
+7. **来源不明降权**：无法追溯原始来源的新闻，`source_authority` 必须为 `unknown`
+8. **局部事件不得放大全局影响**：只影响单项目的小新闻，不得按 `market_wide` 计分
 
 ---
 
-## 6. 与综合研判的协同（边界声明）
+## 7. 与综合研判的协同（边界声明）
 
 本文件**只负责"新闻这一维"的评分**。
 

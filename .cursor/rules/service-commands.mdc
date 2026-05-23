@@ -1,0 +1,26 @@
+---
+description: Project service command shortcuts
+alwaysApply: true
+---
+
+# Service Commands
+
+When the user asks to start or restart the service in this project, run the project daemon restart script:
+
+```bash
+bash bin/restart.sh && bash bin/status.sh
+```
+
+Interpret Chinese requests such as "启动服务", "重启服务", "重新启动服务", or "restart service" as this operation unless the user explicitly asks for a different command.
+
+After restarting, report the service status, PID, port, and access URL if available.
+
+# Commit Commands
+
+When the user asks to run the project commit script, use:
+
+```bash
+bash bin/commit.sh "提交信息"
+```
+
+The script requires a commit message argument. If the user does not provide one, ask for the commit message before running it.
