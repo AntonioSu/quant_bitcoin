@@ -83,6 +83,12 @@ class IndicatorData(BaseModel):
     volume_obv_trend: str
     volume_price_change: float
     volume_strength: float
+    nearest_support: Optional[dict] = None
+    nearest_resistance: Optional[dict] = None
+    support_levels: Optional[list] = None
+    resistance_levels: Optional[list] = None
+    sr_tolerance: Optional[float] = None
+    sr_timeframe: Optional[str] = None
     news_score: Optional[float] = None
     news_sentiment: Optional[str] = None
     news_reasoning: Optional[str] = None
@@ -238,6 +244,15 @@ def _get_indicators_from_market() -> IndicatorData:
     volume_obv_trend = market.volume.obv_trend if market.volume else "flat"
     volume_price_change = market.volume.price_change_pct if market.volume else 0.0
     volume_strength = market.volume.strength if market.volume else 0.0
+
+    # 支撑/压力位
+    sr_data = market.support_resistance.to_dict() if market.support_resistance else {}
+    nearest_support = sr_data.get("nearest_support")
+    nearest_resistance = sr_data.get("nearest_resistance")
+    support_levels = sr_data.get("support_levels", [])
+    resistance_levels = sr_data.get("resistance_levels", [])
+    sr_tolerance = sr_data.get("tolerance")
+    sr_timeframe = sr_data.get("timeframe")
     
     # 记录历史
     history_store.add(HistoryStore.FEAR_GREED, fg_value, extra={"class": fg_class})
@@ -369,6 +384,12 @@ def _get_indicators_from_market() -> IndicatorData:
         volume_obv_trend=volume_obv_trend,
         volume_price_change=volume_price_change,
         volume_strength=volume_strength,
+        nearest_support=nearest_support,
+        nearest_resistance=nearest_resistance,
+        support_levels=support_levels,
+        resistance_levels=resistance_levels,
+        sr_tolerance=sr_tolerance,
+        sr_timeframe=sr_timeframe,
         news_score=news_score,
         news_sentiment=news_sentiment,
         news_reasoning=news_reasoning,

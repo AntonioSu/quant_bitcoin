@@ -21,7 +21,7 @@ from ..data_sources.macro_data import MacroData
 from ..data_sources.options_data import OptionsData
 from ..data_sources.stablecoin_flow import StablecoinFlow
 from ..data_sources.mvrv_data import MVRVData
-from ..indicators import ATRCalculator, CVDDivergenceDetector, MACDCalculator, RSICalculator, BollingerCalculator, MACalculator, VolumeCalculator
+from ..indicators import ATRCalculator, CVDDivergenceDetector, MACDCalculator, RSICalculator, BollingerCalculator, MACalculator, VolumeCalculator, SupportResistanceCalculator
 from ..indicators.atr import ATRResult
 from ..indicators.cvd_divergence import CVDResult
 from ..indicators.macd_signal import MACDResult
@@ -29,6 +29,7 @@ from ..indicators.rsi_signal import RSIResult
 from ..indicators.bollinger_signal import BollingerResult
 from ..indicators.ma_signal import MAResult
 from ..indicators.volume_signal import VolumeResult
+from ..indicators.support_resistance import SupportResistanceResult
 from ..indicators.news_analyzer import NewsAnalyzer
 from ..multi_agent.market_analyzer import MarketAnalyzer
 from ..indicators.analysis_memory import AnalysisMemory
@@ -51,6 +52,7 @@ class MarketData:
     bollinger: Optional[BollingerResult] = None
     ma: Optional[MAResult] = None
     volume: Optional[VolumeResult] = None
+    support_resistance: Optional[SupportResistanceResult] = None
     taker: Optional[TakerData] = None
     news: Optional[DataPoint] = None
     etf_flow: Optional[DataPoint] = None
@@ -135,6 +137,7 @@ class MarketData:
                 "price_change_pct": self.volume.price_change_pct if self.volume else None,
                 "strength": self.volume.strength if self.volume else None,
             },
+            "support_resistance": self.support_resistance.to_dict() if self.support_resistance else None,
             "taker": self.taker.to_dict() if self.taker else None,
             "news": {
                 "score": self.news.value if self.news else None,
@@ -180,6 +183,7 @@ _rsi_calc = RSICalculator(period=14, overbought=70.0, oversold=30.0, timeframe="
 _bollinger_calc = BollingerCalculator(period=20, std_dev=2.0, timeframe="4h")
 _ma_calc = MACalculator(fast_period=7, slow_period=25, timeframe="4h")
 _volume_calc = VolumeCalculator(avg_period=20, surge_threshold=2.0, timeframe="4h")
+_support_resistance_calc = SupportResistanceCalculator(lookback=80, timeframe="4h")
 _news_analyzer = NewsAnalyzer()
 _analysis_memory = AnalysisMemory()
 _strategy_summarizer = StrategySummarizer(memory=_analysis_memory)
@@ -329,6 +333,13 @@ def refresh_market_data() -> MarketData:
             market.volume = _volume_calc.calculate(market.klines_4h)
         except Exception as e:
             logger.warning(f"计算成交量指标失败: {e}")
+
+    # 支撑/压力位使用最近 K线局部高低点聚类
+    if market.klines_4h and len(market.klines_4h) >= 14:
+        try:
+            market.support_resistance = _support_resistance_calc.calculate(market.klines_4h)
+        except Exception as e:
+            logger.warning(f"计算支撑/压力位失败: {e}")
 
     market.last_update = datetime.now()
     logger.info(f"✅ 市场数据刷新完成 @ {market.last_update.strftime('%H:%M:%S')}")

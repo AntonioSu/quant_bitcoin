@@ -9,6 +9,7 @@ let ma99Series = null;
 let bollUpperSeries = null;
 let bollMiddleSeries = null;
 let bollLowerSeries = null;
+let supportResistancePriceLines = [];
 let activeOverlay = 'ma'; // 'ma' | 'boll' | 'none'
 let activeInterval = '4h'; // '1h' | '4h' | '1d'
 let macdChart = null;

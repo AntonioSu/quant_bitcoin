@@ -163,6 +163,8 @@ class MarketAnalyzer:
                 "key_drivers": [],
                 "risks": [],
                 "horizon": "4H~24H",
+                "trend_regime": "UNCLEAR",
+                "volatility_regime": "NORMAL_VOL",
             },
         )
 
@@ -370,12 +372,14 @@ class MarketAnalyzer:
                 os.path.join(_PROMPT_DIR, 'market_analyzer.md')
             )
 
-            # 注入指标知识库
             knowledge_dir = os.path.join(os.path.dirname(__file__), 'knowledge')
-            for fname in ('indicator_guide.md', 'combination_rules.md', 'market_regimes.md'):
-                fpath = os.path.join(knowledge_dir, fname)
-                if os.path.exists(fpath):
-                    sys_prompt += "\n\n" + read_file_prompt(fpath)
+            if os.path.isdir(knowledge_dir):
+                for fname in sorted(os.listdir(knowledge_dir)):
+                    if not fname.endswith('.md'):
+                        continue
+                    fpath = os.path.join(knowledge_dir, fname)
+                    if os.path.isfile(fpath):
+                        sys_prompt += "\n\n" + read_file_prompt(fpath)
 
             # 注入策略备忘录（来自历史复盘）
             if self.summarizer:
@@ -444,6 +448,8 @@ class MarketAnalyzer:
                 "key_drivers": [],
                 "risks": [],
                 "horizon": "4H~24H",
+                "trend_regime": "UNCLEAR",
+                "volatility_regime": "NORMAL_VOL",
             }
 
     @staticmethod
@@ -463,6 +469,8 @@ class MarketAnalyzer:
                 "key_drivers": [],
                 "risks": [],
                 "horizon": "4H~24H",
+                "trend_regime": "UNCLEAR",
+                "volatility_regime": "NORMAL_VOL",
             }
 
     @staticmethod
@@ -478,6 +486,15 @@ class MarketAnalyzer:
             confidence = 0
         confidence = max(0, min(100, confidence))
 
+        trend = str(data.get("trend_regime", "UNCLEAR")).upper()
+        if trend not in ("UP_TREND", "DOWN_TREND", "RANGE", "UNCLEAR"):
+            trend = "UNCLEAR"
+
+        vol = str(data.get("volatility_regime", "NORMAL_VOL")).upper()
+        if vol not in ("LOW_VOL_COMPRESSION", "NORMAL_VOL",
+                       "BREAKOUT_EXPANSION", "HIGH_VOL_EXTREME"):
+            vol = "NORMAL_VOL"
+
         return {
             "bias": bias,
             "confidence": confidence,
@@ -486,6 +503,8 @@ class MarketAnalyzer:
             "key_drivers": data.get("key_drivers") or [],
             "risks": data.get("risks") or [],
             "horizon": str(data.get("horizon", "4H~24H")),
+            "trend_regime": trend,
+            "volatility_regime": vol,
         }
 
 

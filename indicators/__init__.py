@@ -8,6 +8,7 @@ from .rsi_signal import RSICalculator
 from .bollinger_signal import BollingerCalculator
 from .ma_signal import MACalculator
 from .volume_signal import VolumeCalculator
+from .support_resistance import SupportResistanceCalculator
 from .news_analyzer import NewsAnalyzer
 
 __all__ = [
@@ -20,5 +21,6 @@ __all__ = [
     "BollingerCalculator",
     "MACalculator",
     "VolumeCalculator",
+    "SupportResistanceCalculator",
     "NewsAnalyzer",
 ]

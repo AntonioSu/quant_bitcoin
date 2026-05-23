@@ -394,6 +394,113 @@ function buildLineData(values, times) {
     return out;
 }
 
+function calcSupportResistanceLevels(klines, opts = {}) {
+    const lookback = opts.lookback || 120;
+    const pivotWindow = opts.pivotWindow || 2;
+    const tolerancePct = opts.tolerancePct || 0.006;
+    const rangeMultiplier = opts.rangeMultiplier || 0.45;
+    const maxLevels = opts.maxLevels || 4;
+    const recent = klines.slice(-lookback);
+    if (recent.length < pivotWindow * 2 + 10) {
+        return { supports: [], resistances: [] };
+    }
+
+    const currentPrice = Number(recent[recent.length - 1].close);
+    const rangeSlice = recent.slice(-Math.min(recent.length, 14));
+    const avgRange = rangeSlice.reduce((sum, k) => sum + (Number(k.high) - Number(k.low)), 0) / rangeSlice.length;
+    const tolerance = Math.max(currentPrice * tolerancePct, avgRange * rangeMultiplier);
+    const avgVolume = recent.reduce((sum, k) => sum + Number(k.volume || 0), 0) / recent.length || 1;
+
+    const findPivots = kind => {
+        const pivots = [];
+        for (let i = pivotWindow; i < recent.length - pivotWindow; i++) {
+            const window = recent.slice(i - pivotWindow, i + pivotWindow + 1);
+            if (kind === 'support') {
+                const price = Number(recent[i].low);
+                if (price !== Math.min(...window.map(k => Number(k.low)))) continue;
+                pivots.push({ price, index: i, volume: Number(recent[i].volume || 0) });
+            } else {
+                const price = Number(recent[i].high);
+                if (price !== Math.max(...window.map(k => Number(k.high)))) continue;
+                pivots.push({ price, index: i, volume: Number(recent[i].volume || 0) });
+            }
+        }
+        return pivots;
+    };
+
+    const clusterPivots = pivots => {
+        const clusters = [];
+        pivots.slice().sort((a, b) => a.price - b.price).forEach(pivot => {
+            const cluster = clusters.find(c => Math.abs(c.price - pivot.price) <= tolerance);
+            if (!cluster) {
+                clusters.push({
+                    price: pivot.price,
+                    touches: 1,
+                    lastTouchIndex: pivot.index,
+                    volume: pivot.volume,
+                });
+                return;
+            }
+            const touches = cluster.touches + 1;
+            cluster.price = (cluster.price * cluster.touches + pivot.price) / touches;
+            cluster.touches = touches;
+            cluster.lastTouchIndex = Math.max(cluster.lastTouchIndex, pivot.index);
+            cluster.volume += pivot.volume;
+        });
+
+        const lastPivotIndex = Math.max(...pivots.map(p => p.index), 1);
+        return clusters.map(cluster => {
+            const distancePct = (cluster.price - currentPrice) / currentPrice * 100;
+            const touchScore = Math.min(cluster.touches / 4, 1) * 0.45;
+            const recencyScore = (cluster.lastTouchIndex / lastPivotIndex) * 0.25;
+            const volumeScore = Math.min((cluster.volume / cluster.touches) / avgVolume, 2) / 2 * 0.15;
+            const distanceScore = Math.max(0, 1 - Math.abs(distancePct / 100) / 0.08) * 0.15;
+            return {
+                price: cluster.price,
+                touches: cluster.touches,
+                strength: Math.min(touchScore + recencyScore + volumeScore + distanceScore, 1),
+                distancePct,
+            };
+        });
+    };
+
+    const supports = clusterPivots(findPivots('support'))
+        .filter(level => level.price < currentPrice)
+        .sort((a, b) => b.strength - a.strength || Math.abs(a.distancePct) - Math.abs(b.distancePct))
+        .slice(0, maxLevels);
+    const resistances = clusterPivots(findPivots('resistance'))
+        .filter(level => level.price > currentPrice)
+        .sort((a, b) => b.strength - a.strength || Math.abs(a.distancePct) - Math.abs(b.distancePct))
+        .slice(0, maxLevels);
+
+    return { supports, resistances };
+}
+
+function renderSupportResistanceLines(klines) {
+    if (!candleSeries) return;
+    supportResistancePriceLines.forEach(line => candleSeries.removePriceLine(line));
+    supportResistancePriceLines = [];
+
+    const { supports, resistances } = calcSupportResistanceLevels(klines);
+    const addLine = (level, type) => {
+        const isSupport = type === 'support';
+        const color = isSupport ? 'rgba(22, 163, 74, 0.86)' : 'rgba(220, 38, 38, 0.86)';
+        const label = `${isSupport ? 'S' : 'R'} ${formatNumber(level.price, 0)}`;
+        const line = candleSeries.createPriceLine({
+            price: level.price,
+            color,
+            lineWidth: level.strength >= 0.7 ? 2 : 1,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: label,
+        });
+        supportResistancePriceLines.push(line);
+    };
+
+    supports.forEach(level => addLine(level, 'support'));
+    resistances.forEach(level => addLine(level, 'resistance'));
+}
+
 function computeEMA(values, period) {
     const k = 2 / (period + 1);
     const ema = new Array(values.length).fill(null);
@@ -555,6 +662,7 @@ async function loadKlines() {
         }));
 
         candleSeries.setData(formatted);
+        renderSupportResistanceLines(data);
 
         const closes = data.map(k => k.close);
         const times = data.map(k => k.time / 1000);

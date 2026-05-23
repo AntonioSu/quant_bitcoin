@@ -34,6 +34,32 @@ function updateIndicators(data) {
     atrEl.textContent = atrValue > 0 ?  formatNumber(atrValue, 1)+ '$' : '--';
     atrEl.className = 'indicator-value';
 
+    // Support / Resistance
+    const supportEl = document.getElementById('nearest-support');
+    const supportSubEl = document.getElementById('nearest-support-sub');
+    const resistanceEl = document.getElementById('nearest-resistance');
+    const resistanceSubEl = document.getElementById('nearest-resistance-sub');
+    const nearestSupport = data.nearest_support;
+    const nearestResistance = data.nearest_resistance;
+    if (nearestSupport) {
+        supportEl.textContent = '$' + formatNumber(nearestSupport.price, 0);
+        supportEl.className = 'indicator-value green';
+        supportSubEl.textContent = `${nearestSupport.distance_pct.toFixed(2)}% / ${nearestSupport.touches}次 强度${nearestSupport.strength.toFixed(2)}`;
+    } else {
+        supportEl.textContent = '--';
+        supportEl.className = 'indicator-value';
+        supportSubEl.textContent = '暂无近端支撑';
+    }
+    if (nearestResistance) {
+        resistanceEl.textContent = '$' + formatNumber(nearestResistance.price, 0);
+        resistanceEl.className = 'indicator-value red';
+        resistanceSubEl.textContent = `+${nearestResistance.distance_pct.toFixed(2)}% / ${nearestResistance.touches}次 强度${nearestResistance.strength.toFixed(2)}`;
+    } else {
+        resistanceEl.textContent = '--';
+        resistanceEl.className = 'indicator-value';
+        resistanceSubEl.textContent = '暂无近端压力';
+    }
+
     // Taker 买入占比
     const takerRatioEl = document.getElementById('taker-ratio');
     const takerRatio = data.taker_buy_ratio || 50;
