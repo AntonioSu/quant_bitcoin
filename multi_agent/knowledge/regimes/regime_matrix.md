@@ -1,6 +1,6 @@
 # 趋势 × 波动 组合矩阵
 
-把 `trend_regimes.md` 的 4 种趋势状态和 `volatility_regimes.md` 的 4 种波动状态正交组合（共 16 格），
+把 `trend.md` 的 4 种趋势状态和 `volatility.md` 的 4 种波动状态正交组合（共 16 格），
 针对每一格说明：偏好方向、confidence 上限、特别规则。
 AI 研判必须先识别落在哪一格，再决定 bias 与 confidence。
 

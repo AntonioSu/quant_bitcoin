@@ -17,7 +17,7 @@
 1. **逐条审视 key_drivers**：每个驱动因素是否被市场验证？用事实说明
 2. **审视 risks**：列出的风险是否实际发生？有没有遗漏的风险？
 3. **Regime 一致性检查**：
-   - 开仓方向是否符合开仓时 (trend_regime, volatility_regime) 在 `regime_matrix.md` 中的默认倾向？
+   - 开仓方向是否符合开仓时 (trend_regime, volatility_regime) 在 `regimes/matrix.md` 中的默认倾向？
    - 若逆 trend_regime，是否有足够反转确认（放量、MACD 翻转、CVD/RSI 背离、收回关键位）
 4. **判断依据评分**：对研判整体打分 (1-5)，1=完全错误 5=精准
 5. **反事实推理**：如果当时信号相反，结果会不会更好？

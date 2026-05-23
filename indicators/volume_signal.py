@@ -4,6 +4,17 @@
 - 量比 = 当前成交量 / 近N期平均成交量
 - OBV (On-Balance Volume): 累计量能方向
 
+支持两种量比计算模式 (由 time_normalize 控制):
+1. candle 模式 (time_normalize=False, 默认)
+   分子 = 当根 (可能未走完) K线累计量
+   分母 = 过去 N 根完整 K线均量
+   缺点: 同一根 K线进度不同时分子大小不同, 刚开盘时量比偏小
+
+2. scaled 模式 (time_normalize=True)
+   分子 = 当根 K线累计量 (cur_vol)
+   分母 = 过去 N 根均量 × (当根已走时长 / 完整K线时长)
+   即把历史均量线性摊薄到"相同时长"做对比, 消除 K线进度偏置
+
 信号类型:
 - 放量上涨 (volume_surge_up): 量比 > 阈值 且价格上涨，趋势确认
 - 放量下跌 (volume_surge_down): 量比 > 阈值 且价格下跌，抛压增大
@@ -16,7 +27,8 @@
 - OBV 趋势: OBV 是否与价格同向
 """
 
-from typing import List
+import time
+from typing import List, Optional
 from dataclasses import dataclass
 from enum import Enum
 
@@ -38,11 +50,13 @@ class VolumeResult:
     """成交量分析结果"""
     signal_type: VolumeSignalType
     volume: float                  # 当前成交量
-    avg_volume: float              # 平均成交量
+    avg_volume: float              # 平均成交量 (scaled 模式下已按 elapsed/full 摊薄)
     vol_ratio: float               # 量比
     obv_trend: str                 # "up" / "down" / "flat"
     price_change_pct: float        # 最近一根K线价格变化%
     strength: float                # 信号强度 (0-1)
+    is_warmup: bool = False        # scaled 模式下 K线刚开盘 elapsed 太小时为 True
+    elapsed_min: float = 0.0       # scaled 模式: 当根 K线已走时长 (分钟)
 
 
 class VolumeCalculator:
@@ -56,13 +70,32 @@ class VolumeCalculator:
         dry_consecutive: int = 3,
         price_change_threshold: float = 0.5,
         timeframe: str = "4h",
+        time_normalize: bool = False,
+        kline_duration_min: float = 240.0,
+        min_elapsed_min: float = 10.0,
     ):
+        """
+        Args:
+            avg_period: 历史均量样本数 (取过去 N 根已完成 K线)
+            surge_threshold: 放量量比阈值
+            dry_threshold: 缩量量比阈值
+            dry_consecutive: 连续缩量根数
+            price_change_threshold: 放量信号的最小价格变动 (%)
+            timeframe: K线周期标签 (用于日志)
+            time_normalize: 是否对量比做"等时长摊薄"归一化
+            kline_duration_min: 单根 K线完整时长 (分钟), 4h=240
+            min_elapsed_min: scaled 模式下, 当根 K线已走时长不足该值则进入 warmup
+                             (返回 vol_ratio=1.0, signal_type=NONE), 避免分母过小导致量比爆炸
+        """
         self.avg_period = avg_period
         self.surge_threshold = surge_threshold
         self.dry_threshold = dry_threshold
         self.dry_consecutive = dry_consecutive
         self.price_change_threshold = price_change_threshold / 100.0
         self.timeframe = timeframe
+        self.time_normalize = time_normalize
+        self.kline_duration_min = kline_duration_min
+        self.min_elapsed_min = min_elapsed_min
 
     def _calc_obv(self, closes: List[float], volumes: List[float]) -> List[float]:
         """计算 OBV"""
@@ -144,13 +177,19 @@ class VolumeCalculator:
 
         return max(min(score, 1.0), 0.0)
 
-    def calculate(self, klines: List[List]) -> VolumeResult:
+    def calculate(
+        self,
+        klines: List[List],
+        now_ms: Optional[int] = None,
+    ) -> VolumeResult:
         """
         计算成交量指标并检测信号
 
         Args:
             klines: K线数据 [[timestamp, open, high, low, close, volume], ...]
                     需要至少 avg_period + 2 根K线
+            now_ms: 当前时间戳 (毫秒); 仅 time_normalize=True 时使用,
+                    None 则取系统时间. 用于回测时注入
 
         Returns:
             VolumeResult
@@ -165,7 +204,41 @@ class VolumeCalculator:
         volumes = [k[5] for k in klines]
 
         cur_vol = volumes[-1]
-        avg_vol = sum(volumes[-self.avg_period - 1:-1]) / self.avg_period
+        avg_full = sum(volumes[-self.avg_period - 1:-1]) / self.avg_period
+
+        is_warmup = False
+        elapsed_min = self.kline_duration_min
+
+        if self.time_normalize:
+            cur_open_ms = klines[-1][0]
+            if now_ms is None:
+                now_ms = int(time.time() * 1000)
+            elapsed_min = (now_ms - cur_open_ms) / 60000.0
+            elapsed_min = max(0.0, min(elapsed_min, self.kline_duration_min))
+
+            if elapsed_min < self.min_elapsed_min:
+                is_warmup = True
+                logger.debug(
+                    f"📊 成交量 warmup: K线开盘 {elapsed_min:.1f} min < "
+                    f"{self.min_elapsed_min:.0f} min, 返回中性量比"
+                )
+                return VolumeResult(
+                    signal_type=VolumeSignalType.NONE,
+                    volume=cur_vol,
+                    avg_volume=avg_full,
+                    vol_ratio=1.0,
+                    obv_trend="flat",
+                    price_change_pct=0.0,
+                    strength=0.0,
+                    is_warmup=True,
+                    elapsed_min=elapsed_min,
+                )
+
+            scale = elapsed_min / self.kline_duration_min
+            avg_vol = avg_full * scale
+        else:
+            avg_vol = avg_full
+
         vol_ratio = cur_vol / avg_vol if avg_vol > 0 else 1.0
 
         price_change_pct = (closes[-1] - closes[-2]) / closes[-2] if closes[-2] > 0 else 0.0
@@ -182,8 +255,9 @@ class VolumeCalculator:
             elif price_change_pct < -self.price_change_threshold:
                 signal_type = VolumeSignalType.SURGE_DOWN
 
-        # 缩量信号
-        if signal_type == VolumeSignalType.NONE:
+        # 缩量信号: 仅在 candle 模式判断 (依赖完整 K线), scaled 模式下当根
+        # 时长未走完不适合判定"缩量", 避免在 K线前中段误报
+        if signal_type == VolumeSignalType.NONE and not self.time_normalize:
             dry_count = 0
             for i in range(1, self.dry_consecutive + 1):
                 if len(volumes) >= self.avg_period + i:
@@ -193,9 +267,11 @@ class VolumeCalculator:
             if dry_count >= self.dry_consecutive:
                 signal_type = VolumeSignalType.DRY_UP
 
-        # 量价背离
+        # 量价背离 (基于完整 K线序列, 排除当根未走完的)
         if signal_type == VolumeSignalType.NONE:
-            signal_type = self._detect_volume_price_divergence(closes, volumes)
+            div_closes = closes[:-1] if self.time_normalize else closes
+            div_volumes = volumes[:-1] if self.time_normalize else volumes
+            signal_type = self._detect_volume_price_divergence(div_closes, div_volumes)
 
         strength = self._calc_strength(signal_type, vol_ratio, price_change_pct)
 
@@ -207,10 +283,11 @@ class VolumeCalculator:
                 VolumeSignalType.DIV_TOP: "量价顶背离",
                 VolumeSignalType.DIV_BOTTOM: "量价底背离",
             }
+            extra = f", 已走{elapsed_min:.0f}/{self.kline_duration_min:.0f}min" if self.time_normalize else ""
             logger.info(
                 f"🎯 成交量 {labels[signal_type]}! "
                 f"量比={vol_ratio:.2f}, 价变={price_change_pct:.2%}, "
-                f"OBV趋势={obv_t}, 强度={strength:.2f}"
+                f"OBV趋势={obv_t}, 强度={strength:.2f}{extra}"
             )
         else:
             logger.debug(
@@ -225,6 +302,8 @@ class VolumeCalculator:
             obv_trend=obv_t,
             price_change_pct=price_change_pct * 100,
             strength=strength,
+            is_warmup=is_warmup,
+            elapsed_min=elapsed_min,
         )
 
     def is_bullish(self, klines: List[List]) -> bool:

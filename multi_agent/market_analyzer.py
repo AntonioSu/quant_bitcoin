@@ -374,12 +374,14 @@ class MarketAnalyzer:
 
             knowledge_dir = os.path.join(os.path.dirname(__file__), 'knowledge')
             if os.path.isdir(knowledge_dir):
-                for fname in sorted(os.listdir(knowledge_dir)):
-                    if not fname.endswith('.md'):
-                        continue
-                    fpath = os.path.join(knowledge_dir, fname)
-                    if os.path.isfile(fpath):
-                        sys_prompt += "\n\n" + read_file_prompt(fpath)
+                md_files: list[str] = []
+                for root, dirs, files in os.walk(knowledge_dir):
+                    dirs[:] = [d for d in dirs if d != 'news']
+                    for fname in files:
+                        if fname.endswith('.md'):
+                            md_files.append(os.path.join(root, fname))
+                for fpath in sorted(md_files):
+                    sys_prompt += "\n\n" + read_file_prompt(fpath)
 
             # 注入策略备忘录（来自历史复盘）
             if self.summarizer:
