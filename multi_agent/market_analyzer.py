@@ -20,14 +20,14 @@ from typing import Dict, Optional, Any
 
 from dotenv import load_dotenv
 
-from ..data_sources.base import DataPoint
-from ..utils import logger
-from ..utils.common_utils import read_file_prompt
-from ..utils.llm_client import LLMClient
+from data_sources.base import DataPoint
+from utils import logger
+from utils.common_utils import read_file_prompt
+from utils.llm_client import LLMClient
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
-_PROMPT_DIR = os.path.join(os.path.dirname(__file__), '..', 'prompts')
+_PROMPT_DIR = os.path.join(os.path.dirname(__file__), 'prompts')
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
 _LAST_ANALYSIS_FILE = os.path.join(_DATA_DIR, 'last_analysis.json')
 
@@ -49,6 +49,13 @@ class MarketAnalyzer:
             key=os.getenv("LLM_API_KEY"),
             api_url=os.getenv("LLM_API_URL"),
             timeout=120,
+            # 启用服务端 Prompt Caching：sys_prompt = role + 知识库（多 md 拼接），
+            # 不含任何随时间变化的内容（memo / 上次研判 / 最近回顾 都已挪到 user prompt），
+            # 因此 sys_prompt 在 cache TTL 内字节稳定，前缀缓存可稳定命中。
+            extra_body={
+                "caching": {"type": "enabled", "prefix": True},
+                "thinking": {"type": "disabled"},
+            },
         )
         self.memory = memory            # AnalysisMemory 实例
         self.summarizer = summarizer    # StrategySummarizer 实例
@@ -58,7 +65,7 @@ class MarketAnalyzer:
         """对当前 market 数据做一次综合分析
 
         Args:
-            market: stock_btc.core.market_data.MarketData 实例
+            market: core.market_data.MarketData 实例
         """
         if not market.is_ready():
             logger.warning("📊 market 数据未就绪，跳过 AI 分析")
@@ -383,12 +390,18 @@ class MarketAnalyzer:
                 for fpath in sorted(md_files):
                     sys_prompt += "\n\n" + read_file_prompt(fpath)
 
+            # ─── 以下所有动态内容统一拼到 user prompt 末尾 ─────────────────────
+            # 关键原则：让 sys_prompt 在 cache TTL 内保持字节级稳定，
+            # 任何会随时间变化的内容（memo / 上次研判 / 最近回顾）一律放到 user 段，
+            # 这样服务端 Prompt Cache 才能稳定命中前缀（role + 知识库 ~几千 tokens）。
+            # memo 在每轮复盘后会更新，原本拼到 sys_prompt 会直接把缓存击穿。
+
             # 注入策略备忘录（来自历史复盘）
             if self.summarizer:
                 memo = self.summarizer.get_memo_text()
                 if memo:
-                    sys_prompt += (
-                        "\n\n# 近期策略备忘录（基于历史交易复盘）\n"
+                    prompt += (
+                        "\n\n## 近期策略备忘录（基于历史交易复盘）\n"
                         "请将以下经验教训纳入本次研判的权重考量：\n\n"
                         f"{memo}"
                     )
@@ -437,7 +450,11 @@ class MarketAnalyzer:
                         + "\n".join(lines)
                     )
 
-            resp = self.llm.chat(system_prompt=sys_prompt, prompt=prompt)
+            resp = self.llm.chat(
+                system_prompt=sys_prompt,
+                prompt=prompt,
+                usage_tag="[market]",
+            )
             parsed = self._parse_json(resp)
             return self._normalize(parsed)
         except Exception as e:
@@ -515,7 +532,7 @@ def main():
     import logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    from ..core.market_data import refresh_market_data, market
+    from core.market_data import refresh_market_data, market
 
     refresh_market_data()
     analyzer = MarketAnalyzer()

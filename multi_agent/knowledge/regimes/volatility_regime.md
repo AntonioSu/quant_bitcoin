@@ -1,7 +1,7 @@
-# 波动状态（Volatility Regime）长期定义
+# 【市场状态 · 波动维度】Volatility Regime 长期定义
 
 波动状态是市场状态的第二维度，描述价格波动幅度和能量。
-它**只描述波动**，与趋势方向无关（方向见 `trend.md`）。
+它**只描述波动**，与趋势方向无关（方向见 `trend_regime.md`）。
 
 枚举值固定为 4 个，AI 研判时必须输出其中之一：
 
@@ -38,7 +38,7 @@
 - 成交量稳定（vol_ratio 0.7 ~ 1.5）
 
 ### 指标解读偏向
-- 所有指标按 `../indicators/guide.md` 和 `../indicators/combination_rules.md` 默认规则解读
+- 所有指标按 `../indicators/indicator_guide.md` 和 `../indicators/combination_rules.md` 默认规则解读
 - 各类信号都可作为主因素，不需要额外打折或加权
 - 这是规则的"基准状态"
 

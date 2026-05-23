@@ -9,14 +9,14 @@ from typing import Dict, Any, Optional
 
 from dotenv import load_dotenv
 
-from ..utils import logger
-from ..utils.common_utils import read_file_prompt
-from ..utils.llm_client import LLMClient
-from .analysis_memory import AnalysisMemory
+from indicators.analysis_memory import AnalysisMemory
+from utils import logger
+from utils.common_utils import read_file_prompt
+from utils.llm_client import LLMClient
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
-_PROMPT_DIR = os.path.join(os.path.dirname(__file__), '..', 'prompts')
+_PROMPT_DIR = os.path.join(os.path.dirname(__file__), 'prompts')
 
 
 class Reflector:

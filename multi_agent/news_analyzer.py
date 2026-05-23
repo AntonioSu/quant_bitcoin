@@ -3,8 +3,8 @@
 拉取 CryptoNewsSentiment 的资讯，调用 LLM 进行多空情绪研判。
 
 与 MarketAnalyzer 类似，本模块也是一个 LLM agent：
-- 角色定义在 prompts/news_analyzer.md
-- 长期知识（分类法 / 权重表 / 噪音规则）在 multi_agent/knowledge/news_*.md
+- 角色定义在 multi_agent/prompts/news_analyzer.md
+- 长期知识（分类法 / 权重表 / 噪音规则）在 multi_agent/knowledge/news/*.md
   会自动 glob 注入到 system prompt，便于以后单独迭代规则
 
 输出:
@@ -23,15 +23,15 @@ from typing import Dict, Optional
 
 from dotenv import load_dotenv
 
-from ..data_sources.base import DataSourceBase, DataPoint
-from ..data_sources.crypto_news import CryptoNewsSentiment
-from ..utils import logger
-from ..utils.common_utils import read_file_prompt
-from ..utils.llm_client import LLMClient
+from data_sources.base import DataSourceBase, DataPoint
+from data_sources.crypto_news import CryptoNewsSentiment
+from utils import logger
+from utils.common_utils import read_file_prompt
+from utils.llm_client import LLMClient
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
-_PROMPT_DIR = os.path.join(os.path.dirname(__file__), '..', 'prompts')
+_PROMPT_DIR = os.path.join(os.path.dirname(__file__), 'prompts')
 _KNOWLEDGE_DIR = os.path.join(os.path.dirname(__file__), 'knowledge')
 
 
@@ -58,6 +58,15 @@ class NewsAnalyzer(DataSourceBase):
             key=os.getenv("LLM_API_KEY"),
             api_url=os.getenv("LLM_API_URL"),
             timeout=90,
+            max_tokens=3000,
+            # 启用服务端 Prompt Caching：news 的 system_prompt(角色 + 知识库)字节稳定，
+            # 每次调用前缀都能命中，输入费用和首字节延迟大幅下降。
+            # 同时关闭 thinking，新闻分类打分不需要 CoT。
+            # 后端不识别这些字段时会被自动忽略，无副作用。
+            extra_body={
+                "caching": {"type": "enabled", "prefix": True},
+                "thinking": {"type": "disabled"},
+            },
         )
         self._cache_ttl = 1800
 
@@ -139,7 +148,11 @@ class NewsAnalyzer(DataSourceBase):
             if knowledge:
                 sys_prompt += "\n\n" + knowledge
 
-            resp = self.llm.chat(system_prompt=sys_prompt, prompt=prompt)
+            resp = self.llm.chat(
+                system_prompt=sys_prompt,
+                prompt=prompt,
+                usage_tag="[news]",
+            )
             return self._parse_json(resp)
         except Exception as e:
             logger.error(f"📰 LLM 分析失败: {e}")
@@ -152,10 +165,30 @@ class NewsAnalyzer(DataSourceBase):
         elif "```" in text:
             text = text.split("```", 1)[1].split("```", 1)[0]
 
+        stripped = text.strip()
         try:
-            return json.loads(text.strip())
-        except json.JSONDecodeError:
-            return {"sentiment": "neutral", "score": 0, "reasoning": f"JSON 解析失败，原始回复: {text[:300]}"}
+            return json.loads(stripped)
+        except json.JSONDecodeError as e:
+            total_len = len(stripped)
+            ends_well = stripped.endswith("}")
+            tail = stripped[-200:]
+            head = stripped[:200]
+            likely_truncated = (not ends_well) and total_len > 1000
+            diag = (
+                f"JSON 解析失败（{e.msg} at pos {e.pos}）: "
+                f"len={total_len}, ends_with_brace={ends_well}, "
+                f"likely_truncated={likely_truncated}\n"
+                f"  head: {head}\n  tail: {tail}"
+            )
+            logger.error(f"📰 {diag}")
+            return {
+                "sentiment": "neutral",
+                "score": 0,
+                "reasoning": (
+                    f"JSON 解析失败（{'疑似输出被截断，需调高 max_tokens' if likely_truncated else '格式错误'}）: "
+                    f"len={total_len}, tail={tail[-120:]}"
+                ),
+            }
 
 
 def main():

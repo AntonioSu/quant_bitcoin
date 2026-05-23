@@ -11,14 +11,14 @@ from typing import Dict, List, Any, Optional
 
 from dotenv import load_dotenv
 
-from ..utils import logger
-from ..utils.common_utils import read_file_prompt
-from ..utils.llm_client import LLMClient
-from .analysis_memory import AnalysisMemory
+from indicators.analysis_memory import AnalysisMemory
+from utils import logger
+from utils.common_utils import read_file_prompt
+from utils.llm_client import LLMClient
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
-_PROMPT_DIR = os.path.join(os.path.dirname(__file__), '..', 'prompts')
+_PROMPT_DIR = os.path.join(os.path.dirname(__file__), 'prompts')
 _DEFAULT_DATA_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "data",
@@ -82,11 +82,51 @@ class StrategySummarizer:
         return result
 
     def get_memo_text(self) -> Optional[str]:
-        """获取当前策略备忘录文本（用于注入 prompt）"""
+        """获取当前策略备忘录文本（用于注入研判 prompt）
+
+        把 LLM 总结的 5 段（effective_signals / weak_signals /
+        systematic_biases / rules / memo_text）全部展开为 markdown，
+        让下游 MarketAnalyzer 看到带统计证据的可执行规则，
+        而不是只有一段总结句。
+
+        数据已完整保存在 strategy_memo.json，这里只是"读取侧用足"。
+        """
         if not self._memo_cache:
             return None
         result = self._memo_cache.get("result", {})
-        return result.get("memo_text")
+        if not result:
+            return None
+
+        parts: List[str] = []
+
+        if text := result.get("memo_text"):
+            parts.append(f"### 总结\n{text}")
+
+        if items := result.get("effective_signals"):
+            parts.append(
+                "### 历史验证的有效信号（含胜率统计）\n"
+                + "\n".join(f"- ✅ {s}" for s in items)
+            )
+
+        if items := result.get("weak_signals"):
+            parts.append(
+                "### 历史亏损模式（务必规避）\n"
+                + "\n".join(f"- ❌ {s}" for s in items)
+            )
+
+        if items := result.get("systematic_biases"):
+            parts.append(
+                "### 系统性偏差提醒\n"
+                + "\n".join(f"- ⚠️ {s}" for s in items)
+            )
+
+        if items := result.get("rules"):
+            parts.append(
+                "### 强制规则（覆盖知识库默认；如与知识库冲突仍以知识库为准）\n"
+                + "\n".join(f"- {r}" for r in items)
+            )
+
+        return "\n\n".join(parts) if parts else None
 
     def get_full_memo(self) -> Optional[Dict]:
         """获取完整备忘录"""
