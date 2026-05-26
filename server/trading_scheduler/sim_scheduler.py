@@ -67,6 +67,7 @@ class SimTradingScheduler(BaseTradingScheduler):
         self.position.leverage = cfg.leverage
         self.position.trailing_atr = levels["atr"]
         self.position.liquidation_price = levels["liquidation_price"]
+        self.position.analysis_id = self._analysis_id_from_signal(signal)
 
         logger.info(
             f"🗡️ 模拟开多: {pos_btc:.4f} BTC @ ${btc_price:,.0f}, "
@@ -80,6 +81,7 @@ class SimTradingScheduler(BaseTradingScheduler):
             trigger_reason=signal.reason if signal else None,
             signal_confidence=signal.confidence * 100 if signal else None,
             position_levels=levels,
+            analysis_id=self.position.analysis_id,
         )
 
     async def _open_short(self, btc_price: float, klines: list,
@@ -115,6 +117,7 @@ class SimTradingScheduler(BaseTradingScheduler):
         self.position.leverage = cfg.leverage
         self.position.trailing_atr = levels["atr"]
         self.position.liquidation_price = levels["liquidation_price"]
+        self.position.analysis_id = self._analysis_id_from_signal(signal)
 
         logger.info(
             f"🛡️ 模拟开空: {pos_btc:.4f} BTC @ ${btc_price:,.0f}, "
@@ -128,6 +131,7 @@ class SimTradingScheduler(BaseTradingScheduler):
             trigger_reason=signal.reason if signal else None,
             signal_confidence=signal.confidence * 100 if signal else None,
             position_levels=levels,
+            analysis_id=self.position.analysis_id,
         )
 
     async def _close_position(self, btc_price: float, reason: str = "",
@@ -153,7 +157,8 @@ class SimTradingScheduler(BaseTradingScheduler):
         trade = self._make_trade(mode_str, action, btc_price, close_btc, pnl,
                                  entry_price=self.position.entry_price,
                                  market_indicators=self._capture_market_indicators(),
-                                 trigger_reason=reason or None)
+                                 trigger_reason=reason or None,
+                                 analysis_id=self.position.analysis_id)
 
         if close_ratio >= 1.0:
             self.position.reset()

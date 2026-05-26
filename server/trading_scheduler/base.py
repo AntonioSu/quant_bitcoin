@@ -38,6 +38,7 @@ class Position:
         self.liquidation_price = 0.0 # 强平价格
         self.sl_order_id = None      # 交易所止损挂单 ID
         self.tp1_order_id = None     # 交易所 TP1 挂单 ID
+        self.analysis_id = None      # 开仓时对应的 AI 研判记录 ID
 
     @property
     def is_active(self) -> bool:
@@ -57,6 +58,7 @@ class Position:
             "liquidation_price": self.liquidation_price,
             "sl_order_id": self.sl_order_id,
             "tp1_order_id": self.tp1_order_id,
+            "analysis_id": self.analysis_id,
         }
 
 
@@ -177,6 +179,7 @@ class BaseTradingScheduler(ABC):
             "highest_since_tp1": self.position.highest_since_tp1,
             "sl_order_id": self.position.sl_order_id,
             "tp1_order_id": self.position.tp1_order_id,
+            "analysis_id": self.position.analysis_id,
         }
     
     def restore_position_state(self) -> bool:
@@ -212,6 +215,7 @@ class BaseTradingScheduler(ABC):
         self.position.highest_since_tp1 = saved.get("highest_since_tp1", 0.0)
         self.position.sl_order_id = saved.get("sl_order_id")
         self.position.tp1_order_id = saved.get("tp1_order_id")
+        self.position.analysis_id = saved.get("analysis_id")
         
         if not self.position.is_active:
             self.current_mode = TradingMode.IDLE
@@ -272,14 +276,18 @@ class BaseTradingScheduler(ABC):
             if not memory:
                 return
 
-            # 找到对应的研判记录并关联交易结果
-            latest_id = memory.get_latest_analysis_id()
-            if latest_id:
-                memory.attach_trade_result(latest_id, trade)
-                logger.info(f"📝 交易结果已关联到研判 {latest_id}")
+            # 优先使用开仓时绑定的研判 ID，避免平仓附近的新研判污染复盘。
+            record_id = trade.get("analysis_id") or self.position.analysis_id
+            if not record_id:
+                record_id = memory.get_latest_analysis_id()
+                logger.warning("📝 平仓记录缺少 analysis_id，回退关联最近研判")
+
+            if record_id:
+                memory.attach_trade_result(record_id, trade)
+                logger.info(f"📝 交易结果已关联到研判 {record_id}")
 
                 # 异步触发复盘（不阻塞交易主循环）
-                asyncio.ensure_future(self._async_reflect(latest_id))
+                asyncio.ensure_future(self._async_reflect(record_id))
         except Exception as e:
             logger.warning(f"📝 关联交易记忆失败: {e}")
 
@@ -607,10 +615,15 @@ class BaseTradingScheduler(ABC):
     async def _on_trailing_stop_moved(self, new_stop: float):
         """移动止盈线更新。Live 子类覆盖以替换交易所止损单。"""
 
+    @staticmethod
+    def _analysis_id_from_signal(signal) -> Optional[str]:
+        return (signal.values or {}).get("analysis_id") if signal else None
+
     def _make_trade(self, mode: str, action: str, price: float, amount: float, pnl: float,
                     entry_price: float = None, market_indicators: dict = None,
                     trigger_reason: str = None, signal_confidence: float = None,
-                    position_levels: dict = None) -> dict:
+                    position_levels: dict = None,
+                    analysis_id: Optional[str] = None) -> dict:
         trade = {
             "id": len(self.trades) + 1,
             "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -628,6 +641,8 @@ class BaseTradingScheduler(ABC):
             trade["trigger_reason"] = trigger_reason
         if signal_confidence is not None:
             trade["signal_confidence"] = round(signal_confidence, 2)
+        if analysis_id is not None:
+            trade["analysis_id"] = analysis_id
         if position_levels is not None:
             trade["levels"] = {
                 "stop_loss": round(position_levels.get("stop_loss", 0), 2),

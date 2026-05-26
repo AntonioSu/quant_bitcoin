@@ -1,7 +1,16 @@
 """策略备忘录生成器
 
-把多次 Reflection 压缩成简短的策略备忘录，注入到 MarketAnalyzer 的 prompt 中，
-让后续研判吸取历史交易教训。
+这个模块负责把历史交易复盘沉淀成一份可注入研判 prompt 的"策略备忘录"。
+它位于 Reflector 和 MarketAnalyzer 之间：
+
+- Reflector 在每次平仓后，对单笔交易做"开仓研判 vs 实际结果"的归因复盘；
+- StrategySummarizer 汇总最近一段时间的多笔 Reflection 和绩效数据，
+  通过 LLM 提炼有效信号、亏损模式、系统性偏差和可执行规则；
+- MarketAnalyzer 在后续市场研判时读取这份备忘录，把近期交易教训作为上下文，
+  帮助 AI 避免重复错误、强化已被验证的信号。
+
+生成结果会保存到 data/strategy_memo.json，并在服务启动时加载到内存。
+交易调度器会在复盘数量达到阈值后周期性触发生成，避免每笔交易都重新总结。
 """
 
 import json

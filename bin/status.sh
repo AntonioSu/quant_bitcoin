@@ -10,6 +10,9 @@ if [ -n "$LISTENING_PID" ] && echo "$PROCESS_PIDS" | grep -qw "$LISTENING_PID"; 
     echo "📊 访问: http://localhost:$PORT"
     ELAPSED=$(ps -o etime= -p "$LISTENING_PID" | tr -d ' ')
     echo "⏱️  运行时间: $ELAPSED"
+elif [ -z "$LISTENING_PID" ] && [ -n "$PROCESS_PIDS" ]; then
+    echo "⏳ 服务启动中 (端口 $PORT 尚未监听, PID: $PROCESS_PIDS)"
+    echo "📄 日志: $LOG_FILE"
 else
     echo "❌ 服务异常"
     [ -n "$LISTENING_PID" ] && echo "   ⚠️  端口 $PORT 被非目标进程占用 (PID: $LISTENING_PID)"

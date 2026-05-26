@@ -1,6 +1,20 @@
 """交易复盘器
 
-每次平仓后对比 AI 研判 vs 实际结果，用 LLM 做归因分析，提炼经验教训。
+这个模块负责在交易闭环结束后，对单笔交易做自动复盘。
+它会读取 AnalysisMemory 中保存的"开仓前 AI 研判"和随后关联进来的
+"实际交易结果"，再调用 LLM 分析这次判断为什么正确或错误。
+
+典型链路：
+
+- MarketAnalyzer 在产生非 NEUTRAL 研判时，把 bias、confidence、summary、
+  key_drivers、risks 和市场快照写入 AnalysisMemory；
+- 交易调度器在 CLOSE / TP1_HALF 等平仓动作发生后，把成交结果关联到最近一次研判；
+- Reflector 对比研判内容、市场快照和实际 PnL，生成评分、模式标签和经验教训；
+- 复盘结果会写回 AnalysisMemory，后续由 StrategySummarizer 聚合成策略备忘录，
+  再注入下一轮 MarketAnalyzer 的 prompt 中。
+
+Reflector 只负责单笔交易的归因分析，不直接修改交易策略或执行下单。
+它运行在异步线程中，失败时只记录日志，不阻塞交易主流程。
 """
 
 import json
