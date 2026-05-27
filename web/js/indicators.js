@@ -303,23 +303,32 @@ function updateIndicators(data) {
     }
 
     // ETF Flow
+    const formatSignedEtfFlow = (value, millionDigits = 0) => {
+        const sign = value >= 0 ? '+' : '-';
+        const abs = Math.abs(value);
+        if (abs >= 1e9) {
+            return sign + (abs / 1e9).toFixed(2).replace(/\.?0+$/, '') + 'B';
+        }
+        return sign + (abs / 1e6).toFixed(millionDigits) + 'M';
+    };
+
     const etfDailyEl = document.getElementById('etf-daily-flow');
     const etfDaily = data.etf_daily_flow;
     if (etfDaily !== null && etfDaily !== undefined) {
-        etfDailyEl.textContent = (etfDaily >= 0 ? '+' : '-') + (Math.abs(etfDaily) / 1e6).toFixed(1) + 'M';
+        etfDailyEl.textContent = formatSignedEtfFlow(etfDaily, 1);
         etfDailyEl.className = 'etf-val ' + (etfDaily >= 0 ? 'green' : 'red');
     }
     const etf3dEl = document.getElementById('etf-flow-3d');
     const etf3d = data.etf_flow_3d;
     if (etf3d !== null && etf3d !== undefined) {
-        etf3dEl.textContent = (etf3d >= 0 ? '+' : '-') + (Math.abs(etf3d) / 1e6).toFixed(0) + 'M';
+        etf3dEl.textContent = formatSignedEtfFlow(etf3d);
         etf3dEl.className = 'etf-val ' + (etf3d >= 0 ? 'green' : 'red');
     }
 
     const etf7dEl = document.getElementById('etf-flow-7d');
     const etf7d = data.etf_flow_7d;
     if (etf7d !== null && etf7d !== undefined) {
-        etf7dEl.textContent = (etf7d >= 0 ? '+' : '-') + (Math.abs(etf7d) / 1e6).toFixed(0) + 'M';
+        etf7dEl.textContent = formatSignedEtfFlow(etf7d);
         etf7dEl.className = 'etf-val ' + (etf7d >= 0 ? 'green' : 'red');
     }
 
