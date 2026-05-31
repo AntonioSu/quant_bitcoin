@@ -114,6 +114,10 @@ class IndicatorData(BaseModel):
     ai_key_drivers: Optional[list] = None
     ai_risks: Optional[list] = None
     ai_horizon: Optional[str] = None
+    ai_entry_ok: Optional[bool] = None
+    ai_position_size_hint: Optional[str] = None
+    ai_invalidations: Optional[list] = None
+    ai_committee: Optional[dict] = None
     ai_updated_at: Optional[str] = None
     # 新增指标
     netflow_btc: Optional[float] = None
@@ -310,6 +314,10 @@ def _get_indicators_from_market() -> IndicatorData:
     ai_key_drivers = ai_raw.get("key_drivers")
     ai_risks = ai_raw.get("risks")
     ai_horizon = ai_raw.get("horizon")
+    ai_entry_ok = ai_raw.get("entry_ok")
+    ai_position_size_hint = ai_raw.get("position_size_hint")
+    ai_invalidations = ai_raw.get("invalidations")
+    ai_committee = ai_raw.get("committee")
     ai_updated_at = market.ai_analysis.timestamp.isoformat() if market.ai_analysis else None
 
     # 交易所净流入
@@ -415,6 +423,10 @@ def _get_indicators_from_market() -> IndicatorData:
         ai_key_drivers=ai_key_drivers,
         ai_risks=ai_risks,
         ai_horizon=ai_horizon,
+        ai_entry_ok=ai_entry_ok,
+        ai_position_size_hint=ai_position_size_hint,
+        ai_invalidations=ai_invalidations,
+        ai_committee=ai_committee,
         ai_updated_at=ai_updated_at,
         netflow_btc=netflow_btc,
         netflow_signal=netflow_signal,
@@ -729,6 +741,10 @@ def _ai_analysis_payload() -> dict:
         "ai_key_drivers": raw.get("key_drivers"),
         "ai_risks": raw.get("risks"),
         "ai_horizon": raw.get("horizon"),
+        "ai_entry_ok": raw.get("entry_ok"),
+        "ai_position_size_hint": raw.get("position_size_hint"),
+        "ai_invalidations": raw.get("invalidations"),
+        "ai_committee": raw.get("committee"),
         "ai_updated_at": market.ai_analysis.timestamp.isoformat(),
     }
 

@@ -6,6 +6,10 @@ function updateAiAnalysis(data) {
     const summaryEl = document.getElementById('ai-summary');
     const horizonEl = document.getElementById('ai-horizon');
     const metaEl = document.getElementById('ai-updated-at');
+    const committeeEl = document.getElementById('ai-committee');
+    const entryOkEl = document.getElementById('ai-entry-ok');
+    const positionEl = document.getElementById('ai-position-size');
+    const committeeNoteEl = document.getElementById('ai-committee-note');
     if (!biasEl) return;
 
     const bias = (data.ai_bias || 'NEUTRAL').toUpperCase();
@@ -31,6 +35,30 @@ function updateAiAnalysis(data) {
     actionEl.className = 'ai-action ' + actionClass;
 
     summaryEl.textContent = data.ai_summary || '等待首次 AI 综合研判...';
+
+    const hasCommittee = (
+        data.ai_entry_ok !== null && data.ai_entry_ok !== undefined
+    ) || !!data.ai_committee;
+    if (committeeEl) {
+        committeeEl.hidden = !hasCommittee;
+    }
+    if (hasCommittee && entryOkEl) {
+        const entryOk = data.ai_entry_ok === true;
+        entryOkEl.textContent = entryOk ? '入场 OK' : '入场 WAIT';
+        entryOkEl.className = 'ai-committee-pill ' + (entryOk ? 'bullish' : 'neutral');
+    }
+    if (hasCommittee && positionEl) {
+        positionEl.textContent = '仓位 ' + (data.ai_position_size_hint || '0%');
+    }
+    if (hasCommittee && committeeNoteEl) {
+        const committee = data.ai_committee || {};
+        const note = committee.risk_review
+            || committee.manager_rationale
+            || committee.bull_case
+            || committee.bear_case
+            || '';
+        committeeNoteEl.textContent = note;
+    }
 
     if (data.ai_horizon) horizonEl.textContent = data.ai_horizon;
 

@@ -18,3 +18,4 @@ __pycache__/
 */config.json
 # PID 文件
 .daemon.pid
+bin/verify_remote_big03.sh

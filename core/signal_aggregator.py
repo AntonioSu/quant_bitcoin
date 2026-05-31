@@ -187,6 +187,9 @@ class SignalAggregator:
         tt_value = market.top_trader.value if market.top_trader else 1.0
         rsi_signal = market.rsi.signal_type.value if market.rsi else "none"
         cvd_divergence = market.cvd.divergence.value if market.cvd else "none"
+        has_committee_gate = "entry_ok" in ai_raw
+        committee_entry_ok = bool(ai_raw.get("entry_ok")) if has_committee_gate else True
+        position_size_hint = ai_raw.get("position_size_hint")
 
         values = {
             "fear_greed": fg_value,
@@ -198,6 +201,8 @@ class SignalAggregator:
             "analysis_id": analysis_id,
             "rsi_signal": rsi_signal,
             "cvd_divergence": cvd_divergence,
+            "entry_ok": committee_entry_ok if has_committee_gate else None,
+            "position_size_hint": position_size_hint,
         }
 
         mode = TradingMode.LONG if target == "LONG" else TradingMode.SHORT
@@ -218,6 +223,7 @@ class SignalAggregator:
         )
         entry_guard_ok = (
             action_allows_entry
+            and committee_entry_ok
             and not no_entry_action
             and not no_entry_keyword
             and not low_confidence_entry
@@ -228,6 +234,7 @@ class SignalAggregator:
             "ai_direction": direction_match,
             "ai_confidence": confidence_enough,
             "ai_action": action_allows_entry,
+            "committee_entry_ok": committee_entry_ok,
             "entry_guard": entry_guard_ok,
         }
 
@@ -248,6 +255,8 @@ class SignalAggregator:
                 parts.append(f"置信度 {ai_conf}% < {self._confidence_threshold}%")
             if not action_allows_entry:
                 parts.append(f"action={ai_action or '空'} (需要 {_OPEN_ACTIONS[target]})")
+            if has_committee_gate and not committee_entry_ok:
+                parts.append(f"决策委员会 entry_ok=false (仓位建议={position_size_hint or '0%'})")
             if no_entry_keyword:
                 parts.append("研判文本含禁止/等待入场语义")
             if low_confidence_entry:
@@ -355,6 +364,7 @@ class SignalAggregator:
             return short_result
         
         ai_bias, ai_conf, ai_summary, ai_action, analysis_id = _get_ai_signal()
+        ai_raw = market.ai_analysis.raw if market.ai_analysis and market.ai_analysis.raw else {}
         return SignalResult(
             mode=TradingMode.IDLE,
             conditions={},
@@ -363,6 +373,8 @@ class SignalAggregator:
                 "ai_confidence": ai_conf,
                 "ai_action": ai_action,
                 "analysis_id": analysis_id,
+                "entry_ok": ai_raw.get("entry_ok"),
+                "position_size_hint": ai_raw.get("position_size_hint"),
             },
             confidence=0.0,
             reason=f"无交易信号 (AI: {ai_bias} {ai_conf}%)"

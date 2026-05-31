@@ -21,6 +21,7 @@ from typing import Dict, Optional, Any
 from dotenv import load_dotenv
 
 from data_sources.base import DataPoint
+from multi_agent.decision_committee import DecisionCommittee
 from utils import logger
 from utils.common_utils import read_file_prompt
 from utils.llm_client import LLMClient
@@ -60,6 +61,13 @@ class MarketAnalyzer:
         self.memory = memory            # AnalysisMemory 实例
         self.summarizer = summarizer    # StrategySummarizer 实例
         self._last_analysis: Optional[Dict[str, Any]] = self._load_last_analysis()
+        self._static_system_prompt: Optional[str] = None
+        self._knowledge_context: Optional[str] = None
+        self._committee: Optional[DecisionCommittee] = None
+        self._committee_enabled = (
+            os.getenv("ENABLE_DECISION_COMMITTEE", "false").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
 
     def fetch(self, market) -> DataPoint:
         """对当前 market 数据做一次综合分析
@@ -73,7 +81,7 @@ class MarketAnalyzer:
 
         snapshot = self._build_snapshot(market)
         prompt = self._build_prompt(snapshot)
-        analysis = self._analyze(prompt)
+        analysis = self._analyze(prompt, snapshot=snapshot)
 
         bias = analysis.get("bias", "NEUTRAL")
         confidence = analysis.get("confidence", 0)
@@ -414,90 +422,26 @@ class MarketAnalyzer:
             f"```json\n{body}\n```"
         )
 
-    def _analyze(self, prompt: str) -> Dict[str, Any]:
+    def _analyze(
+        self,
+        prompt: str,
+        snapshot: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        dynamic_context = self._build_dynamic_context()
+
+        if self._committee_enabled and snapshot:
+            try:
+                return self._normalize(
+                    self._get_committee().run(
+                        snapshot=snapshot,
+                        dynamic_context=dynamic_context,
+                    )
+                )
+            except Exception as e:
+                logger.warning(f"🤖 决策委员会失败，回退单体研判: {e}")
+
         try:
-            sys_prompt = read_file_prompt(
-                os.path.join(_PROMPT_DIR, 'market_analyzer.md')
-            )
-
-            knowledge_dir = os.path.join(os.path.dirname(__file__), 'knowledge')
-            if os.path.isdir(knowledge_dir):
-                md_files: list[str] = []
-                for root, dirs, files in os.walk(knowledge_dir):
-                    dirs[:] = [d for d in dirs if d != 'news']
-                    for fname in files:
-                        if fname.endswith('.md'):
-                            md_files.append(os.path.join(root, fname))
-                for fpath in sorted(md_files):
-                    sys_prompt += "\n\n" + read_file_prompt(fpath)
-
-            # ─── 以下所有动态内容统一拼到 user prompt 末尾 ─────────────────────
-            # 关键原则：让 sys_prompt 在 cache TTL 内保持字节级稳定，
-            # 任何会随时间变化的内容（memo / 上次研判 / 最近回顾）一律放到 user 段，
-            # 这样服务端 Prompt Cache 才能稳定命中前缀（role + 知识库 ~几千 tokens）。
-            # memo 在每轮复盘后会更新，原本拼到 sys_prompt 会直接把缓存击穿。
-
-            # 注入策略备忘录（来自历史复盘）
-            if self.summarizer:
-                memo = self.summarizer.get_memo_text()
-                if memo:
-                    prompt += (
-                        "\n\n## 近期策略备忘录（基于历史交易复盘）\n"
-                        "请将以下经验教训纳入本次研判的权重考量：\n\n"
-                        f"{memo}"
-                    )
-
-            # 注入上次研判结果（锚定一致性）
-            if self._last_analysis:
-                last = self._last_analysis
-                drivers_text = ""
-                if last.get("key_drivers"):
-                    drivers_text = "\n".join(
-                        f"  - [{d.get('side','?')}/{d.get('weight','?')}] {d.get('factor','')}"
-                        for d in last["key_drivers"] if isinstance(d, dict)
-                    )
-                prompt += (
-                    "\n\n## 上次研判结果（请遵守一致性规则）\n"
-                    f"- 方向: {last.get('bias')}  置信度: {last.get('confidence')}%\n"
-                    f"- 研判: {last.get('summary', '')}\n"
-                    f"- 动作: {last.get('action', '')}\n"
-                )
-                if drivers_text:
-                    prompt += f"- 关键驱动:\n{drivers_text}\n"
-                prompt += (
-                    "\n请对比当前指标与上次研判时的情况，"
-                    "如果市场条件没有发生实质性变化，请维持上次方向。"
-                    "如果需要改变方向，必须在 key_drivers 中明确说明变化原因。"
-                )
-
-            # 注入最近几次研判 vs 实际结果（短期记忆）
-            if self.memory:
-                recent = self.memory.get_recent_with_results(n=3)
-                if recent:
-                    lines = []
-                    for r in recent:
-                        tr = r.get("trade_result", {})
-                        ref = r.get("reflection", {})
-                        pnl = tr.get("pnl", 0)
-                        lesson = ref.get("lesson", "") if ref else ""
-                        lines.append(
-                            f"- {r.get('bias')} {r.get('confidence')}% → "
-                            f"PnL ${pnl:+.2f} ({tr.get('trigger_reason', '?')})"
-                            f"{' | 教训: ' + lesson if lesson else ''}"
-                        )
-                    prompt += (
-                        "\n\n## 最近研判回顾\n"
-                        "以下是最近几次研判的实际结果，请参考但不要过度拟合：\n"
-                        + "\n".join(lines)
-                    )
-
-            resp = self.llm.chat(
-                system_prompt=sys_prompt,
-                prompt=prompt,
-                usage_tag="[market]",
-            )
-            parsed = self._parse_json(resp)
-            return self._normalize(parsed)
+            return self._analyze_legacy(prompt, dynamic_context=dynamic_context)
         except Exception as e:
             logger.error(f"🤖 LLM 市场分析失败: {e}")
             return {
@@ -510,7 +454,128 @@ class MarketAnalyzer:
                 "horizon": "4H~24H",
                 "trend_regime": "UNCLEAR",
                 "volatility_regime": "NORMAL_VOL",
+                "entry_ok": False,
+                "position_size_hint": "0%",
+                "invalidations": [],
+                "committee": {},
             }
+
+    def _get_committee(self) -> DecisionCommittee:
+        if not self._committee:
+            self._committee = DecisionCommittee(
+                llm=self.llm,
+                prompt_dir=_PROMPT_DIR,
+                static_context=self._load_knowledge_context(),
+            )
+        return self._committee
+
+    def _load_static_system_prompt(self) -> str:
+        """Load stable role + knowledge text for prompt caching."""
+        if self._static_system_prompt is not None:
+            return self._static_system_prompt
+
+        sys_prompt = read_file_prompt(
+            os.path.join(_PROMPT_DIR, 'market_analyzer.md')
+        )
+
+        knowledge = self._load_knowledge_context()
+        if knowledge:
+            sys_prompt += "\n\n" + knowledge
+
+        self._static_system_prompt = sys_prompt
+        return sys_prompt
+
+    def _load_knowledge_context(self) -> str:
+        """Load stable market knowledge without the legacy final-output prompt."""
+        if self._knowledge_context is not None:
+            return self._knowledge_context
+
+        knowledge_dir = os.path.join(os.path.dirname(__file__), 'knowledge')
+        chunks: list[str] = []
+        if os.path.isdir(knowledge_dir):
+            md_files: list[str] = []
+            for root, dirs, files in os.walk(knowledge_dir):
+                dirs[:] = [d for d in dirs if d != 'news']
+                for fname in files:
+                    if fname.endswith('.md'):
+                        md_files.append(os.path.join(root, fname))
+            for fpath in sorted(md_files):
+                chunks.append(read_file_prompt(fpath))
+
+        self._knowledge_context = "\n\n".join(chunks)
+        return self._knowledge_context
+
+    def _build_dynamic_context(self) -> str:
+        """Build dynamic memory/context text shared by legacy and committee paths."""
+        parts: list[str] = []
+
+        # 关键原则：让 sys_prompt 在 cache TTL 内保持字节级稳定，
+        # 任何会随时间变化的内容（memo / 上次研判 / 最近回顾）一律放到 user 段。
+        if self.summarizer:
+            memo = self.summarizer.get_memo_text()
+            if memo:
+                parts.append(
+                    "## 近期策略备忘录（基于历史交易复盘）\n"
+                    "请将以下经验教训纳入本次研判的权重考量：\n\n"
+                    f"{memo}"
+                )
+
+        if self._last_analysis:
+            last = self._last_analysis
+            drivers_text = ""
+            if last.get("key_drivers"):
+                drivers_text = "\n".join(
+                    f"  - [{d.get('side','?')}/{d.get('weight','?')}] {d.get('factor','')}"
+                    for d in last["key_drivers"] if isinstance(d, dict)
+                )
+            section = (
+                "## 上次研判结果（请遵守一致性规则）\n"
+                f"- 方向: {last.get('bias')}  置信度: {last.get('confidence')}%\n"
+                f"- 研判: {last.get('summary', '')}\n"
+                f"- 动作: {last.get('action', '')}\n"
+            )
+            if drivers_text:
+                section += f"- 关键驱动:\n{drivers_text}\n"
+            section += (
+                "\n请对比当前指标与上次研判时的情况，"
+                "如果市场条件没有发生实质性变化，请维持上次方向。"
+                "如果需要改变方向，必须在 key_drivers 中明确说明变化原因。"
+            )
+            parts.append(section)
+
+        if self.memory:
+            recent = self.memory.get_recent_with_results(n=3)
+            if recent:
+                lines = []
+                for r in recent:
+                    tr = r.get("trade_result", {})
+                    ref = r.get("reflection", {})
+                    pnl = tr.get("pnl", 0)
+                    lesson = ref.get("lesson", "") if ref else ""
+                    lines.append(
+                        f"- {r.get('bias')} {r.get('confidence')}% → "
+                        f"PnL ${pnl:+.2f} ({tr.get('trigger_reason', '?')})"
+                        f"{' | 教训: ' + lesson if lesson else ''}"
+                    )
+                parts.append(
+                    "## 最近研判回顾\n"
+                    "以下是最近几次研判的实际结果，请参考但不要过度拟合：\n"
+                    + "\n".join(lines)
+                )
+
+        return "\n\n".join(parts)
+
+    def _analyze_legacy(self, prompt: str, dynamic_context: str = "") -> Dict[str, Any]:
+        if dynamic_context:
+            prompt += "\n\n" + dynamic_context
+
+        resp = self.llm.chat(
+            system_prompt=self._load_static_system_prompt(),
+            prompt=prompt,
+            usage_tag="[market]",
+        )
+        parsed = self._parse_json(resp)
+        return self._normalize(parsed)
 
     @staticmethod
     def _parse_json(text: str) -> Dict[str, Any]:
@@ -555,7 +620,7 @@ class MarketAnalyzer:
                        "BREAKOUT_EXPANSION", "HIGH_VOL_EXTREME"):
             vol = "NORMAL_VOL"
 
-        return {
+        normalized = {
             "bias": bias,
             "confidence": confidence,
             "summary": str(data.get("summary", "")),
@@ -566,6 +631,17 @@ class MarketAnalyzer:
             "trend_regime": trend,
             "volatility_regime": vol,
         }
+
+        if "entry_ok" in data:
+            normalized["entry_ok"] = bool(data.get("entry_ok"))
+        if "position_size_hint" in data:
+            normalized["position_size_hint"] = str(data.get("position_size_hint") or "0%")
+        if "invalidations" in data:
+            normalized["invalidations"] = data.get("invalidations") or []
+        if "committee" in data:
+            normalized["committee"] = data.get("committee") or {}
+
+        return normalized
 
 
 def main():
