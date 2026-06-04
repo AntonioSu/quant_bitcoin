@@ -8,6 +8,10 @@ function updateIndicators(data) {
     const frEl = document.getElementById('funding-rate');
     frEl.textContent = data.funding_rate.toFixed(4) + '%';
     frEl.className = 'indicator-value ' + getColorClass(data.funding_rate);
+    const predictedEl = document.getElementById('funding-predicted');
+    const predicted = data.funding_rate_predicted || 0;
+    predictedEl.textContent = predicted.toFixed(4) + '%';
+    predictedEl.className = predicted < 0 ? 'red' : predicted > 0.01 ? 'green' : '';
     document.getElementById('funding-annual').textContent = data.funding_rate_annual.toFixed(2) + '%';
 
     // Top Trader Ratio

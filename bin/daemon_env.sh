@@ -1,6 +1,11 @@
 #!/bin/bash
 # 服务运维公共配置，被 start/stop/restart/status/logs 引用
 export HTTPS_PROXY=http://gfw.in.zhihu.com:18080
+export https_proxy=http://gfw.in.zhihu.com:18080
+export HTTP_PROXY=http://gfw.in.zhihu.com:18080
+export http_proxy=http://gfw.in.zhihu.com:18080
+export no_proxy="model.in.zhihu.com,localhost,127.0.0.1"
+export NO_PROXY="model.in.zhihu.com,localhost,127.0.0.1"
 
 # Python 环境（改成你需要的 conda 环境名）
 CONDA_ENV="base"

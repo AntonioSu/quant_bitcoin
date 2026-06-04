@@ -46,6 +46,7 @@ class IndicatorData(BaseModel):
     fear_greed: int
     fear_greed_class: str
     funding_rate: float
+    funding_rate_predicted: float
     funding_rate_annual: float
     top_trader_ratio: float
     top_trader_sentiment: str
@@ -187,6 +188,8 @@ def _get_indicators_from_market() -> IndicatorData:
     
     # 资金费率
     fr_value = market.funding_rate.value if market.funding_rate else 0
+    fr_predicted = (market.funding_rate.raw.get("predicted_rate", 0) * 100
+                    if market.funding_rate and market.funding_rate.raw else 0)
     fr_annual = (market.funding_rate.raw.get("annual_yield", 0) * 100 
                  if market.funding_rate and market.funding_rate.raw else 0)
     
@@ -355,6 +358,7 @@ def _get_indicators_from_market() -> IndicatorData:
         fear_greed=fg_value,
         fear_greed_class=fg_class,
         funding_rate=fr_value,
+        funding_rate_predicted=fr_predicted,
         funding_rate_annual=fr_annual,
         top_trader_ratio=tt_value,
         top_trader_sentiment=tt_sentiment,
