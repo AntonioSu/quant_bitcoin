@@ -270,6 +270,123 @@ function ensureEtfChart() {
     }
 }
 
+function ensureExchangeFlowChart() {
+    if (exchangeFlowChart) return;
+    const container = document.getElementById('exchange-flow-container');
+    if (!container || container.clientWidth === 0) return;
+
+    exchangeFlowChart = LightweightCharts.createChart(container, {
+        width: container.clientWidth,
+        height: 110,
+        layout: {
+            background: { type: 'solid', color: THEME.bg },
+            textColor: THEME.text,
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 11,
+        },
+        grid: {
+            vertLines: { color: THEME.grid },
+            horzLines: { color: THEME.grid },
+        },
+        crosshair: {
+            mode: LightweightCharts.CrosshairMode.Normal,
+            vertLine: { color: 'rgba(13, 148, 136, 0.25)', labelBackgroundColor: THEME.teal },
+            horzLine: { color: 'rgba(13, 148, 136, 0.25)', labelBackgroundColor: THEME.teal },
+        },
+        rightPriceScale: {
+            borderColor: THEME.border,
+            minimumWidth: 80,
+            scaleMargins: { top: 0.1, bottom: 0.1 },
+        },
+        timeScale: {
+            borderColor: THEME.border,
+            timeVisible: false,
+            visible: true,
+        },
+    });
+
+    exchangeFlowBarSeries = exchangeFlowChart.addHistogramSeries({
+        priceFormat: {
+            type: 'custom',
+            formatter: v => formatBtcFlow(v),
+        },
+        priceLineVisible: false,
+        lastValueVisible: false,
+    });
+
+    new ResizeObserver(() => {
+        if (container.clientWidth > 0) {
+            exchangeFlowChart.applyOptions({ width: container.clientWidth });
+        }
+    }).observe(container);
+
+    if (chart) {
+        const mainSeries = candleSeries;
+        exchangeFlowChart.subscribeCrosshairMove(param => {
+            if (!param.time) { chart.clearCrosshairPosition(); return; }
+            if (mainSeries) chart.setCrosshairPosition(NaN, param.time, mainSeries);
+        });
+        chart.subscribeCrosshairMove(param => {
+            if (!param.time) { exchangeFlowChart.clearCrosshairPosition(); return; }
+            if (exchangeFlowBarSeries) exchangeFlowChart.setCrosshairPosition(NaN, param.time, exchangeFlowBarSeries);
+        });
+    }
+}
+
+function formatBtcFlow(v) {
+    if (v == null || isNaN(v)) return '--';
+    const abs = Math.abs(v);
+    if (abs >= 1000) return (v / 1000).toFixed(1) + 'K';
+    return v.toFixed(0);
+}
+
+function updateExchangeFlowLegend(last) {
+    const netEl = document.getElementById('exchange-flow-bar-val');
+    const inEl = document.getElementById('exchange-flow-in-val');
+    const outEl = document.getElementById('exchange-flow-out-val');
+    if (!last) return;
+
+    const netflow = last.netflow_btc || 0;
+    if (netEl) {
+        netEl.textContent = (netflow >= 0 ? '+' : '-') + formatBtcFlow(Math.abs(netflow)) + ' BTC';
+        netEl.className = 'macd-legend-item ' + (netflow >= 0 ? 'red' : 'green');
+    }
+    if (inEl) inEl.textContent = formatBtcFlow(last.inflow_btc || 0);
+    if (outEl) outEl.textContent = formatBtcFlow(last.outflow_btc || 0);
+}
+
+async function loadExchangeNetflow() {
+    try {
+        const resp = await fetch(`${API_BASE}/api/exchange-netflow?limit=0`);
+        const data = await resp.json();
+        if (!data || !data.length) return;
+
+        ensureExchangeFlowChart();
+        if (!exchangeFlowChart || !exchangeFlowBarSeries) return;
+
+        const sorted = data.slice().reverse();
+        const barData = sorted.map(d => {
+            const parts = d.date.split('-');
+            const ts = Date.UTC(+parts[0], +parts[1] - 1, +parts[2]) / 1000;
+            const flow = d.netflow_btc || 0;
+            return {
+                time: ts,
+                value: flow,
+                color: flow >= 0 ? 'rgba(220, 38, 38, 0.75)' : 'rgba(22, 163, 74, 0.75)',
+            };
+        });
+        exchangeFlowBarSeries.setData(barData);
+        updateExchangeFlowLegend(sorted[sorted.length - 1]);
+
+        if (chart) {
+            const tr = chart.timeScale().getVisibleRange();
+            if (tr) exchangeFlowChart.timeScale().setVisibleRange(tr);
+        }
+    } catch (e) {
+        console.error('加载交易所净流入失败:', e);
+    }
+}
+
 async function loadEtfFlow() {
     try {
         const resp = await fetch(`${API_BASE}/api/etf-flow?limit=0`);
@@ -338,6 +455,10 @@ function syncCharts() {
                     const tr = chart.timeScale().getVisibleRange();
                     if (tr) etfChart.timeScale().setVisibleRange(tr);
                 }
+                if (exchangeFlowChart && chart) {
+                    const tr = chart.timeScale().getVisibleRange();
+                    if (tr) exchangeFlowChart.timeScale().setVisibleRange(tr);
+                }
             } finally {
                 syncing = false;
             }
@@ -351,8 +472,12 @@ function syncCharts() {
                 if (series) tgt.chart.setCrosshairPosition(NaN, param.time, series);
             });
             if (etfChart && etfBarSeries) {
-                if (!param.time) { etfChart.clearCrosshairPosition(); return; }
-                etfChart.setCrosshairPosition(NaN, param.time, etfBarSeries);
+                if (!param.time) etfChart.clearCrosshairPosition();
+                else etfChart.setCrosshairPosition(NaN, param.time, etfBarSeries);
+            }
+            if (exchangeFlowChart && exchangeFlowBarSeries) {
+                if (!param.time) exchangeFlowChart.clearCrosshairPosition();
+                else exchangeFlowChart.setCrosshairPosition(NaN, param.time, exchangeFlowBarSeries);
             }
         });
     });
@@ -633,8 +758,13 @@ async function applyInterval(interval) {
 
     const isDaily = interval === '1d';
     const etfWrap = document.getElementById('etf-wrap');
+    const exchangeFlowWrap = document.getElementById('exchange-flow-wrap');
     const volWrap = document.querySelector('.vol-wrap');
     if (etfWrap) etfWrap.style.display = isDaily ? '' : 'none';
+    if (exchangeFlowWrap) {
+        exchangeFlowWrap.style.display = isDaily ? '' : 'none';
+        exchangeFlowWrap.classList.toggle('no-bottom-radius', isDaily);
+    }
     if (volWrap) volWrap.classList.toggle('no-bottom-radius', isDaily);
 
     if (volChart) volChart.applyOptions({ timeScale: { visible: !isDaily } });
@@ -644,7 +774,9 @@ async function applyInterval(interval) {
     if (macdChart) macdChart.timeScale().fitContent();
     if (volChart) volChart.timeScale().fitContent();
 
-    if (isDaily) await loadEtfFlow();
+    if (isDaily) {
+        await Promise.all([loadExchangeNetflow(), loadEtfFlow()]);
+    }
 }
 
 async function loadKlines() {

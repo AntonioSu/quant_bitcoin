@@ -282,6 +282,20 @@ def _get_indicators_from_market() -> IndicatorData:
             },
         )
 
+    # 记录交易所净流入历史（按自然日去重）
+    netflow_raw_hist = market.exchange_netflow.raw if market.exchange_netflow and market.exchange_netflow.raw else {}
+    if netflow_raw_hist.get("netflow_btc") is not None:
+        history_store.add(
+            HistoryStore.EXCHANGE_NETFLOW,
+            netflow_raw_hist["netflow_btc"],
+            extra={
+                "date": netflow_raw_hist.get("date"),
+                "inflow_btc": netflow_raw_hist.get("inflow_btc"),
+                "outflow_btc": netflow_raw_hist.get("outflow_btc"),
+                "signal": netflow_raw_hist.get("signal"),
+            },
+        )
+
     # 新闻分析数据
     news_score = market.news.value if market.news else None
     news_sentiment = market.news.raw.get("sentiment") if market.news and market.news.raw else None
@@ -723,6 +737,79 @@ async def get_etf_flow(limit: int = Query(default=0, le=9999)):
     result = [
         {"date": d["date"], "daily_flow": d["daily_flow"], "cum_flow": d.get("cum_flow", 0)}
         for d in local_data
+    ]
+    result.sort(key=lambda x: x["date"], reverse=True)
+
+    if limit > 0:
+        result = result[:limit]
+
+    return result
+
+
+@app.get("/api/exchange-netflow")
+async def get_exchange_netflow(limit: int = Query(default=0, le=9999)):
+    """获取 BTC 交易所每日流入/流出数据 (本地历史 + CoinMetrics 增量合并)
+
+    limit=0 返回全部历史, 否则返回最近 N 天 (newest first)
+    """
+    import json as _json
+    from data_sources.exchange_netflow import ExchangeNetflow
+
+    local_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "data", "exchange_netflow_history.json",
+    )
+
+    local_data: list = []
+    try:
+        if os.path.exists(local_path):
+            with open(local_path, "r", encoding="utf-8") as f:
+                local_data = _json.load(f)
+    except Exception as e:
+        logger.warning(f"读取交易所净流入本地历史失败: {e}")
+
+    try:
+        netflow = ExchangeNetflow()
+        api_data = await asyncio.to_thread(netflow.fetch_history, 240)
+        if api_data:
+            by_date = {d["date"]: d for d in local_data if d.get("date")}
+            changed = False
+            for item in api_data:
+                date = item.get("date")
+                if not date:
+                    continue
+                record = {
+                    "date": date,
+                    "netflow_btc": item["netflow_btc"],
+                    "inflow_btc": item["inflow_btc"],
+                    "outflow_btc": item["outflow_btc"],
+                    "signal": item.get("signal"),
+                }
+                if by_date.get(date) != record:
+                    by_date[date] = record
+                    changed = True
+
+            if changed:
+                local_data = sorted(by_date.values(), key=lambda x: x["date"])
+                try:
+                    with open(local_path, "w", encoding="utf-8") as f:
+                        _json.dump(local_data, f, ensure_ascii=False)
+                    logger.info("交易所净流入本地历史已更新")
+                except Exception as e:
+                    logger.warning(f"回写交易所净流入本地历史失败: {e}")
+    except Exception as e:
+        logger.warning(f"交易所净流入 API 增量更新失败: {e}")
+
+    result = [
+        {
+            "date": d["date"],
+            "netflow_btc": d.get("netflow_btc", 0),
+            "inflow_btc": d.get("inflow_btc", 0),
+            "outflow_btc": d.get("outflow_btc", 0),
+            "signal": d.get("signal"),
+        }
+        for d in local_data
+        if d.get("date")
     ]
     result.sort(key=lambda x: x["date"], reverse=True)
 

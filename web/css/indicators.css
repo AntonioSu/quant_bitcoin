@@ -255,6 +255,24 @@
     width: 100%;
 }
 
+.exchange-flow-wrap {
+    position: relative;
+    border: 1px solid var(--border);
+    border-top: 1px dashed var(--border);
+    border-radius: 0 0 10px 10px;
+    overflow: hidden;
+    background: var(--bg-inset, #FAFBFC);
+}
+
+.exchange-flow-wrap.no-bottom-radius {
+    border-radius: 0;
+    border-bottom: none;
+}
+
+#exchange-flow-container {
+    width: 100%;
+}
+
 .etf-wrap {
     position: relative;
     border: 1px solid var(--border);

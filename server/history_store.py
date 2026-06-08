@@ -22,6 +22,7 @@ class HistoryStore:
     TOP_TRADER_RATIO = "top_trader_ratio"
     BTC_PRICE = "btc_price"
     ETF_FLOW = "etf_flow"
+    EXCHANGE_NETFLOW = "exchange_netflow"
     
     def __init__(self, data_dir: Optional[str] = None):
         if data_dir is None:
@@ -47,7 +48,7 @@ class HistoryStore:
     
     def _load_all(self):
         """加载所有历史数据到缓存"""
-        for data_type in [self.FEAR_GREED, self.FUNDING_RATE, self.TOP_TRADER_RATIO, self.BTC_PRICE, self.ETF_FLOW]:
+        for data_type in [self.FEAR_GREED, self.FUNDING_RATE, self.TOP_TRADER_RATIO, self.BTC_PRICE, self.ETF_FLOW, self.EXCHANGE_NETFLOW]:
             filepath = self._get_filepath(data_type)
             if os.path.exists(filepath):
                 try:
@@ -90,8 +91,8 @@ class HistoryStore:
             
             existing = self._cache[data_type]
             if existing:
-                if data_type == self.ETF_FLOW:
-                    # ETF 日频数据：按 extra.date 去重（同一交易日不重复）
+                if data_type in (self.ETF_FLOW, self.EXCHANGE_NETFLOW):
+                    # 日频数据：按 extra.date 去重（同一天不重复）
                     last_date = existing[-1].get("extra", {}).get("date", "")
                     new_date = (extra or {}).get("date", "")
                     if last_date and new_date and last_date == new_date:
@@ -189,7 +190,7 @@ class HistoryStore:
                 self._save(data_type)
                 logger.info(f"已清除 {data_type} 历史数据")
             else:
-                for dt in [self.FEAR_GREED, self.FUNDING_RATE, self.TOP_TRADER_RATIO, self.BTC_PRICE, self.ETF_FLOW]:
+                for dt in [self.FEAR_GREED, self.FUNDING_RATE, self.TOP_TRADER_RATIO, self.BTC_PRICE, self.ETF_FLOW, self.EXCHANGE_NETFLOW]:
                     self._cache[dt] = []
                     self._save(dt)
                 logger.info("已清除所有历史数据")
