@@ -16,6 +16,7 @@ from data_sources.etf_flow import ETFFlow
 from data_sources.open_interest import OpenInterest
 from data_sources.liquidation import Liquidation
 from data_sources.btc_taker_kline import TakerData, taker_analyzer
+from data_sources.cvd_orderflow import CVDOrderFlow
 from data_sources.exchange_netflow import ExchangeNetflow
 from data_sources.macro_data import MacroData
 from data_sources.options_data import OptionsData
@@ -59,6 +60,7 @@ class MarketData:
     open_interest: Optional[DataPoint] = None
     liquidation: Optional[DataPoint] = None
     ai_analysis: Optional[DataPoint] = None
+    cvd_orderflow: Optional[DataPoint] = None
     exchange_netflow: Optional[DataPoint] = None
     macro: Optional[DataPoint] = None
     options: Optional[DataPoint] = None
@@ -159,6 +161,7 @@ class MarketData:
                 **(self.ai_analysis.raw or {}),
                 "updated_at": self.ai_analysis.timestamp.isoformat() if self.ai_analysis else None,
             } if self.ai_analysis else None,
+            "cvd_orderflow": self.cvd_orderflow.raw if self.cvd_orderflow and self.cvd_orderflow.raw else None,
             "exchange_netflow": self.exchange_netflow.raw if self.exchange_netflow and self.exchange_netflow.raw else None,
             "macro": self.macro.raw if self.macro and self.macro.raw else None,
             "options": self.options.raw if self.options and self.options.raw else None,
@@ -200,6 +203,7 @@ _liquidation = Liquidation(symbol="BTCUSDT", lookback_minutes=60)
 
 # 新增数据源
 import os as _os
+_cvd_orderflow = CVDOrderFlow(lookback_minutes=240)  # 4h aggTrade CVD 分层
 _exchange_netflow = ExchangeNetflow()  # CoinMetrics 免费 API
 _macro_data = MacroData(fred_api_key=_os.getenv("FRED_API_KEY", ""))
 _options_data = OptionsData()  # Deribit 公开 API
@@ -253,6 +257,11 @@ def refresh_market_data() -> MarketData:
         market.liquidation = _liquidation.fetch()
     except Exception as e:
         logger.warning(f"获取爆仓数据失败: {e}")
+
+    try:
+        market.cvd_orderflow = _cvd_orderflow.fetch()
+    except Exception as e:
+        logger.warning(f"获取CVD分层订单流数据失败: {e}")
 
     try:
         market.exchange_netflow = _exchange_netflow.fetch()

@@ -10,6 +10,8 @@ __pycache__/
 
 # 环境
 .env
+.venv
+.cursor
 *.toml
 
 # 配置 (含密钥，使用 config.example.json 作为模板)

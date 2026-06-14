@@ -356,6 +356,19 @@ class MarketAnalyzer:
                 "buy_ratio": taker_dict.get("taker_buy_ratio"),
             }
 
+        if market.cvd_orderflow:
+            raw = market.cvd_orderflow.raw or {}
+            retail = raw.get("retail", {})
+            medium = raw.get("medium", {})
+            large = raw.get("large", {})
+            snap["cvd_orderflow_4h"] = {
+                "retail_net_usd": retail.get("net_usd"),
+                "medium_net_usd": medium.get("net_usd"),
+                "large_net_usd": large.get("net_usd"),
+                "window_minutes": raw.get("window_minutes"),
+                "total_trades": raw.get("total_trades"),
+            }
+
         if market.atr:
             snap["atr_4h"] = {
                 "value": market.atr.value,

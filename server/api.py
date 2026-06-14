@@ -137,6 +137,23 @@ class IndicatorData(BaseModel):
     mvrv_value: Optional[float] = None
     mvrv_zone: Optional[str] = None
     mvrv_signal: Optional[str] = None
+    # CVD 分层订单流
+    cvd_of_retail_net: Optional[float] = None
+    cvd_of_retail_buy: Optional[float] = None
+    cvd_of_retail_sell: Optional[float] = None
+    cvd_of_retail_count: Optional[int] = None
+    cvd_of_medium_net: Optional[float] = None
+    cvd_of_medium_buy: Optional[float] = None
+    cvd_of_medium_sell: Optional[float] = None
+    cvd_of_medium_count: Optional[int] = None
+    cvd_of_large_net: Optional[float] = None
+    cvd_of_large_buy: Optional[float] = None
+    cvd_of_large_sell: Optional[float] = None
+    cvd_of_large_count: Optional[int] = None
+    cvd_of_total_trades: Optional[int] = None
+    cvd_of_window_min: Optional[int] = None
+    cvd_of_connected: Optional[bool] = None
+    cvd_of_signal: Optional[str] = None
     timestamp: str
 
 
@@ -368,6 +385,12 @@ def _get_indicators_from_market() -> IndicatorData:
     mvrv_zone = mvrv_raw.get("zone")
     mvrv_signal = mvrv_raw.get("signal")
 
+    # CVD 分层订单流
+    cvd_of_raw = market.cvd_orderflow.raw if market.cvd_orderflow and market.cvd_orderflow.raw else {}
+    cvd_of_retail = cvd_of_raw.get("retail", {})
+    cvd_of_medium = cvd_of_raw.get("medium", {})
+    cvd_of_large = cvd_of_raw.get("large", {})
+
     return IndicatorData(
         fear_greed=fg_value,
         fear_greed_class=fg_class,
@@ -462,6 +485,22 @@ def _get_indicators_from_market() -> IndicatorData:
         mvrv_value=mvrv_value,
         mvrv_zone=mvrv_zone,
         mvrv_signal=mvrv_signal,
+        cvd_of_retail_net=cvd_of_retail.get("net_usd"),
+        cvd_of_retail_buy=cvd_of_retail.get("buy_usd"),
+        cvd_of_retail_sell=cvd_of_retail.get("sell_usd"),
+        cvd_of_retail_count=cvd_of_retail.get("trade_count"),
+        cvd_of_medium_net=cvd_of_medium.get("net_usd"),
+        cvd_of_medium_buy=cvd_of_medium.get("buy_usd"),
+        cvd_of_medium_sell=cvd_of_medium.get("sell_usd"),
+        cvd_of_medium_count=cvd_of_medium.get("trade_count"),
+        cvd_of_large_net=cvd_of_large.get("net_usd"),
+        cvd_of_large_buy=cvd_of_large.get("buy_usd"),
+        cvd_of_large_sell=cvd_of_large.get("sell_usd"),
+        cvd_of_large_count=cvd_of_large.get("trade_count"),
+        cvd_of_total_trades=cvd_of_raw.get("total_trades"),
+        cvd_of_window_min=cvd_of_raw.get("window_minutes"),
+        cvd_of_connected=cvd_of_raw.get("ws_connected"),
+        cvd_of_signal=cvd_of_raw.get("signal"),
         timestamp=market.last_update.isoformat() if market.last_update else datetime.now().isoformat(),
     )
 
