@@ -23,6 +23,7 @@ SOURCES = {
     "other",
 }
 POSITION_HINTS = {"0%", "25%", "50%", "75%", "100%"}
+LEVERAGE_HINTS = {1, 2, 3, 5, 10, 20}
 RISK_LEVELS = {"low", "medium", "high", "extreme"}
 TREND_REGIMES = {"UP_TREND", "DOWN_TREND", "RANGE", "UNCLEAR"}
 VOL_REGIMES = {
@@ -53,6 +54,16 @@ def normalize_position_hint(value: Any) -> str:
     if text.isdigit() and f"{text}%" in POSITION_HINTS:
         return f"{text}%"
     return "0%"
+
+
+def normalize_leverage_hint(value: Any) -> int:
+    try:
+        lev = int(value)
+    except (TypeError, ValueError):
+        return 5
+    if lev in LEVERAGE_HINTS:
+        return lev
+    return min(LEVERAGE_HINTS, key=lambda x: abs(x - lev))
 
 
 def normalize_driver_list(items: Any, limit: int = 5) -> List["Driver"]:
@@ -176,6 +187,7 @@ class RiskReview(BaseModel):
     risk_level: Literal["low", "medium", "high", "extreme"] = "high"
     allowed_actions: List[str] = Field(default_factory=lambda: ["持仓观望"])
     position_size_hint: str = "0%"
+    max_leverage: int = 5
     blockers: List[str] = Field(default_factory=list)
     risk_controls: List[str] = Field(default_factory=list)
 
@@ -198,6 +210,15 @@ class RiskReview(BaseModel):
     def _normalize_position_size_hint(cls, value: Any) -> str:
         return normalize_position_hint(value)
 
+    @field_validator("max_leverage", mode="before")
+    @classmethod
+    def _normalize_max_leverage(cls, value: Any) -> int:
+        try:
+            lev = int(value)
+        except (TypeError, ValueError):
+            return 5
+        return max(1, min(20, lev))
+
     @field_validator("blockers", "risk_controls", mode="before")
     @classmethod
     def _normalize_text_list(cls, value: Any) -> List[str]:
@@ -213,6 +234,10 @@ class RiskReview(BaseModel):
             self.allowed_actions = [
                 action for action in self.allowed_actions if action not in OPEN_ACTIONS
             ] or ["持仓观望"]
+        if self.risk_level == "extreme":
+            self.max_leverage = min(self.max_leverage, 2)
+        elif self.risk_level == "high":
+            self.max_leverage = min(self.max_leverage, 5)
         return self
 
     @classmethod
@@ -250,6 +275,7 @@ class CommitteeDecision(BaseModel):
     action: str = "持仓观望"
     entry_ok: bool = False
     position_size_hint: str = "0%"
+    leverage_hint: int = 5
     key_drivers: List[Driver] = Field(default_factory=list)
     risks: List[str] = Field(default_factory=list)
     invalidations: List[str] = Field(default_factory=list)
@@ -294,6 +320,11 @@ class CommitteeDecision(BaseModel):
     def _normalize_position_size_hint(cls, value: Any) -> str:
         return normalize_position_hint(value)
 
+    @field_validator("leverage_hint", mode="before")
+    @classmethod
+    def _normalize_leverage_hint(cls, value: Any) -> int:
+        return normalize_leverage_hint(value)
+
     @field_validator("key_drivers", mode="before")
     @classmethod
     def _normalize_key_drivers(cls, value: Any) -> List[Driver]:
@@ -334,6 +365,14 @@ class CommitteeDecision(BaseModel):
             self.action = "持仓观望"
             self.entry_ok = False
             self.position_size_hint = "0%"
+
+        if self.confidence < 55:
+            self.leverage_hint = min(self.leverage_hint, 2)
+        elif self.confidence < 65:
+            self.leverage_hint = min(self.leverage_hint, 5)
+
+        if self.volatility_regime == "HIGH_VOL_EXTREME":
+            self.leverage_hint = min(self.leverage_hint, 3)
 
         return self
 

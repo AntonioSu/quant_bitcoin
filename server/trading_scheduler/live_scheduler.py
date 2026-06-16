@@ -204,29 +204,14 @@ class LiveTradingScheduler(BaseTradingScheduler):
                 if self.position.stop_loss == 0 and ex_entry > 0:
                     await self._recalculate_levels(ex_dir, ex_entry, ex_leverage)
 
-                # 检测交易所侧 TP1 成交：仓位减半且本地尚未标记 tp1_hit
-                if (prev_size > 0 and not self.position.tp1_hit
-                        and ex_size < prev_size * 0.75):
+                # 检测交易所侧仓位减少（AI 减仓或外部平仓）
+                if prev_size > 0 and ex_size < prev_size * 0.75:
                     logger.info(
-                        f"📡 检测到交易所 TP1 成交: "
-                        f"仓位 {prev_size:.4f} → {ex_size:.4f} BTC"
+                        f"📡 检测到交易所仓位减少: "
+                        f"{prev_size:.4f} → {ex_size:.4f} BTC"
                     )
-                    self.position.tp1_hit = True
-                    self.position.tp1_order_id = None
-                    self.position.highest_since_tp1 = ex_mark_price or ex_entry
-                    trailing_dist = (self.position.trailing_atr
-                                     * self.config.long.trailing_atr_multiplier)
-                    ref_price = ex_mark_price or ex_entry
-                    is_long = ex_dir == "LONG"
-                    if is_long:
-                        self.position.stop_loss = max(
-                            self.position.entry_price, ref_price - trailing_dist)
-                    else:
-                        self.position.stop_loss = min(
-                            self.position.entry_price, ref_price + trailing_dist)
-                    await self._replace_exchange_sl(self.position.stop_loss)
                     self.save_position_state()
-                    
+
             elif self.position.is_active:
                 logger.warning("⚠️ 交易所无仓位，重置本地状态")
                 await self._cancel_exchange_orders()
@@ -295,7 +280,8 @@ class LiveTradingScheduler(BaseTradingScheduler):
         except Exception as e:
             logger.error(f"重新计算止盈止损失败: {e}")
 
-    def _check_capital_guard(self, action_label: str) -> Optional[str]:
+    def _check_capital_guard(self, action_label: str,
+                             notional: float = 0, leverage: int = 5) -> Optional[str]:
         """检查资金上限，返回拒绝原因；None 表示通过"""
         if self.position.is_active:
             return f"已有 {self.position.direction} 仓位"
@@ -309,7 +295,9 @@ class LiveTradingScheduler(BaseTradingScheduler):
 
         if self._exchange_portfolio and not self._exchange_portfolio.get("_error"):
             free_balance = self._exchange_portfolio.get("balance", 0)
-            margin_needed = self.OPEN_NOTIONAL / self.config.long.leverage
+            effective_notional = notional or self.OPEN_NOTIONAL
+            effective_leverage = leverage or 5
+            margin_needed = effective_notional / effective_leverage
             cap = self._max_capital or float("inf")
             usable = min(free_balance, cap)
             if usable < margin_needed:
@@ -322,11 +310,13 @@ class LiveTradingScheduler(BaseTradingScheduler):
 
     async def _open_long(self, btc_price: float, klines: list,
                          market_indicators: dict = None, signal=None) -> Optional[dict]:
-        reject = self._check_capital_guard("开多")
+        notional, leverage = self._resolve_ai_sizing(signal)
+
+        reject = self._check_capital_guard("开多", notional, leverage)
         if reject:
             logger.warning(f"⚠️ 拒绝开多: {reject}")
             return None
-        
+
         cfg = self.config.long
 
         try:
@@ -334,16 +324,16 @@ class LiveTradingScheduler(BaseTradingScheduler):
                 entry_price=btc_price,
                 klines=klines,
                 atr_multiplier=cfg.atr_multiplier,
-                leverage=cfg.leverage,
-                notional_value=self.OPEN_NOTIONAL,
+                leverage=leverage,
+                notional_value=notional,
             )
         except Exception as e:
             logger.error(f"ATR 计算失败: {e}, 使用兜底价位")
-            levels = self.long_level.fallback(btc_price, leverage=cfg.leverage, notional_value=self.OPEN_NOTIONAL)
+            levels = self.long_level.fallback(btc_price, leverage=leverage, notional_value=notional)
 
         result = await asyncio.to_thread(
             self._futures_executor.execute_buy,
-            self.FUTURES_SYMBOL, self.OPEN_NOTIONAL, btc_price,
+            self.FUTURES_SYMBOL, notional, btc_price,
         )
         if not result.get("success"):
             logger.error(f"🗡️ 交易所开多失败: {result.get('message')}")
@@ -351,7 +341,7 @@ class LiveTradingScheduler(BaseTradingScheduler):
 
         order = result.get("order", {})
         fill_price = float(order.get("average") or btc_price)
-        fill_amount = float(order.get("filled") or self.OPEN_NOTIONAL / btc_price)
+        fill_amount = float(order.get("filled") or notional / btc_price)
 
         self.position.direction = "LONG"
         self.position.entry_price = fill_price
@@ -360,19 +350,17 @@ class LiveTradingScheduler(BaseTradingScheduler):
         self.position.tp1_price = levels["tp1_price"]
         self.position.tp2_price = levels["tp2_price"]
         self.position.tp1_hit = False
-        self.position.leverage = cfg.leverage
+        self.position.leverage = leverage
         self.position.trailing_atr = levels["atr"]
         self.position.liquidation_price = levels["liquidation_price"]
         self.position.analysis_id = self._analysis_id_from_signal(signal)
         self._last_open_ts = time.time()
 
         logger.info(
-            f"🗡️ 实盘开多: {fill_amount:.4f} BTC @ ${fill_price:,.0f}, "
-            f"止损=${levels['stop_loss']:,.0f}, TP1=${levels['tp1_price']:,.0f}, "
-            f"TP2=${levels['tp2_price']:,.0f}, 强平=${levels['liquidation_price']:,.0f}"
+            f"🗡️ 实盘开多: {fill_amount:.4f} BTC @ ${fill_price:,.0f} "
+            f"(${notional:,.0f}, {leverage}x), "
+            f"强平=${levels['liquidation_price']:,.0f}"
         )
-
-        # await self._place_exchange_sl_tp()
 
         return self._make_trade(
             "LONG", "LONG", fill_price, fill_amount, 0,
@@ -381,15 +369,18 @@ class LiveTradingScheduler(BaseTradingScheduler):
             signal_confidence=signal.confidence * 100 if signal else None,
             position_levels=levels,
             analysis_id=self.position.analysis_id,
+            notional=notional, leverage=leverage,
         )
 
     async def _open_short(self, btc_price: float, klines: list,
                           market_indicators: dict = None, signal=None) -> Optional[dict]:
-        reject = self._check_capital_guard("开空")
+        notional, leverage = self._resolve_ai_sizing(signal)
+
+        reject = self._check_capital_guard("开空", notional, leverage)
         if reject:
             logger.warning(f"⚠️ 拒绝开空: {reject}")
             return None
-        
+
         cfg = self.config.short
 
         try:
@@ -397,16 +388,16 @@ class LiveTradingScheduler(BaseTradingScheduler):
                 entry_price=btc_price,
                 klines=klines,
                 atr_multiplier=cfg.atr_multiplier,
-                leverage=cfg.leverage,
-                notional_value=self.OPEN_NOTIONAL,
+                leverage=leverage,
+                notional_value=notional,
             )
         except Exception as e:
             logger.error(f"ATR 计算失败: {e}, 使用兜底价位")
-            levels = self.short_level.fallback(btc_price, leverage=cfg.leverage, notional_value=self.OPEN_NOTIONAL)
+            levels = self.short_level.fallback(btc_price, leverage=leverage, notional_value=notional)
 
         result = await asyncio.to_thread(
             self._futures_executor.execute_short,
-            self.FUTURES_SYMBOL, self.OPEN_NOTIONAL, btc_price,
+            self.FUTURES_SYMBOL, notional, btc_price,
         )
         if not result.get("success"):
             logger.error(f"🛡️ 交易所开空失败: {result.get('message')}")
@@ -414,7 +405,7 @@ class LiveTradingScheduler(BaseTradingScheduler):
 
         order = result.get("order", {})
         fill_price = float(order.get("average") or btc_price)
-        fill_amount = float(order.get("filled") or self.OPEN_NOTIONAL / btc_price)
+        fill_amount = float(order.get("filled") or notional / btc_price)
 
         self.position.direction = "SHORT"
         self.position.entry_price = fill_price
@@ -423,19 +414,17 @@ class LiveTradingScheduler(BaseTradingScheduler):
         self.position.tp1_price = levels["tp1_price"]
         self.position.tp2_price = levels["tp2_price"]
         self.position.tp1_hit = False
-        self.position.leverage = cfg.leverage
+        self.position.leverage = leverage
         self.position.trailing_atr = levels["atr"]
         self.position.liquidation_price = levels["liquidation_price"]
         self.position.analysis_id = self._analysis_id_from_signal(signal)
         self._last_open_ts = time.time()
 
         logger.info(
-            f"🛡️ 实盘开空: {fill_amount:.4f} BTC @ ${fill_price:,.0f}, "
-            f"止损=${levels['stop_loss']:,.0f}, TP1=${levels['tp1_price']:,.0f}, "
-            f"TP2=${levels['tp2_price']:,.0f}, 强平=${levels['liquidation_price']:,.0f}"
+            f"🛡️ 实盘开空: {fill_amount:.4f} BTC @ ${fill_price:,.0f} "
+            f"(${notional:,.0f}, {leverage}x), "
+            f"强平=${levels['liquidation_price']:,.0f}"
         )
-
-        # await self._place_exchange_sl_tp()
 
         return self._make_trade(
             "SHORT", "SHORT", fill_price, fill_amount, 0,
@@ -444,6 +433,7 @@ class LiveTradingScheduler(BaseTradingScheduler):
             signal_confidence=signal.confidence * 100 if signal else None,
             position_levels=levels,
             analysis_id=self.position.analysis_id,
+            notional=notional, leverage=leverage,
         )
 
     async def _close_position(self, btc_price: float, reason: str = "",

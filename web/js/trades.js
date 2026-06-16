@@ -170,6 +170,7 @@ function updateTrades(trades) {
                 <div class="trade-right">
                     <div class="trade-pnl ${getColorClass(t.pnl)}">${formatPnl(t.pnl)}</div>
                     <div class="trade-amount">${t.amount} BTC</div>
+                    ${t.notional || t.leverage ? `<div class="trade-sizing">${t.notional ? '$' + t.notional.toLocaleString() : ''}${t.notional && t.leverage ? ' · ' : ''}${t.leverage ? t.leverage + 'x' : ''}</div>` : ''}
                 </div>
             </div>
             ${tradeInfoHtml}

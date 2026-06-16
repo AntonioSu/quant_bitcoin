@@ -36,11 +36,11 @@ class SimTradingScheduler(BaseTradingScheduler):
 
     async def _open_long(self, btc_price: float, klines: list,
                          market_indicators: dict = None, signal=None) -> Optional[dict]:
-        # 防止重复开仓：已有仓位时直接返回
         if self.position.is_active:
             logger.warning(f"⚠️ 已有 {self.position.direction} 仓位，跳过开多")
             return None
-        
+
+        notional, leverage = self._resolve_ai_sizing(signal)
         cfg = self.config.long
 
         try:
@@ -48,14 +48,14 @@ class SimTradingScheduler(BaseTradingScheduler):
                 entry_price=btc_price,
                 klines=klines,
                 atr_multiplier=cfg.atr_multiplier,
-                leverage=cfg.leverage,
-                notional_value=self.OPEN_NOTIONAL,
+                leverage=leverage,
+                notional_value=notional,
             )
         except Exception as e:
             logger.error(f"ATR 计算失败: {e}, 使用兜底价位")
-            levels = self.long_level.fallback(btc_price, leverage=cfg.leverage, notional_value=self.OPEN_NOTIONAL)
+            levels = self.long_level.fallback(btc_price, leverage=leverage, notional_value=notional)
 
-        pos_btc = self.OPEN_NOTIONAL / btc_price
+        pos_btc = notional / btc_price
 
         self.position.direction = "LONG"
         self.position.entry_price = btc_price
@@ -64,15 +64,15 @@ class SimTradingScheduler(BaseTradingScheduler):
         self.position.tp1_price = levels["tp1_price"]
         self.position.tp2_price = levels["tp2_price"]
         self.position.tp1_hit = False
-        self.position.leverage = cfg.leverage
+        self.position.leverage = leverage
         self.position.trailing_atr = levels["atr"]
         self.position.liquidation_price = levels["liquidation_price"]
         self.position.analysis_id = self._analysis_id_from_signal(signal)
 
         logger.info(
-            f"🗡️ 模拟开多: {pos_btc:.4f} BTC @ ${btc_price:,.0f}, "
-            f"止损=${levels['stop_loss']:,.0f}, TP1=${levels['tp1_price']:,.0f}, "
-            f"TP2=${levels['tp2_price']:,.0f}, 强平=${levels['liquidation_price']:,.0f}"
+            f"🗡️ 模拟开多: {pos_btc:.4f} BTC @ ${btc_price:,.0f} "
+            f"(${notional:,.0f}, {leverage}x), "
+            f"强平=${levels['liquidation_price']:,.0f}"
         )
 
         return self._make_trade(
@@ -82,15 +82,16 @@ class SimTradingScheduler(BaseTradingScheduler):
             signal_confidence=signal.confidence * 100 if signal else None,
             position_levels=levels,
             analysis_id=self.position.analysis_id,
+            notional=notional, leverage=leverage,
         )
 
     async def _open_short(self, btc_price: float, klines: list,
                           market_indicators: dict = None, signal=None) -> Optional[dict]:
-        # 防止重复开仓：已有仓位时直接返回
         if self.position.is_active:
             logger.warning(f"⚠️ 已有 {self.position.direction} 仓位，跳过开空")
             return None
-        
+
+        notional, leverage = self._resolve_ai_sizing(signal)
         cfg = self.config.short
 
         try:
@@ -98,14 +99,14 @@ class SimTradingScheduler(BaseTradingScheduler):
                 entry_price=btc_price,
                 klines=klines,
                 atr_multiplier=cfg.atr_multiplier,
-                leverage=cfg.leverage,
-                notional_value=self.OPEN_NOTIONAL,
+                leverage=leverage,
+                notional_value=notional,
             )
         except Exception as e:
             logger.error(f"ATR 计算失败: {e}, 使用兜底价位")
-            levels = self.short_level.fallback(btc_price, leverage=cfg.leverage, notional_value=self.OPEN_NOTIONAL)
+            levels = self.short_level.fallback(btc_price, leverage=leverage, notional_value=notional)
 
-        pos_btc = self.OPEN_NOTIONAL / btc_price
+        pos_btc = notional / btc_price
 
         self.position.direction = "SHORT"
         self.position.entry_price = btc_price
@@ -114,15 +115,15 @@ class SimTradingScheduler(BaseTradingScheduler):
         self.position.tp1_price = levels["tp1_price"]
         self.position.tp2_price = levels["tp2_price"]
         self.position.tp1_hit = False
-        self.position.leverage = cfg.leverage
+        self.position.leverage = leverage
         self.position.trailing_atr = levels["atr"]
         self.position.liquidation_price = levels["liquidation_price"]
         self.position.analysis_id = self._analysis_id_from_signal(signal)
 
         logger.info(
-            f"🛡️ 模拟开空: {pos_btc:.4f} BTC @ ${btc_price:,.0f}, "
-            f"止损=${levels['stop_loss']:,.0f}, TP1=${levels['tp1_price']:,.0f}, "
-            f"TP2=${levels['tp2_price']:,.0f}, 强平=${levels['liquidation_price']:,.0f}"
+            f"🛡️ 模拟开空: {pos_btc:.4f} BTC @ ${btc_price:,.0f} "
+            f"(${notional:,.0f}, {leverage}x), "
+            f"强平=${levels['liquidation_price']:,.0f}"
         )
 
         return self._make_trade(
@@ -132,6 +133,7 @@ class SimTradingScheduler(BaseTradingScheduler):
             signal_confidence=signal.confidence * 100 if signal else None,
             position_levels=levels,
             analysis_id=self.position.analysis_id,
+            notional=notional, leverage=leverage,
         )
 
     async def _close_position(self, btc_price: float, reason: str = "",

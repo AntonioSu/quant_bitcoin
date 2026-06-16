@@ -193,11 +193,21 @@ class BaseTradingScheduler(ABC):
         
         self._apply_position_state(saved)
         
-        if self.position.stop_loss > 0:
+        if self.position.is_active:
             logger.info(
                 f"📂 恢复仓位状态: {self.position.direction} @ ${self.position.entry_price:,.0f}, "
-                f"止损=${self.position.stop_loss:,.0f}, TP1=${self.position.tp1_price:,.0f}"
+                f"杠杆={self.position.leverage}x, 强平=${self.position.liquidation_price:,.0f}"
             )
+            market.position_context = {
+                "is_active": True,
+                "direction": self.position.direction,
+                "entry_price": self.position.entry_price,
+                "current_price": self.position.entry_price,
+                "size_btc": self.position.size_btc,
+                "leverage": self.position.leverage,
+                "liquidation_price": self.position.liquidation_price,
+                "holding_duration": "重启恢复",
+            }
         return True
     
     def _apply_position_state(self, saved: dict):
@@ -331,7 +341,10 @@ class BaseTradingScheduler(ABC):
                 logger.warning("BTC 价格获取失败（含回退），跳过本次检查")
                 return
 
-            # 止盈止损检查: 若本周期发生了平仓，标记 just_closed 阻止同周期再开仓
+            # 更新全局持仓上下文（供 AI 分析时使用）
+            self._update_position_context(btc_price)
+
+            # AI 驱动平仓检查: 若本周期发生了平仓，标记 just_closed 阻止同周期再开仓
             just_closed = False
             if self.position.is_active:
                 sl_tp_trades = await self._check_stop_loss_take_profit(btc_price)
@@ -367,7 +380,7 @@ class BaseTradingScheduler(ABC):
                 if self.position.is_active:
                     logger.info(
                         f"📊 信号切换 {self.current_mode.value} → {signal.mode.value}，"
-                        f"但持仓中，等待止损/止盈平仓"
+                        f"持仓中，等待 AI 研判平仓"
                     )
                 elif just_closed:
                     logger.info(
@@ -512,6 +525,81 @@ class BaseTradingScheduler(ABC):
             logger.error(f"捕获市场指标失败: {e}")
             return {}
 
+    def _update_position_context(self, btc_price: float):
+        """更新全局持仓上下文，供 AI 分析时使用"""
+        if self.position.is_active:
+            open_time = None
+            if self.position.analysis_id:
+                try:
+                    memory = get_analysis_memory()
+                    if memory:
+                        record = memory.get_record(self.position.analysis_id)
+                        if record and record.get("timestamp"):
+                            open_time = record["timestamp"]
+                except Exception:
+                    pass
+
+            duration = "未知"
+            if open_time:
+                try:
+                    from datetime import datetime as _dt
+                    if isinstance(open_time, str):
+                        open_dt = _dt.fromisoformat(open_time)
+                    else:
+                        open_dt = open_time
+                    delta = datetime.now() - open_dt
+                    hours = delta.total_seconds() / 3600
+                    if hours < 1:
+                        duration = f"{int(delta.total_seconds() / 60)}分钟"
+                    elif hours < 24:
+                        duration = f"{hours:.1f}小时"
+                    else:
+                        duration = f"{hours / 24:.1f}天"
+                except Exception:
+                    pass
+
+            market.position_context = {
+                "is_active": True,
+                "direction": self.position.direction,
+                "entry_price": self.position.entry_price,
+                "current_price": btc_price,
+                "size_btc": self.position.size_btc,
+                "leverage": self.position.leverage,
+                "liquidation_price": self.position.liquidation_price,
+                "holding_duration": duration,
+            }
+        else:
+            market.position_context = {"is_active": False}
+
+    def _resolve_ai_sizing(self, signal) -> tuple:
+        """从 AI signal 中解析仓位大小和杠杆
+
+        Returns:
+            (notional: float, leverage: int)
+        """
+        values = signal.values if signal else {}
+
+        size_hint = str(values.get("position_size_hint") or "50%")
+        pct_map = {"25%": 0.25, "50%": 0.50, "75%": 0.75, "100%": 1.0}
+        size_pct = pct_map.get(size_hint, 0.50)
+        notional = self.equity * size_pct
+        notional = max(50.0, min(notional, self.equity))
+
+        leverage_hint = values.get("leverage_hint")
+        if leverage_hint is not None:
+            try:
+                leverage = max(1, min(20, int(leverage_hint)))
+            except (TypeError, ValueError):
+                leverage = 5
+        else:
+            leverage = 5
+
+        logger.info(
+            f"📐 AI 仓位: size_hint={size_hint} → ${notional:,.0f}, "
+            f"leverage_hint={leverage_hint} → {leverage}x"
+        )
+        return notional, leverage
+
     async def _execute_mode_change(self, signal, btc_price: float, klines: list) -> list:
         """模式切换时开新仓（仅在无持仓时调用）"""
         trades = []
@@ -529,10 +617,10 @@ class BaseTradingScheduler(ABC):
         return trades
 
     async def _check_stop_loss_take_profit(self, btc_price: float) -> list:
-        """检查止盈止损
+        """检查平仓条件: 强平安全网 + AI 驱动平仓
 
-        阶段1 (TP1前): 固定止损 + 等待TP1
-        阶段2 (TP1后): 移动止盈 trailing_stop = highest - ATR × trailing_multiplier
+        平仓决策完全由 AI 研判驱动（通过 action=离场/减仓），
+        仅保留强平价检查作为最终安全网。
         """
         trades = []
         if not self.position.is_active:
@@ -540,7 +628,7 @@ class BaseTradingScheduler(ABC):
 
         is_long = self.position.direction == "LONG"
 
-        # ── 强平检查（优先于止损）──
+        # ── 强平检查（最终安全网，始终生效）──
         if self.position.liquidation_price > 0:
             hit_liq = (is_long and btc_price <= self.position.liquidation_price) or \
                       (not is_long and btc_price >= self.position.liquidation_price)
@@ -553,57 +641,22 @@ class BaseTradingScheduler(ABC):
                 )
                 return trades
 
-        # ── 止损检查（所有阶段通用）──
-        hit_sl = (is_long and btc_price <= self.position.stop_loss) or \
-                 (not is_long and btc_price >= self.position.stop_loss)
-        if hit_sl:
-            reason = "移动止盈触发" if self.position.tp1_hit else "止损触发"
-            trade = await self._close_position(btc_price, reason=reason)
+        # ── AI 驱动平仓 ──
+        exit_signal = self.signal_aggregator.evaluate_exit(self.position.direction)
+        if exit_signal.should_exit:
+            is_partial = exit_signal.close_ratio < 1.0
+            trade = await self._close_position(
+                btc_price,
+                reason=exit_signal.reason,
+                close_ratio=exit_signal.close_ratio,
+                is_tp=is_partial,
+            )
             if trade:
                 trades.append(trade)
-            return trades
-
-        # ── 阶段1: 等待 TP1 ──
-        if not self.position.tp1_hit:
-            tp1_hit = (is_long and btc_price >= self.position.tp1_price) or \
-                      (not is_long and btc_price <= self.position.tp1_price)
-            if tp1_hit:
-                trade = await self._close_position(btc_price, reason="TP1 半仓止盈", close_ratio=0.5, is_tp=True)
-                if trade:
-                    trades.append(trade)
-                self.position.tp1_hit = True
-                self.position.highest_since_tp1 = btc_price
-                trailing_dist = self.position.trailing_atr * self.config.long.trailing_atr_multiplier
-                if is_long:
-                    self.position.stop_loss = max(self.position.entry_price, btc_price - trailing_dist)
-                else:
-                    self.position.stop_loss = min(self.position.entry_price, btc_price + trailing_dist)
-                logger.info(
-                    f"📊 TP1 触发: 启动移动止盈, "
-                    f"trailing={trailing_dist:,.0f}, "
-                    f"当前止盈线=${self.position.stop_loss:,.0f}"
-                )
-                await self._on_tp1_transition()
-            return trades
-
-        # ── 阶段2: TP1 后，更新移动止盈 ──
-        trailing_dist = self.position.trailing_atr * self.config.long.trailing_atr_multiplier
-        if is_long:
-            if btc_price > self.position.highest_since_tp1:
-                self.position.highest_since_tp1 = btc_price
-                new_stop = max(self.position.stop_loss, btc_price - trailing_dist)
-                if new_stop > self.position.stop_loss:
-                    self.position.stop_loss = new_stop
-                    logger.debug(f"📈 移动止盈上移: ${new_stop:,.0f}")
-                    await self._on_trailing_stop_moved(new_stop)
-        else:
-            if btc_price < self.position.highest_since_tp1:
-                self.position.highest_since_tp1 = btc_price
-                new_stop = min(self.position.stop_loss, btc_price + trailing_dist)
-                if new_stop < self.position.stop_loss:
-                    self.position.stop_loss = new_stop
-                    logger.debug(f"📉 移动止盈下移: ${new_stop:,.0f}")
-                    await self._on_trailing_stop_moved(new_stop)
+            logger.info(
+                f"🤖 AI 平仓: {exit_signal.ai_action} "
+                f"(比例={exit_signal.close_ratio:.0%}, 置信度={exit_signal.ai_confidence}%)"
+            )
 
         return trades
 
@@ -623,7 +676,8 @@ class BaseTradingScheduler(ABC):
                     entry_price: float = None, market_indicators: dict = None,
                     trigger_reason: str = None, signal_confidence: float = None,
                     position_levels: dict = None,
-                    analysis_id: Optional[str] = None) -> dict:
+                    analysis_id: Optional[str] = None,
+                    notional: float = None, leverage: int = None) -> dict:
         trade = {
             "id": len(self.trades) + 1,
             "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -633,6 +687,10 @@ class BaseTradingScheduler(ABC):
             "amount": round(amount, 6),
             "pnl": round(pnl, 2),
         }
+        if notional is not None:
+            trade["notional"] = round(notional, 2)
+        if leverage is not None:
+            trade["leverage"] = leverage
         if entry_price is not None:
             trade["entry_price"] = round(entry_price, 2)
         if market_indicators is not None:

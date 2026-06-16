@@ -157,6 +157,14 @@
     font-family: var(--font-mono);
 }
 
+.trade-sizing {
+    font-size: 11px;
+    color: var(--accent);
+    text-align: right;
+    font-family: var(--font-mono);
+    margin-top: 2px;
+}
+
 /* ═══════════════════════════════════════════
    PORTFOLIO
    ═══════════════════════════════════════════ */

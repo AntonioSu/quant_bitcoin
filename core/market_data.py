@@ -68,6 +68,7 @@ class MarketData:
     mvrv: Optional[DataPoint] = None
     klines_4h: List[List] = field(default_factory=list)
     last_update: Optional[datetime] = None
+    position_context: Optional[dict] = None
     
     def is_ready(self) -> bool:
         """数据是否已初始化"""
@@ -212,6 +213,20 @@ _mvrv_data = MVRVData()  # CoinMetrics 免费 API
 
 # 全局数据实例
 market = MarketData()
+
+# 启动时从磁盘恢复上次 AI 研判，避免重启后在 AI 分析完成前无退出保护
+if _market_analyzer._last_analysis:
+    _seed = _market_analyzer._last_analysis
+    market.ai_analysis = DataPoint(
+        value=float(_seed.get("confidence", 0)) if _seed.get("bias") != "NEUTRAL" else 0.0,
+        timestamp=datetime.now(),
+        source="Market Analyzer (restored)",
+        raw=_seed,
+    )
+    logger.info(
+        f"📂 启动恢复 AI 研判到 market: "
+        f"{_seed.get('bias')} ({_seed.get('confidence')}%) action={_seed.get('action')}"
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════

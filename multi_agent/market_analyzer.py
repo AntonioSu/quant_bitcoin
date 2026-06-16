@@ -444,10 +444,12 @@ class MarketAnalyzer:
 
         if self._committee_enabled and snapshot:
             try:
+                from core.market_data import market as _mkt
                 return self._normalize(
                     self._get_committee().run(
                         snapshot=snapshot,
                         dynamic_context=dynamic_context,
+                        position_context=_mkt.position_context,
                     )
                 )
             except Exception as e:
@@ -528,8 +530,8 @@ class MarketAnalyzer:
             memo = self.summarizer.get_memo_text()
             if memo:
                 parts.append(
-                    "## 近期策略备忘录（基于历史交易复盘）\n"
-                    "请将以下经验教训纳入本次研判的权重考量：\n\n"
+                    "## 近期策略备忘录（仅供参考，不作为入场决策的阻断依据）\n"
+                    "以下是历史复盘经验，作为风险提示参考，但不应阻止在明确趋势中的顺势入场：\n\n"
                     f"{memo}"
                 )
 
@@ -550,11 +552,42 @@ class MarketAnalyzer:
             if drivers_text:
                 section += f"- 关键驱动:\n{drivers_text}\n"
             section += (
-                "\n请对比当前指标与上次研判时的情况，"
-                "如果市场条件没有发生实质性变化，请维持上次方向。"
+                "\n请对比当前指标与上次研判时的情况。"
+                "注意：如果上次为 NEUTRAL，不必强制维持 NEUTRAL——"
+                "积极评估是否有足够的顺势信号支持给出方向性建议。"
                 "如果需要改变方向，必须在 key_drivers 中明确说明变化原因。"
             )
             parts.append(section)
+
+        from core.market_data import market as _market
+        if _market.position_context:
+            pos = _market.position_context
+            if pos.get("is_active"):
+                sign = 1 if pos["direction"] == "LONG" else -1
+                unrealized = sign * (pos.get("current_price", 0) - pos["entry_price"]) * pos["size_btc"]
+                unrealized_pct = (unrealized / (pos["entry_price"] * pos["size_btc"])) * 100 if pos["size_btc"] > 0 else 0
+                parts.append(
+                    "## 当前持仓状态（必须据此决定 action: 离场/减仓/持仓观望）\n"
+                    f"- 方向: {pos['direction']}\n"
+                    f"- 入场价: ${pos['entry_price']:,.0f}\n"
+                    f"- 当前价: ${pos.get('current_price', 0):,.0f}\n"
+                    f"- 仓位: {pos['size_btc']:.4f} BTC\n"
+                    f"- 杠杆: {pos.get('leverage', 1)}x\n"
+                    f"- 未实现盈亏: ${unrealized:+,.2f} ({unrealized_pct:+.2f}%)\n"
+                    f"- 强平价: ${pos.get('liquidation_price', 0):,.0f}\n"
+                    f"- 持仓时长: {pos.get('holding_duration', '未知')}\n\n"
+                    "你的 action 必须考虑当前持仓：\n"
+                    "- 如果市场方向与持仓相反或风险急增 → action=离场（全平）\n"
+                    "- 如果方向不明或部分信号转弱 → action=减仓（减半仓）\n"
+                    "- 如果方向仍然一致 → action=持仓观望\n"
+                    "- 只有在无持仓时才可以 action=加多/加空"
+                )
+            else:
+                parts.append(
+                    "## 当前持仓状态\n"
+                    "- 当前无持仓（空仓状态）\n"
+                    "- 可根据市场判断给出 action=加多/加空/等待入场"
+                )
 
         if self.memory:
             recent = self.memory.get_recent_with_results(n=3)
@@ -649,6 +682,11 @@ class MarketAnalyzer:
             normalized["entry_ok"] = bool(data.get("entry_ok"))
         if "position_size_hint" in data:
             normalized["position_size_hint"] = str(data.get("position_size_hint") or "0%")
+        if "leverage_hint" in data:
+            try:
+                normalized["leverage_hint"] = max(1, min(20, int(data.get("leverage_hint", 5))))
+            except (TypeError, ValueError):
+                normalized["leverage_hint"] = 5
         if "invalidations" in data:
             normalized["invalidations"] = data.get("invalidations") or []
         if "committee" in data:
