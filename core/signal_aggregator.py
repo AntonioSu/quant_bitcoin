@@ -183,6 +183,7 @@ class SignalAggregator:
         self._confidence_threshold = _AI_CONFIDENCE_THRESHOLDS.get(
             self.config.preset, 65
         )
+        self._last_partial_close_analysis_id: Optional[str] = None
     
     def _check_ai_direction(self, target: str) -> SignalResult:
         """检查 AI 是否给出指定方向的信号
@@ -374,22 +375,34 @@ class SignalAggregator:
         Returns:
             ExitSignal
         """
-        ai_bias, ai_conf, ai_summary, ai_action, _ = _get_ai_signal()
+        ai_bias, ai_conf, ai_summary, ai_action, analysis_id = _get_ai_signal()
 
         if ai_bias == "N/A":
             return ExitSignal(False, 0.0, "AI 研判未就绪", "", 0)
 
         close_ratio = _EXIT_ACTIONS.get(ai_action, 0.0)
         if close_ratio > 0:
+            guard_id = analysis_id or "_neutral_no_id"
+            if close_ratio < 1.0 and guard_id == self._last_partial_close_analysis_id:
+                return ExitSignal(
+                    False, 0.0,
+                    f"减仓已执行，等待下次 AI 刷新 (analysis_id={guard_id})",
+                    ai_action, ai_conf,
+                )
             reason = (
                 f"AI 建议{ai_action}: {ai_summary} "
                 f"(bias={ai_bias}, 置信度={ai_conf}%)"
             )
             logger.info(f"🚪 {reason}")
+            if close_ratio < 1.0:
+                self._last_partial_close_analysis_id = guard_id
+            else:
+                self._last_partial_close_analysis_id = None
             return ExitSignal(True, close_ratio, reason, ai_action, ai_conf)
 
         opposite = "SHORT" if current_direction == "LONG" else "LONG"
         if ai_bias == opposite and ai_conf >= 65:
+            self._last_partial_close_analysis_id = None
             reason = (
                 f"AI 方向反转 {current_direction}→{ai_bias} "
                 f"(置信度={ai_conf}%, action={ai_action}): {ai_summary}"
