@@ -8,18 +8,18 @@ from typing import Optional
 
 from core import (
     TradingConfig, ParameterSet, TradingMode,
-    SignalAggregator,
     get_analysis_memory, get_strategy_summarizer,
 )
 from core.market_data import market
 from indicators import LongLevel, ShortLevel
+from multi_agent.trading_advisor import TradingAdvisor, TradingDecision
 from binance_utils import fetch_klines, fetch_price
 from server.state_store import StateStore
 from utils import logger
 
 
 class Position:
-    """本地仓位状态（Sim/Live 共用，止损止盈逻辑均在本地维护）"""
+    """本地仓位状态（Sim/Live 共用）"""
 
     def __init__(self):
         self.reset()
@@ -29,15 +29,9 @@ class Position:
         self.entry_price = 0.0
         self.size_btc = 0.0          # BTC 仓位大小
         self.stop_loss = 0.0
-        self.tp1_price = 0.0
-        self.tp2_price = 0.0
-        self.tp1_hit = False         # TP1 是否已触发
         self.leverage = 1
-        self.highest_since_tp1 = 0.0 # TP1 后追踪的最高价 (LONG) / 最低价 (SHORT)
-        self.trailing_atr = 0.0      # TP1 时记录的 ATR，用于计算 trailing 距离
         self.liquidation_price = 0.0 # 强平价格
-        self.sl_order_id = None      # 交易所止损挂单 ID
-        self.tp1_order_id = None     # 交易所 TP1 挂单 ID
+        self.sl_order_id = None      # 交易所止损挂单 ID (Live)
         self.analysis_id = None      # 开仓时对应的 AI 研判记录 ID
 
     @property
@@ -50,14 +44,9 @@ class Position:
             "entry_price": self.entry_price,
             "size_btc": self.size_btc,
             "stop_loss": self.stop_loss,
-            "tp1_price": self.tp1_price,
-            "tp2_price": self.tp2_price,
-            "tp1_hit": self.tp1_hit,
             "leverage": self.leverage,
-            "highest_since_tp1": self.highest_since_tp1,
             "liquidation_price": self.liquidation_price,
             "sl_order_id": self.sl_order_id,
-            "tp1_order_id": self.tp1_order_id,
             "analysis_id": self.analysis_id,
         }
 
@@ -82,9 +71,7 @@ class BaseTradingScheduler(ABC):
         self.config = config or TradingConfig.get_preset(ParameterSet.STANDARD)
         self.check_interval = check_interval
 
-        self.signal_aggregator = SignalAggregator(config=self.config)
-        # ATR 使用全局 market 中的计算结果
-        # LongLevel/ShortLevel 仍需要 ATR，但可从 market.atr 获取
+        self.trading_advisor = TradingAdvisor()
         from indicators import ATRCalculator
         self._atr_calc_fallback = ATRCalculator(period=14, timeframe="4h")
         self.long_level = LongLevel(self._atr_calc_fallback)
@@ -170,15 +157,9 @@ class BaseTradingScheduler(ABC):
             "position_size": self.position.size_btc,
             "entry_price": self.position.entry_price,
             "stop_loss": self.position.stop_loss,
-            "tp1_price": self.position.tp1_price,
-            "tp2_price": self.position.tp2_price,
-            "tp1_hit": self.position.tp1_hit,
-            "trailing_atr": self.position.trailing_atr,
             "liquidation_price": self.position.liquidation_price,
             "leverage": self.position.leverage,
-            "highest_since_tp1": self.position.highest_since_tp1,
             "sl_order_id": self.position.sl_order_id,
-            "tp1_order_id": self.position.tp1_order_id,
             "analysis_id": self.position.analysis_id,
         }
     
@@ -216,15 +197,9 @@ class BaseTradingScheduler(ABC):
         self.position.size_btc = saved.get("position_size", 0.0)
         self.position.entry_price = saved.get("entry_price", 0.0)
         self.position.stop_loss = saved.get("stop_loss", 0.0)
-        self.position.tp1_price = saved.get("tp1_price", 0.0)
-        self.position.tp2_price = saved.get("tp2_price", 0.0)
-        self.position.tp1_hit = saved.get("tp1_hit", False)
-        self.position.trailing_atr = saved.get("trailing_atr", 0.0)
         self.position.liquidation_price = saved.get("liquidation_price", 0.0)
         self.position.leverage = saved.get("leverage", 1)
-        self.position.highest_since_tp1 = saved.get("highest_since_tp1", 0.0)
         self.position.sl_order_id = saved.get("sl_order_id")
-        self.position.tp1_order_id = saved.get("tp1_order_id")
         self.position.analysis_id = saved.get("analysis_id")
         
         if not self.position.is_active:
@@ -251,17 +226,19 @@ class BaseTradingScheduler(ABC):
 
     @abstractmethod
     async def _open_long(self, btc_price: float, klines: list,
-                         market_indicators: dict = None, signal=None) -> Optional[dict]:
+                         market_indicators: dict = None,
+                         decision: TradingDecision = None) -> Optional[dict]:
         """开多仓，返回交易记录"""
 
     @abstractmethod
     async def _open_short(self, btc_price: float, klines: list,
-                          market_indicators: dict = None, signal=None) -> Optional[dict]:
+                          market_indicators: dict = None,
+                          decision: TradingDecision = None) -> Optional[dict]:
         """开空仓，返回交易记录"""
 
     @abstractmethod
     async def _close_position(self, btc_price: float, reason: str = "",
-                              close_ratio: float = 1.0, is_tp: bool = False) -> Optional[dict]:
+                              close_ratio: float = 1.0, is_partial: bool = False) -> Optional[dict]:
         """平仓（全部或部分），返回交易记录"""
 
     # ── 框架方法（共享逻辑）────────────────────────────────────
@@ -276,7 +253,7 @@ class BaseTradingScheduler(ABC):
 
             # 平仓时：关联交易结果到研判记忆 + 触发异步复盘
             action = trade.get("action", "")
-            if action in ("CLOSE", "TP1_HALF"):
+            if action in ("CLOSE", "REDUCE"):
                 self._link_trade_to_memory(trade)
 
     def _link_trade_to_memory(self, trade: dict):
@@ -321,7 +298,12 @@ class BaseTradingScheduler(ABC):
             logger.warning(f"🔍 异步复盘失败: {e}")
 
     async def check_and_execute(self):
-        """检查信号并执行"""
+        """检查信号并执行（两层 AI 架构）
+
+        1. 硬安全网: 止损 + 强平（每 tick，不依赖 AI）
+        2. Trading AI: 根据 Signal AI 输出 + 仓位状态做交易决策
+           （事件驱动：信号或仓位变化时才调 LLM，否则用缓存）
+        """
         self.last_check_time = datetime.now()
 
         try:
@@ -341,59 +323,63 @@ class BaseTradingScheduler(ABC):
                 logger.warning("BTC 价格获取失败（含回退），跳过本次检查")
                 return
 
-            # 更新全局持仓上下文（供 AI 分析时使用）
             self._update_position_context(btc_price)
 
-            # AI 驱动平仓检查: 若本周期发生了平仓，标记 just_closed 阻止同周期再开仓
+            # ── 1. 硬安全网（每 tick 检查，不等 AI）──
             just_closed = False
             if self.position.is_active:
-                sl_tp_trades = await self._check_stop_loss_take_profit(btc_price)
-                await self._record_trades(sl_tp_trades)
+                safety_trades = await self._check_safety_exits(btc_price)
+                await self._record_trades(safety_trades)
                 if not self.position.is_active:
                     self.current_mode = TradingMode.IDLE
                     self.save_position_state()
-                    just_closed = bool(sl_tp_trades)
+                    just_closed = bool(safety_trades)
+                    self.trading_advisor.invalidate_cache()
 
-            signal = self.signal_aggregator.evaluate(self.current_mode)
+            # ── 2. Trading AI 决策（信号/仓位变化时调 LLM）──
+            signal_raw = market.ai_analysis.raw if market.ai_analysis and market.ai_analysis.raw else {}
+            pos_ctx = market.position_context or {}
 
-            logger.info(
-                f"📊 信号检查: 模式={signal.mode.value}, "
-                f"置信度={signal.confidence:.1%}, "
-                f"原因={signal.reason}"
+            decision = self.trading_advisor.decide(
+                signal=signal_raw,
+                position_direction=self.position.direction,
+                position_entry=self.position.entry_price,
+                position_size_btc=self.position.size_btc,
+                position_leverage=self.position.leverage,
+                position_stop_loss=self.position.stop_loss,
+                position_liquidation=self.position.liquidation_price,
+                btc_price=btc_price,
+                equity=self.equity,
+                holding_duration=pos_ctx.get("holding_duration", "未知"),
             )
 
+            # ── 3. 执行交易决策 ──
+            if not just_closed:
+                trades = await self._execute_trading_decision(decision, btc_price, klines)
+                await self._record_trades(trades)
+                if trades:
+                    self.save_position_state()
+                    self.trading_advisor.invalidate_cache()
+
+            # ── 4. 广播状态 ──
             await self._emit(self._on_update_callbacks, {
                 "timestamp": datetime.now().isoformat(),
                 "btc_price": btc_price,
                 "mode": self.current_mode.value,
                 "signal": {
-                    "mode": signal.mode.value,
-                    "confidence": signal.confidence,
-                    "reason": signal.reason,
-                    "values": signal.values,
+                    "bias": signal_raw.get("bias", "NEUTRAL"),
+                    "confidence": signal_raw.get("confidence", 0),
+                    "summary": signal_raw.get("summary", ""),
+                },
+                "trading_decision": {
+                    "action": decision.action,
+                    "reason": decision.reason,
+                    "from_cache": decision._from_cache,
                 },
                 "position": self.position.to_dict(),
                 "equity": self.equity,
             })
 
-            if signal.mode != self.current_mode:
-                if self.position.is_active:
-                    logger.info(
-                        f"📊 信号切换 {self.current_mode.value} → {signal.mode.value}，"
-                        f"持仓中，等待 AI 研判平仓"
-                    )
-                elif just_closed:
-                    logger.info(
-                        f"📊 本周期刚平仓，跳过开仓，下次再评估"
-                    )
-                else:
-                    await self._emit(self._on_signal_callbacks, signal)
-                    trades = await self._execute_mode_change(signal, btc_price, klines)
-                    await self._record_trades(trades)
-                    self.current_mode = signal.mode
-                    self.save_position_state()
-            
-            # 每次检查后保存（移动止盈可能更新 stop_loss）
             if self.position.is_active:
                 self.save_position_state()
 
@@ -402,20 +388,26 @@ class BaseTradingScheduler(ABC):
             import traceback
             traceback.print_exc()
 
-    def _capture_market_indicators(self, signal=None) -> dict:
+    def _capture_market_indicators(self) -> dict:
         """从全局 market 中提取完整的市场指标快照（开仓 / 平仓通用）"""
         try:
-            signal_values = (signal.values or {}) if signal else {}
-            fear_greed = signal_values.get("fear_greed",
-                                           market.fear_greed.value if market.fear_greed else 50)
-            funding_rate = signal_values.get("funding_rate",
-                                             market.funding_rate.value if market.funding_rate else 0.0)
-            top_trader_ratio = signal_values.get("top_trader_ratio",
-                                                  market.top_trader.value if market.top_trader else 1.0)
+            fear_greed = market.fear_greed.value if market.fear_greed else 50
+            funding_rate = market.funding_rate.value if market.funding_rate else 0.0
+            top_trader_ratio = market.top_trader.value if market.top_trader else 1.0
 
             fg_raw = (market.fear_greed.raw or {}) if market.fear_greed else {}
             fr_raw = (market.funding_rate.raw or {}) if market.funding_rate else {}
             tt_raw = (market.top_trader.raw or {}) if market.top_trader else {}
+
+            cvd = market.cvd
+            cvd_change = cvd.cvd_change_pct if cvd else 0.0
+            price_change = cvd.price_change_pct if cvd else 0.0
+            div_type = "无"
+            div_strength = 0.0
+            if cvd and cvd.is_valid_signal:
+                div_type = "底背离" if cvd.divergence.value == "bullish" else \
+                           "顶背离" if cvd.divergence.value == "bearish" else "无"
+                div_strength = cvd.strength
 
             result: dict = {
                 # ── 情绪 / 资金面 ──
@@ -427,10 +419,10 @@ class BaseTradingScheduler(ABC):
                 "top_trader_long_pct": round(tt_raw.get("long_account", 0.5) * 100, 2),
                 "top_trader_short_pct": round(tt_raw.get("short_account", 0.5) * 100, 2),
                 "long_short_ratio": round(top_trader_ratio, 2),
-                "price_change_pct": round(signal_values.get("price_change_pct", 0.0), 2),
-                "cvd_change_pct": round(signal_values.get("cvd_change_pct", 0.0), 2),
-                "divergence_type": signal_values.get("divergence_type", "无"),
-                "divergence_strength": round(signal_values.get("divergence_strength", 0.0), 2),
+                "price_change_pct": round(price_change, 2),
+                "cvd_change_pct": round(cvd_change, 2),
+                "divergence_type": div_type,
+                "divergence_strength": round(div_strength, 2),
             }
 
             # ── 技术指标 (4H) ──
@@ -571,106 +563,125 @@ class BaseTradingScheduler(ABC):
         else:
             market.position_context = {"is_active": False}
 
-    def _resolve_ai_sizing(self, signal) -> tuple:
-        """从 AI signal 中解析仓位大小和杠杆
+    def _resolve_ai_sizing(self, decision: TradingDecision) -> tuple:
+        """从 Trading AI 决策中解析仓位大小和杠杆
 
         Returns:
             (notional: float, leverage: int)
         """
-        values = signal.values if signal else {}
-
-        size_hint = str(values.get("position_size_hint") or "50%")
+        size_hint = decision.position_size_hint if decision else "50%"
         pct_map = {"25%": 0.25, "50%": 0.50, "75%": 0.75, "100%": 1.0}
         size_pct = pct_map.get(size_hint, 0.50)
         notional = self.equity * size_pct
         notional = max(50.0, min(notional, self.equity))
 
-        leverage_hint = values.get("leverage_hint")
-        if leverage_hint is not None:
-            try:
-                leverage = max(1, min(20, int(leverage_hint)))
-            except (TypeError, ValueError):
-                leverage = 5
-        else:
+        leverage = decision.leverage_hint if decision else 5
+        try:
+            leverage = max(1, min(20, int(leverage)))
+        except (TypeError, ValueError):
             leverage = 5
 
         logger.info(
-            f"📐 AI 仓位: size_hint={size_hint} → ${notional:,.0f}, "
-            f"leverage_hint={leverage_hint} → {leverage}x"
+            f"📐 Trading AI 仓位: size_hint={size_hint} → ${notional:,.0f}, "
+            f"leverage={leverage}x"
         )
         return notional, leverage
 
-    async def _execute_mode_change(self, signal, btc_price: float, klines: list) -> list:
-        """模式切换时开新仓（仅在无持仓时调用）"""
-        trades = []
-        market_indicators = self._capture_market_indicators(signal)
+    def _get_signal_metadata(self) -> dict:
+        """从当前 Signal AI 输出中获取 confidence 和 analysis_id"""
+        if market.ai_analysis and market.ai_analysis.raw:
+            raw = market.ai_analysis.raw
+            return {
+                "confidence": raw.get("confidence", 0),
+                "analysis_id": raw.get("_memory_id"),
+            }
+        return {"confidence": 0, "analysis_id": None}
 
-        if signal.mode == TradingMode.LONG:
-            open_trade = await self._open_long(btc_price, klines, market_indicators, signal)
-            if open_trade:
-                trades.append(open_trade)
-        elif signal.mode == TradingMode.SHORT:
-            open_trade = await self._open_short(btc_price, klines, market_indicators, signal)
-            if open_trade:
-                trades.append(open_trade)
-
-        return trades
-
-    async def _check_stop_loss_take_profit(self, btc_price: float) -> list:
-        """检查平仓条件: 强平安全网 + AI 驱动平仓
-
-        平仓决策完全由 AI 研判驱动（通过 action=离场/减仓），
-        仅保留强平价检查作为最终安全网。
-        """
+    async def _check_safety_exits(self, btc_price: float) -> list:
+        """硬安全网: 强平 + 止损（每 tick 检查，不依赖 AI）"""
         trades = []
         if not self.position.is_active:
             return trades
 
         is_long = self.position.direction == "LONG"
 
-        # ── 强平检查（最终安全网，始终生效）──
         if self.position.liquidation_price > 0:
             hit_liq = (is_long and btc_price <= self.position.liquidation_price) or \
                       (not is_long and btc_price >= self.position.liquidation_price)
             if hit_liq:
+                liq_price = self.position.liquidation_price
                 trade = await self._close_position(btc_price, reason="强平触发")
                 if trade:
                     trades.append(trade)
                 logger.warning(
-                    f"⚠️ 强平触发: 价格=${btc_price:,.0f} 触及强平价=${self.position.liquidation_price:,.0f}"
+                    f"⚠️ 强平触发: 价格=${btc_price:,.0f} 触及强平价=${liq_price:,.0f}"
                 )
                 return trades
 
-        # ── AI 驱动平仓 ──
-        exit_signal = self.signal_aggregator.evaluate_exit(self.position.direction)
-        if exit_signal.should_exit:
-            is_partial = exit_signal.close_ratio < 1.0
+        if self.position.stop_loss > 0:
+            hit_sl = (is_long and btc_price <= self.position.stop_loss) or \
+                     (not is_long and btc_price >= self.position.stop_loss)
+            if hit_sl:
+                sl_price = self.position.stop_loss
+                trade = await self._close_position(btc_price, reason="止损触发")
+                if trade:
+                    trades.append(trade)
+                logger.warning(
+                    f"🛑 止损触发: 价格=${btc_price:,.0f} 触及止损价=${sl_price:,.0f}"
+                )
+                return trades
+
+        return trades
+
+    async def _execute_trading_decision(
+        self, decision: TradingDecision, btc_price: float, klines: list,
+    ) -> list:
+        """执行 Trading AI 的决策"""
+        trades = []
+
+        if decision.is_open and not self.position.is_active:
+            market_indicators = self._capture_market_indicators()
+            if decision.action == "开多":
+                trade = await self._open_long(btc_price, klines, market_indicators, decision)
+                if trade:
+                    trades.append(trade)
+                    await self._on_position_opened()
+                    self.current_mode = TradingMode.LONG
+            elif decision.action == "开空":
+                trade = await self._open_short(btc_price, klines, market_indicators, decision)
+                if trade:
+                    trades.append(trade)
+                    await self._on_position_opened()
+                    self.current_mode = TradingMode.SHORT
+
+        elif decision.is_close and self.position.is_active:
+            is_partial = decision.action == "减仓"
             trade = await self._close_position(
                 btc_price,
-                reason=exit_signal.reason,
-                close_ratio=exit_signal.close_ratio,
-                is_tp=is_partial,
+                reason=decision.reason,
+                close_ratio=decision.close_ratio,
+                is_partial=is_partial,
             )
             if trade:
                 trades.append(trade)
             logger.info(
-                f"🤖 AI 平仓: {exit_signal.ai_action} "
-                f"(比例={exit_signal.close_ratio:.0%}, 置信度={exit_signal.ai_confidence}%)"
+                f"🤖 Trading AI {decision.action}: "
+                f"(比例={decision.close_ratio:.0%}) {decision.reason}"
             )
+            if is_partial and self.position.is_active:
+                await self._on_position_reduced()
+            elif not self.position.is_active:
+                self.current_mode = TradingMode.IDLE
 
         return trades
 
-    # ── 交易所挂单 hooks（子类覆盖）──────────────────────────────
+    # ── 仓位生命周期 hooks（子类覆盖）────────────────────────────
 
-    async def _on_tp1_transition(self):
-        """TP1 成交后进入移动止盈阶段。Live 子类覆盖以更新交易所挂单。"""
+    async def _on_position_opened(self):
+        """开仓后的钩子（Live 可挂交易所止损单）"""
 
-    async def _on_trailing_stop_moved(self, new_stop: float):
-        """移动止盈线更新。Live 子类覆盖以替换交易所止损单。"""
-
-    @staticmethod
-    def _analysis_id_from_signal(signal) -> Optional[str]:
-        return (signal.values or {}).get("analysis_id") if signal else None
+    async def _on_position_reduced(self):
+        """AI 减仓后的钩子（Live 可更新交易所止损单）"""
 
     def _make_trade(self, mode: str, action: str, price: float, amount: float, pnl: float,
                     entry_price: float = None, market_indicators: dict = None,
@@ -704,8 +715,6 @@ class BaseTradingScheduler(ABC):
         if position_levels is not None:
             trade["levels"] = {
                 "stop_loss": round(position_levels.get("stop_loss", 0), 2),
-                "tp1_price": round(position_levels.get("tp1_price", 0), 2),
-                "tp2_price": round(position_levels.get("tp2_price", 0), 2),
                 "liquidation_price": round(position_levels.get("liquidation_price", 0), 2),
                 "atr": round(position_levels.get("atr", 0), 2),
             }

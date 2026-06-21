@@ -198,6 +198,7 @@ def _load_binance_config(config_key: str = "binance_demo", use_demo_key: bool = 
     logger.info(f"📝 使用配置: {config_key}" + (" (demo key)" if use_demo_key else ""))
     return binance_cfg
 
+
 def _create_sim_scheduler(preset_name: str, config: TradingConfig, app_state) -> Optional[Any]:
     """创建模拟盘调度器 (纯计算，不调用API)
     
@@ -227,7 +228,7 @@ def _create_sim_scheduler(preset_name: str, config: TradingConfig, app_state) ->
     scheduler.restore_position_state()
     
     scheduler_key = f"{preset_name}_sim"
-    
+
     # 注册回调（仅用于 WebSocket 广播）
     async def on_update(data):
         await app_state.broadcast({
@@ -235,17 +236,17 @@ def _create_sim_scheduler(preset_name: str, config: TradingConfig, app_state) ->
             "preset": scheduler_key,
             "data": data,
         })
-    
+
     async def on_trade(trade):
         await app_state.broadcast({
             "type": "trade",
             "preset": scheduler_key,
             "data": trade,
         })
-    
+
     scheduler.on_update(on_update)
     scheduler.on_trade(on_trade)
-    
+
     logger.info(f"🔧 [{preset_name}] 模拟调度器已创建")
     return scheduler
 
@@ -292,7 +293,7 @@ def _create_demo_scheduler(preset_name: str, config: TradingConfig,
         )
         
         scheduler_key = f"{preset_name}_demo"
-        
+
         # 注册回调（仅用于 WebSocket 广播）
         async def on_update(data):
             await app_state.broadcast({
@@ -300,17 +301,17 @@ def _create_demo_scheduler(preset_name: str, config: TradingConfig,
                 "preset": scheduler_key,
                 "data": data,
             })
-        
+
         async def on_trade(trade):
             await app_state.broadcast({
                 "type": "trade",
                 "preset": scheduler_key,
                 "data": trade,
             })
-        
+
         demo_sched.on_update(on_update)
         demo_sched.on_trade(on_trade)
-        
+
         logger.info(
             f"🟡 [{preset_name}] Demo Trading 调度器已创建 "
             f"(虚拟资金, 上限=${max_capital:,.0f})"
@@ -359,7 +360,7 @@ def _create_live_scheduler(preset_name: str, config: TradingConfig,
         )
         
         scheduler_key = f"{preset_name}_live"
-        
+
         # 注册回调
         async def on_update(data):
             await app_state.broadcast({
@@ -367,17 +368,17 @@ def _create_live_scheduler(preset_name: str, config: TradingConfig,
                 "preset": scheduler_key,
                 "data": data,
             })
-        
+
         async def on_trade(trade):
             await app_state.broadcast({
                 "type": "trade",
                 "preset": scheduler_key,
                 "data": trade,
             })
-        
+
         live_sched.on_update(on_update)
         live_sched.on_trade(on_trade)
-        
+
         logger.info(
             f"🔴 [{preset_name}] 真实主网调度器已创建 "
             f"(⚠️ 真实资金!, 上限=${max_capital:,.0f})"

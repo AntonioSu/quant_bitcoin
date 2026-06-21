@@ -15,7 +15,8 @@ OPEN_COOLDOWN_SEC = 120
 class LiveTradingScheduler(BaseTradingScheduler):
     """实盘交易调度器（Binance Demo Trading）
 
-    通过交易所执行真实订单，使用成交价更新仓位状态。
+    通过交易所执行真实订单，平仓逻辑与 Sim 共用基类: AI + 止损 + 强平。
+    开仓后额外在交易所挂止损单作为离线兜底。
     """
 
     def __init__(
@@ -34,8 +35,7 @@ class LiveTradingScheduler(BaseTradingScheduler):
         self._exchange_portfolio = None
         self._last_open_ts: float = 0
         self._consecutive_sync_errors: int = 0
-        
-        # 从状态文件恢复仓位（止盈止损等）
+
         if state_file:
             self.restore_position_state()
 
@@ -60,15 +60,14 @@ class LiveTradingScheduler(BaseTradingScheduler):
                 return m
         return 0.0
 
-    # ── 交易所条件单管理 ──────────────────────────────────────
+    # ── 交易所止损单管理 ──────────────────────────────────────
 
-    async def _place_exchange_sl_tp(self):
-        """开仓后挂交易所侧止损 + TP1 条件单"""
+    async def _place_exchange_sl(self):
+        """开仓/减仓后在交易所挂止损单（与本地 stop_loss 同价）"""
         pos = self.position
         if not pos.is_active or not self._futures_executor:
             return
 
-        # 止损单（全仓）
         sl_result = await asyncio.to_thread(
             self._futures_executor.place_stop_loss,
             self.FUTURES_SYMBOL, pos.direction, pos.size_btc, pos.stop_loss,
@@ -76,19 +75,7 @@ class LiveTradingScheduler(BaseTradingScheduler):
         if sl_result.get("success"):
             pos.sl_order_id = sl_result["order_id"]
         else:
-            logger.error("⚠️ 交易所止损单挂单失败，仅本地轮询兜底")
-
-        # TP1 止盈单（半仓）
-        tp1_amount = pos.size_btc * 0.5
-        tp1_result = await asyncio.to_thread(
-            self._futures_executor.place_take_profit,
-            self.FUTURES_SYMBOL, pos.direction, tp1_amount, pos.tp1_price,
-        )
-        if tp1_result.get("success"):
-            pos.tp1_order_id = tp1_result["order_id"]
-        else:
-            logger.error("⚠️ 交易所 TP1 挂单失败，仅本地轮询兜底")
-
+            logger.error("⚠️ 交易所止损单挂单失败，本地轮询仍生效")
         self.save_position_state()
 
     async def _cancel_exchange_orders(self):
@@ -96,31 +83,22 @@ class LiveTradingScheduler(BaseTradingScheduler):
         if not self._futures_executor:
             return
 
-        cancelled = False
         if self.position.sl_order_id:
             await asyncio.to_thread(
                 self._futures_executor.cancel_order,
                 self.FUTURES_SYMBOL, self.position.sl_order_id,
             )
             self.position.sl_order_id = None
-            cancelled = True
+            self.save_position_state()
+            return
 
-        if self.position.tp1_order_id:
-            await asyncio.to_thread(
-                self._futures_executor.cancel_order,
-                self.FUTURES_SYMBOL, self.position.tp1_order_id,
-            )
-            self.position.tp1_order_id = None
-            cancelled = True
+        await asyncio.to_thread(
+            self._futures_executor.cancel_all_orders,
+            self.FUTURES_SYMBOL,
+        )
 
-        if not cancelled:
-            await asyncio.to_thread(
-                self._futures_executor.cancel_all_orders,
-                self.FUTURES_SYMBOL,
-            )
-
-    async def _replace_exchange_sl(self, new_stop: float):
-        """取消旧止损单，挂新止损单（用于移动止盈更新）"""
+    async def _replace_exchange_sl(self):
+        """取消旧止损单，按当前仓位重新挂止损单"""
         if not self._futures_executor or not self.position.is_active:
             return
 
@@ -131,15 +109,13 @@ class LiveTradingScheduler(BaseTradingScheduler):
             )
             self.position.sl_order_id = None
 
-        result = await asyncio.to_thread(
-            self._futures_executor.place_stop_loss,
-            self.FUTURES_SYMBOL, self.position.direction,
-            self.position.size_btc, new_stop,
-        )
-        if result.get("success"):
-            self.position.sl_order_id = result["order_id"]
-        else:
-            logger.error("⚠️ 替换交易所止损单失败")
+        await self._place_exchange_sl()
+
+    async def _on_position_opened(self):
+        await self._place_exchange_sl()
+
+    async def _on_position_reduced(self):
+        await self._replace_exchange_sl()
 
     def _fallback_to_local_file(self):
         """API 失败且内存无仓位时，尝试从状态文件恢复（最后兜底）"""
@@ -152,17 +128,7 @@ class LiveTradingScheduler(BaseTradingScheduler):
             )
 
     async def _sync_position(self):
-        """从交易所同步仓位状态
-        
-        三级降级: API → 内存 → 本地文件
-        
-        1. API 成功 → 用交易所数据更新本地，并保存到文件
-        2. API 失败 → 保留内存状态（来自上次成功同步或启动时文件恢复）
-        3. API 失败且内存无仓位 → 再次尝试从文件恢复
-        
-        注意：只更新交易所提供的字段（方向、大小、入场价、杠杆、强平价），
-        不覆盖本地维护的止盈止损字段（stop_loss, tp1_price, tp2_price 等）
-        """
+        """从交易所同步仓位状态"""
         try:
             portfolio = await asyncio.to_thread(
                 self._futures_executor.get_portfolio, "bitcoin"
@@ -200,11 +166,10 @@ class LiveTradingScheduler(BaseTradingScheduler):
                 self.position.leverage = ex_leverage
                 if ex_liq_price > 0:
                     self.position.liquidation_price = ex_liq_price
-                
+
                 if self.position.stop_loss == 0 and ex_entry > 0:
                     await self._recalculate_levels(ex_dir, ex_entry, ex_leverage)
 
-                # 检测交易所侧仓位减少（AI 减仓或外部平仓）
                 if prev_size > 0 and ex_size < prev_size * 0.75:
                     logger.info(
                         f"📡 检测到交易所仓位减少: "
@@ -230,17 +195,17 @@ class LiveTradingScheduler(BaseTradingScheduler):
                 f"(连续失败 {self._consecutive_sync_errors} 次): {e}"
             )
             self._fallback_to_local_file()
-    
+
     async def _recalculate_levels(self, direction: str, entry_price: float, leverage: int):
-        """重新计算止盈止损价位（用于重启后恢复）"""
+        """重新计算止损价位（用于重启后恢复）"""
         from binance_utils import fetch_klines
-        
+
         try:
             klines = await fetch_klines(symbol="BTCUSDT", interval="4h", limit=100, use_cache=True)
             if not klines:
-                logger.warning("⚠️ 无法获取K线数据，使用兜底止盈止损")
+                logger.warning("⚠️ 无法获取K线数据，使用兜底止损")
                 klines = []
-            
+
             if direction == "LONG":
                 cfg = self.config.long
                 try:
@@ -265,20 +230,17 @@ class LiveTradingScheduler(BaseTradingScheduler):
                     )
                 except Exception:
                     levels = self.short_level.fallback(entry_price, leverage=leverage, notional_value=self.OPEN_NOTIONAL)
-            
+
             self.position.stop_loss = levels["stop_loss"]
-            self.position.tp1_price = levels["tp1_price"]
-            self.position.tp2_price = levels["tp2_price"]
-            self.position.trailing_atr = levels["atr"]
             if self.position.liquidation_price == 0:
                 self.position.liquidation_price = levels["liquidation_price"]
-            
+
             logger.info(
-                f"📂 重新计算止盈止损: {direction} @ ${entry_price:,.0f}, "
-                f"止损=${levels['stop_loss']:,.0f}, TP1=${levels['tp1_price']:,.0f}"
+                f"📂 重新计算止损: {direction} @ ${entry_price:,.0f}, "
+                f"止损=${levels['stop_loss']:,.0f}"
             )
         except Exception as e:
-            logger.error(f"重新计算止盈止损失败: {e}")
+            logger.error(f"重新计算止损失败: {e}")
 
     def _check_capital_guard(self, action_label: str,
                              notional: float = 0, leverage: int = 5) -> Optional[str]:
@@ -309,8 +271,8 @@ class LiveTradingScheduler(BaseTradingScheduler):
         return None
 
     async def _open_long(self, btc_price: float, klines: list,
-                         market_indicators: dict = None, signal=None) -> Optional[dict]:
-        notional, leverage = self._resolve_ai_sizing(signal)
+                         market_indicators: dict = None, decision=None) -> Optional[dict]:
+        notional, leverage = self._resolve_ai_sizing(decision)
 
         reject = self._check_capital_guard("开多", notional, leverage)
         if reject:
@@ -318,6 +280,7 @@ class LiveTradingScheduler(BaseTradingScheduler):
             return None
 
         cfg = self.config.long
+        sig_meta = self._get_signal_metadata()
 
         try:
             levels = self.long_level.calculate(
@@ -347,34 +310,30 @@ class LiveTradingScheduler(BaseTradingScheduler):
         self.position.entry_price = fill_price
         self.position.size_btc = fill_amount
         self.position.stop_loss = levels["stop_loss"]
-        self.position.tp1_price = levels["tp1_price"]
-        self.position.tp2_price = levels["tp2_price"]
-        self.position.tp1_hit = False
         self.position.leverage = leverage
-        self.position.trailing_atr = levels["atr"]
         self.position.liquidation_price = levels["liquidation_price"]
-        self.position.analysis_id = self._analysis_id_from_signal(signal)
+        self.position.analysis_id = sig_meta["analysis_id"]
         self._last_open_ts = time.time()
 
         logger.info(
             f"🗡️ 实盘开多: {fill_amount:.4f} BTC @ ${fill_price:,.0f} "
             f"(${notional:,.0f}, {leverage}x), "
-            f"强平=${levels['liquidation_price']:,.0f}"
+            f"止损=${levels['stop_loss']:,.0f}, 强平=${levels['liquidation_price']:,.0f}"
         )
 
         return self._make_trade(
             "LONG", "LONG", fill_price, fill_amount, 0,
             market_indicators=market_indicators,
-            trigger_reason=signal.reason if signal else None,
-            signal_confidence=signal.confidence * 100 if signal else None,
+            trigger_reason=decision.reason if decision else None,
+            signal_confidence=sig_meta["confidence"],
             position_levels=levels,
             analysis_id=self.position.analysis_id,
             notional=notional, leverage=leverage,
         )
 
     async def _open_short(self, btc_price: float, klines: list,
-                          market_indicators: dict = None, signal=None) -> Optional[dict]:
-        notional, leverage = self._resolve_ai_sizing(signal)
+                          market_indicators: dict = None, decision=None) -> Optional[dict]:
+        notional, leverage = self._resolve_ai_sizing(decision)
 
         reject = self._check_capital_guard("开空", notional, leverage)
         if reject:
@@ -382,6 +341,7 @@ class LiveTradingScheduler(BaseTradingScheduler):
             return None
 
         cfg = self.config.short
+        sig_meta = self._get_signal_metadata()
 
         try:
             levels = self.short_level.calculate(
@@ -411,37 +371,32 @@ class LiveTradingScheduler(BaseTradingScheduler):
         self.position.entry_price = fill_price
         self.position.size_btc = fill_amount
         self.position.stop_loss = levels["stop_loss"]
-        self.position.tp1_price = levels["tp1_price"]
-        self.position.tp2_price = levels["tp2_price"]
-        self.position.tp1_hit = False
         self.position.leverage = leverage
-        self.position.trailing_atr = levels["atr"]
         self.position.liquidation_price = levels["liquidation_price"]
-        self.position.analysis_id = self._analysis_id_from_signal(signal)
+        self.position.analysis_id = sig_meta["analysis_id"]
         self._last_open_ts = time.time()
 
         logger.info(
             f"🛡️ 实盘开空: {fill_amount:.4f} BTC @ ${fill_price:,.0f} "
             f"(${notional:,.0f}, {leverage}x), "
-            f"强平=${levels['liquidation_price']:,.0f}"
+            f"止损=${levels['stop_loss']:,.0f}, 强平=${levels['liquidation_price']:,.0f}"
         )
 
         return self._make_trade(
             "SHORT", "SHORT", fill_price, fill_amount, 0,
             market_indicators=market_indicators,
-            trigger_reason=signal.reason if signal else None,
-            signal_confidence=signal.confidence * 100 if signal else None,
+            trigger_reason=decision.reason if decision else None,
+            signal_confidence=sig_meta["confidence"],
             position_levels=levels,
             analysis_id=self.position.analysis_id,
             notional=notional, leverage=leverage,
         )
 
     async def _close_position(self, btc_price: float, reason: str = "",
-                              close_ratio: float = 1.0, is_tp: bool = False) -> Optional[dict]:
+                              close_ratio: float = 1.0, is_partial: bool = False) -> Optional[dict]:
         if not self.position.is_active:
             return None
 
-        # 平仓前取消交易所条件单，避免双重触发
         await self._cancel_exchange_orders()
 
         is_long = self.position.direction == "LONG"
@@ -467,9 +422,11 @@ class LiveTradingScheduler(BaseTradingScheduler):
         close_btc = self.position.size_btc * close_ratio
         sign = 1 if is_long else -1
         pnl = sign * (fill_price - self.position.entry_price) * close_btc
+        close_notional = close_btc * fill_price
+        position_leverage = self.position.leverage
 
         mode_str = "LONG" if is_long else "SHORT"
-        action = "TP1_HALF" if (is_tp and close_ratio < 1.0) else "CLOSE"
+        action = "REDUCE" if (is_partial and close_ratio < 1.0) else "CLOSE"
 
         logger.info(
             f"{'🗡️' if mode_str == 'LONG' else '🛡️'} 实盘平仓: "
@@ -482,21 +439,15 @@ class LiveTradingScheduler(BaseTradingScheduler):
                                  entry_price=self.position.entry_price,
                                  market_indicators=self._capture_market_indicators(),
                                  trigger_reason=reason or None,
-                                 analysis_id=self.position.analysis_id)
+                                 analysis_id=self.position.analysis_id,
+                                 notional=close_notional, leverage=position_leverage)
 
         if close_ratio >= 1.0:
             self.position.reset()
         else:
             self.position.size_btc -= close_btc
+            if self.position.size_btc < 0.0001:
+                logger.info("📌 剩余仓位过小，视为全平")
+                self.position.reset()
 
         return trade
-
-    # ── 交易所挂单 hooks 覆盖 ──────────────────────────────────
-
-    async def _on_tp1_transition(self):
-        """TP1 本地成交后：取消旧挂单，挂新的移动止盈止损单"""
-        await self._replace_exchange_sl(self.position.stop_loss)
-
-    async def _on_trailing_stop_moved(self, new_stop: float):
-        """移动止盈线更新：替换交易所止损单"""
-        await self._replace_exchange_sl(new_stop)
