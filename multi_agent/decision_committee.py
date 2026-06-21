@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from pydantic import ValidationError
 
@@ -33,16 +33,12 @@ class DecisionCommittee:
         )
         self.static_context = static_context
 
-    def run(self, snapshot: Dict[str, Any], dynamic_context: str = "",
-            position_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Return a MarketAnalyzer-compatible JSON dict."""
-        pos_text = self._format_position_context(position_context)
-        full_context = f"{dynamic_context}\n\n{pos_text}" if pos_text else dynamic_context
-
-        bull = self._run_debate_role("bull", snapshot, full_context)
-        bear = self._run_debate_role("bear", snapshot, full_context)
-        risk = self._run_risk_role(snapshot, full_context, bull, bear)
-        decision = self._run_manager_role(snapshot, full_context, bull, bear, risk)
+    def run(self, snapshot: Dict[str, Any], dynamic_context: str = "") -> Dict[str, Any]:
+        """Return a MarketAnalyzer-compatible JSON dict (pure signal, no position awareness)."""
+        bull = self._run_debate_role("bull", snapshot, dynamic_context)
+        bear = self._run_debate_role("bear", snapshot, dynamic_context)
+        risk = self._run_risk_role(snapshot, dynamic_context, bull, bear)
+        decision = self._run_manager_role(snapshot, dynamic_context, bull, bear, risk)
 
         if not decision.committee.bull_case:
             decision.committee.bull_case = bull.thesis
@@ -53,10 +49,9 @@ class DecisionCommittee:
 
         result = decision.to_analysis_dict()
         logger.info(
-            "🤖 决策委员会: %s (%s%%), action=%s, entry_ok=%s",
+            "🤖 决策委员会: %s (%s%%), entry_ok=%s",
             result.get("bias"),
             result.get("confidence"),
-            result.get("action"),
             result.get("entry_ok"),
         )
         return result
@@ -187,26 +182,6 @@ class DecisionCommittee:
             "## 决策委员会输入\n"
             f"```json\n{json.dumps(committee_inputs, ensure_ascii=False, indent=2)}\n```\n\n"
             f"{dynamic_context}"
-        )
-
-    @staticmethod
-    def _format_position_context(pos: Optional[Dict[str, Any]]) -> str:
-        if not pos or not pos.get("is_active"):
-            return ""
-        direction = pos["direction"]
-        sign = 1 if direction == "LONG" else -1
-        entry = pos["entry_price"]
-        current = pos.get("current_price", 0)
-        size = pos["size_btc"]
-        unrealized = sign * (current - entry) * size if current > 0 else 0
-        unrealized_pct = (unrealized / (entry * size)) * 100 if size > 0 and entry > 0 else 0
-        return (
-            "## 当前持仓（必须据此判断是否建议离场/减仓）\n"
-            f"- 方向: {direction} | 入场价: ${entry:,.0f} | 当前价: ${current:,.0f}\n"
-            f"- 仓位: {size:.4f} BTC | 杠杆: {pos.get('leverage', 1)}x\n"
-            f"- 未实现盈亏: ${unrealized:+,.2f} ({unrealized_pct:+.2f}%)\n"
-            f"- 强平价: ${pos.get('liquidation_price', 0):,.0f}\n"
-            f"- 持仓时长: {pos.get('holding_duration', '未知')}"
         )
 
     @staticmethod

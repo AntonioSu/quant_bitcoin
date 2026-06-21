@@ -8,7 +8,7 @@
 
 - MarketAnalyzer 在产生非 NEUTRAL 研判时，把 bias、confidence、summary、
   key_drivers、risks 和市场快照写入 AnalysisMemory；
-- 交易调度器在 CLOSE / TP1_HALF 等平仓动作发生后，把成交结果关联到最近一次研判；
+- 交易调度器在 CLOSE / REDUCE 等平仓动作发生后，把成交结果关联到最近一次研判；
 - Reflector 对比研判内容、市场快照和实际 PnL，生成评分、模式标签和经验教训；
 - 复盘结果会写回 AnalysisMemory，后续由 StrategySummarizer 聚合成策略备忘录，
   再注入下一轮 MarketAnalyzer 的 prompt 中。
