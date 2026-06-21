@@ -32,8 +32,7 @@ class ShortConfig:
     # 风控参数
     max_loss_pct: float = 1.5          # 单次最大亏损 (% of 全局权益)
     atr_multiplier: float = 2.0        # ATR 止损倍数
-    trailing_atr_multiplier: float = 0.5  # TP1 后移动止盈倍数
-    
+
     # 执行参数
     leverage: int = 5                 # 杠杆 (固定5倍)
 
@@ -45,7 +44,6 @@ class LongConfig:
     top_trader_ratio_threshold: float  # 聪明钱多空比阈值 (>, 大户看多时跟随做多)
     max_loss_pct: float                # 单次最大亏损 (% of 全局权益)
     atr_multiplier: float              # ATR 止损倍数
-    trailing_atr_multiplier: float = 0.5  # TP1 后移动止盈: trailing_stop = highest - ATR × 此值
     cvd_lookback_periods: int = 6      # CVD 回看周期
     leverage: int = 10                 # 杠杆
 
@@ -130,7 +128,6 @@ class TradingConfig:
                 "top_trader_ratio_threshold": self.short.top_trader_ratio_threshold,
                 "max_loss_pct": self.short.max_loss_pct,
                 "atr_multiplier": self.short.atr_multiplier,
-                "trailing_atr_multiplier": self.short.trailing_atr_multiplier,
                 "leverage": self.short.leverage,
             },
             "long": {
@@ -138,7 +135,6 @@ class TradingConfig:
                 "top_trader_ratio_threshold": self.long.top_trader_ratio_threshold,
                 "max_loss_pct": self.long.max_loss_pct,
                 "atr_multiplier": self.long.atr_multiplier,
-                "trailing_atr_multiplier": self.long.trailing_atr_multiplier,
                 "leverage": self.long.leverage,
             },
         }
