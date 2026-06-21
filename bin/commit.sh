@@ -7,7 +7,7 @@
 
 if [ -z "$1" ]; then
     echo "用法: bin/commit.sh <feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert> \"提交信息\""
-    echo "或:   bin/commit.sh \"fix: 提交信息\""
+    echo "或:   bin/commit.sh \"fix(scope): 提交信息\""
     exit 1
 fi
 
@@ -22,7 +22,7 @@ elif [[ "$1" =~ ^($TYPES)(\(.+\))?$ ]] && [ -n "${2:-}" ]; then
 else
     echo "提交信息需使用 conventional commit 格式。"
     echo "用法: bin/commit.sh <feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert> \"提交信息\""
-    echo "或:   bin/commit.sh \"fix: 提交信息\""
+    echo "或:   bin/commit.sh \"fix(scope): 提交信息\""
     exit 1
 fi
 
