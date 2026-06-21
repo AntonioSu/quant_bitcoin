@@ -42,6 +42,7 @@
 5. 我的 `confidence` 是否同时满足趋势/波动两个维度的上限约束？
 6. 如果 `volatility_regime = LOW_VOL_COMPRESSION` 或 `HIGH_VOL_EXTREME`，我是否避免了"主动加仓"类的 action？
 7. 我的 `action` 是否与 `confidence` 匹配？（confidence < 60 → 持仓观望 / 等待入场）
+8. 我的 `key_drivers` 描述中是否混淆了术语？特别是：surge_down(放量下跌) ≠ 量价背离，只有 divergence_top/divergence_bottom 才是量价背离
 
 任何一条不满足，必须回到上一步重新调整。
 

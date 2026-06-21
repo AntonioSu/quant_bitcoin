@@ -100,13 +100,58 @@ function _buildLevelRows(lvl) {
     if (!lvl) return '';
     const rows = [];
     if (lvl.stop_loss) rows.push(_indCell('止损', `$${lvl.stop_loss.toLocaleString()}`, 'red'));
-    if (lvl.tp1_price) rows.push(_indCell('TP1', `$${lvl.tp1_price.toLocaleString()}`, 'green'));
-    if (lvl.tp2_price) rows.push(_indCell('TP2', `$${lvl.tp2_price.toLocaleString()}`, 'green'));
     if (lvl.liquidation_price) rows.push(_indCell('强平', `$${lvl.liquidation_price.toLocaleString()}`, 'yellow'));
     if (lvl.atr) rows.push(_indCell('ATR', `$${lvl.atr.toLocaleString()}`, ''));
     return rows.join('');
 }
 
+function _tradeNotional(t) {
+    if (t.notional != null) return t.notional;
+    if (t.amount != null && t.price != null) return t.amount * t.price;
+    if (t.amount != null && t.entry_price != null) return t.amount * t.entry_price;
+    return null;
+}
+
+function _tradeSizingHtml(t, isClose) {
+    const notional = _tradeNotional(t);
+    const leverage = t.leverage;
+    if (notional == null && leverage == null) return '';
+
+    const parts = [];
+    if (notional != null) parts.push(`$${Math.round(notional).toLocaleString()}`);
+    if (leverage != null) parts.push(`${leverage}x`);
+    const label = isClose ? '平仓仓位' : '仓位';
+    return `<div class="trade-sizing" title="${label}">${parts.join(' · ')}</div>`;
+}
+
+function _tradeAmountHtml(t, isClose) {
+    if (t.amount == null) return '';
+    const btc = Number(t.amount).toFixed(5);
+    const label = isClose ? '平仓数量' : '仓位';
+    return `<div class="trade-amount" title="${label}">${btc} BTC</div>`;
+}
+
+
+function _enrichCloseSizing(trades) {
+    const lastOpenByMode = {};
+    for (const t of trades) {
+        if (t.action === 'LONG' || t.action === 'SHORT') {
+            lastOpenByMode[t.mode] = t;
+            continue;
+        }
+        if (t.action !== 'CLOSE' && t.action !== 'REDUCE') continue;
+
+        const open = lastOpenByMode[t.mode];
+        if (!open) continue;
+
+        if (t.leverage == null && open.leverage != null) {
+            t.leverage = open.leverage;
+        }
+        if (t.action === 'CLOSE') {
+            delete lastOpenByMode[t.mode];
+        }
+    }
+}
 
 // ── 交易记录列表渲染 ──
 
@@ -118,8 +163,10 @@ function updateTrades(trades) {
         return;
     }
 
+    _enrichCloseSizing(trades);
+
     container.innerHTML = trades.slice().reverse().map(t => {
-        const isClose = t.action === 'CLOSE' || t.action === 'TP1_HALF';
+        const isClose = t.action === 'CLOSE' || t.action === 'REDUCE';
         const actionClass = isClose ? '' : 'red';
         const profitClass = t.pnl >= 0 ? 'trade-profit' : '';
         let priceHtml;
@@ -132,8 +179,9 @@ function updateTrades(trades) {
         let tradeInfoHtml = '';
         const hasIndicators = t.market_indicators && Object.keys(t.market_indicators).length > 0;
         const hasLevels = t.levels && Object.keys(t.levels).length > 0;
+        const hasReason = !!t.trigger_reason;
 
-        if (hasIndicators || hasLevels) {
+        if (hasIndicators || hasLevels || hasReason) {
             const indicatorRows = _buildIndicatorRows(t.market_indicators);
             const levelRows = _buildLevelRows(t.levels);
 
@@ -169,7 +217,8 @@ function updateTrades(trades) {
                 </div>
                 <div class="trade-right">
                     <div class="trade-pnl ${getColorClass(t.pnl)}">${formatPnl(t.pnl)}</div>
-                    <div class="trade-amount">${t.amount} BTC</div>
+                    ${_tradeAmountHtml(t, isClose)}
+                    ${_tradeSizingHtml(t, isClose)}
                 </div>
             </div>
             ${tradeInfoHtml}

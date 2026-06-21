@@ -21,7 +21,7 @@ def _pair_trades(trades: List[dict]) -> List[dict]:
         action = t.get("action", "")
         if action in ("LONG", "SHORT"):
             pending_open = t
-        elif action in ("CLOSE", "TP1_HALF") and pending_open:
+        elif action in ("CLOSE", "REDUCE", "TP1_HALF") and pending_open:
             open_time = _parse_time(pending_open["time"])
             close_time = _parse_time(t["time"])
             pairs.append({

@@ -120,7 +120,7 @@ def main():
             print("❌ 已取消")
             sys.exit(0)
     
-    from server.scheduler import create_integrated_app
+    from server.scheduler import create_integrated_app, app_state
     app = create_integrated_app(
         use_sim=use_sim,
         use_demo=args.demo,
@@ -129,7 +129,13 @@ def main():
         live_preset=args.live_preset,
         max_capital=args.max_capital,
     )
-    
+
+    try:
+        from notifications.bootstrap import attach_trade_notifications
+        attach_trade_notifications(app_state)
+    except Exception as e:
+        print(f"⚠️  成交通知插件加载失败 (不影响交易): {e}")
+
     uvicorn.run(
         app,
         host=args.host,

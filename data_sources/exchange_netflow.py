@@ -14,7 +14,7 @@
 
 import requests
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Dict, List
 
 from data_sources.base import DataSourceBase, DataPoint
 from utils import logger, retry_request
@@ -40,44 +40,66 @@ class ExchangeNetflow(DataSourceBase):
     @retry_request(max_retries=3, delay=2.0)
     def fetch(self) -> DataPoint:
         """获取交易所BTC净流入/流出数据 (CoinMetrics)"""
+        records = self._fetch_records(limit=2)
+        if not records:
+            raise ValueError("CoinMetrics 返回空数据")
+
+        latest = records[-1]
+        item = self._format_record(latest)
+
+        logger.info(
+            f"🏦 交易所净流入({item['date']}): {item['netflow_btc']:+.1f} BTC "
+            f"(in:{item['inflow_btc']:.0f}, out:{item['outflow_btc']:.0f})"
+        )
+
+        return DataPoint(
+            value=item["netflow_btc"],
+            timestamp=datetime.now(),
+            source="CoinMetrics",
+            raw=item,
+        )
+
+    def _fetch_records(self, limit: int = 30) -> List[Dict]:
+        """获取 CoinMetrics 原始日频记录。"""
         params = {
             "assets": "btc",
             "metrics": "FlowInExNtv,FlowOutExNtv",
             "frequency": "1d",
-            "page_size": 2,
+            "page_size": max(1, limit),
         }
 
         response = requests.get(self.COINMETRICS_URL, params=params, timeout=15)
         response.raise_for_status()
         data = response.json()
+        return data.get("data", [])
 
-        records = data.get("data", [])
-        if not records:
-            raise ValueError("CoinMetrics 返回空数据")
-
-        latest = records[-1]
-        inflow = float(latest.get("FlowInExNtv", 0))
-        outflow = float(latest.get("FlowOutExNtv", 0))
+    def _format_record(self, record: Dict) -> Dict:
+        """格式化单条 CoinMetrics 记录，统一正负号语义。"""
+        inflow = float(record.get("FlowInExNtv", 0))
+        outflow = float(record.get("FlowOutExNtv", 0))
         netflow = inflow - outflow
-        date_str = latest.get("time", "")[:10]
+        return {
+            "date": record.get("time", "")[:10],
+            "netflow_btc": round(netflow, 2),
+            "inflow_btc": round(inflow, 2),
+            "outflow_btc": round(outflow, 2),
+            "signal": self._interpret(netflow),
+        }
 
-        logger.info(
-            f"🏦 交易所净流入({date_str}): {netflow:+.1f} BTC "
-            f"(in:{inflow:.0f}, out:{outflow:.0f})"
-        )
-
-        return DataPoint(
-            value=netflow,
-            timestamp=datetime.now(),
-            source="CoinMetrics",
-            raw={
-                "netflow_btc": round(netflow, 2),
-                "inflow_btc": round(inflow, 2),
-                "outflow_btc": round(outflow, 2),
-                "date": date_str,
-                "signal": self._interpret(netflow),
-            },
-        )
+    @retry_request(max_retries=3, delay=2.0)
+    def fetch_history(self, limit: int = 180) -> List[Dict]:
+        """获取交易所每日流入/流出历史，按日期升序返回。"""
+        records = self._fetch_records(limit=limit)
+        result = []
+        seen = set()
+        for record in records:
+            item = self._format_record(record)
+            date = item.get("date")
+            if not date or date in seen:
+                continue
+            seen.add(date)
+            result.append(item)
+        return result
 
     @staticmethod
     def _interpret(netflow: float) -> str:

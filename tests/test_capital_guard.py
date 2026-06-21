@@ -62,6 +62,16 @@ class FakeExecutor:
         self.call_log.append(("execute_cover", symbol, ratio, price))
         return {"success": True, "order": {"average": price, "filled": 0.01}}
 
+    def place_stop_loss(self, symbol, direction, amount, stop_price):
+        self.call_log.append(("place_stop_loss", symbol, direction, amount, stop_price))
+        return {"success": True, "order_id": "mock-sl-1"}
+
+    def cancel_order(self, symbol, order_id):
+        self.call_log.append(("cancel_order", symbol, order_id))
+
+    def cancel_all_orders(self, symbol):
+        self.call_log.append(("cancel_all_orders", symbol))
+
 
 def make_scheduler(portfolio=None, max_capital=500.0):
     executor = FakeExecutor(portfolio=portfolio)
@@ -128,7 +138,7 @@ def test_3_capital_guard_blocks_when_balance_low():
 
     low_balance = {
         "position": 0.0, "direction": "NONE", "entry_price": 0.0,
-        "balance": 10.0, "total_balance": 10.0, "unrealized_pnl": 0.0,
+        "balance": 5.0, "total_balance": 5.0, "unrealized_pnl": 0.0,
         "leverage": 2, "margin": 0.0, "liquidation_price": 0.0, "mark_price": 0.0,
     }
     sched, executor = make_scheduler(portfolio=low_balance)
@@ -140,7 +150,7 @@ def test_3_capital_guard_blocks_when_balance_low():
 
     short_calls = [c for c in executor.call_log if c[0] == "execute_short"]
     assert len(short_calls) == 0, "Should NOT call exchange"
-    print(f"  ✅ 余额=$10, 保证金需=${sched.OPEN_NOTIONAL / sched.config.long.leverage:.0f}, 拒绝开仓")
+    print(f"  ✅ 余额=$5, 保证金需=$10 (最低$50/5x), 拒绝开仓")
 
 
 def test_4_capital_guard_blocks_with_max_capital():
@@ -152,13 +162,13 @@ def test_4_capital_guard_blocks_with_max_capital():
         "balance": 10000.0, "total_balance": 10000.0, "unrealized_pnl": 0.0,
         "leverage": 2, "margin": 0.0, "liquidation_price": 0.0, "mark_price": 0.0,
     }
-    sched, executor = make_scheduler(portfolio=rich_balance, max_capital=30.0)
+    sched, executor = make_scheduler(portfolio=rich_balance, max_capital=5.0)
 
     asyncio.run(sched._sync_position())
 
     result = asyncio.run(sched._open_long(74000.0, []))
     assert result is None, "Should refuse when max_capital too low"
-    print("  ✅ 交易所有 $10000，但 max_capital=$30 < 保证金，拒绝开仓")
+    print("  ✅ 交易所有 $10000，但 max_capital=$5 < 保证金 $10，拒绝开仓")
 
 
 def test_5_sync_error_blocks_open():

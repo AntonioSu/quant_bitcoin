@@ -8,6 +8,10 @@ function updateIndicators(data) {
     const frEl = document.getElementById('funding-rate');
     frEl.textContent = data.funding_rate.toFixed(4) + '%';
     frEl.className = 'indicator-value ' + getColorClass(data.funding_rate);
+    const predictedEl = document.getElementById('funding-predicted');
+    const predicted = data.funding_rate_predicted || 0;
+    predictedEl.textContent = predicted.toFixed(4) + '%';
+    predictedEl.className = predicted < 0 ? 'red' : predicted > 0.01 ? 'green' : '';
     document.getElementById('funding-annual').textContent = data.funding_rate_annual.toFixed(2) + '%';
 
     // Top Trader Ratio
@@ -426,6 +430,75 @@ function updateIndicators(data) {
     }
     const m2SubEl = document.getElementById('m2-sub');
     m2SubEl.textContent = m2Change > 0 ? '流动性扩张' : '流动性紧缩';
+
+    // CVD 分层订单流
+    const fmtCvdNet = (v) => {
+        if (v === null || v === undefined) return '--';
+        const sign = v >= 0 ? '+' : '';
+        const abs = Math.abs(v);
+        if (abs >= 1e9) return sign + (v / 1e9).toFixed(2) + 'B';
+        if (abs >= 1e6) return sign + (v / 1e6).toFixed(1) + 'M';
+        if (abs >= 1e3) return sign + (v / 1e3).toFixed(0) + 'K';
+        return sign + v.toFixed(0);
+    };
+    const cvdColorClass = (v) => v > 0 ? 'green' : v < 0 ? 'red' : '';
+
+    const retailNet = data.cvd_of_retail_net;
+    const retailEl = document.getElementById('cvd-of-retail');
+    if (retailNet !== null && retailNet !== undefined) {
+        retailEl.textContent = '$' + fmtCvdNet(retailNet);
+        retailEl.className = 'indicator-value ' + cvdColorClass(retailNet);
+    }
+    const retailSubEl = document.getElementById('cvd-of-retail-sub');
+    if (data.cvd_of_retail_buy != null) {
+        retailSubEl.textContent = `买$${fmtCvdNet(data.cvd_of_retail_buy)} / 卖$${fmtCvdNet(Math.abs(data.cvd_of_retail_sell || 0))} (${(data.cvd_of_retail_count || 0).toLocaleString()}笔)`;
+    }
+
+    const mediumNet = data.cvd_of_medium_net;
+    const mediumEl = document.getElementById('cvd-of-medium');
+    if (mediumNet !== null && mediumNet !== undefined) {
+        mediumEl.textContent = '$' + fmtCvdNet(mediumNet);
+        mediumEl.className = 'indicator-value ' + cvdColorClass(mediumNet);
+    }
+    const mediumSubEl = document.getElementById('cvd-of-medium-sub');
+    if (data.cvd_of_medium_buy != null) {
+        mediumSubEl.textContent = `买$${fmtCvdNet(data.cvd_of_medium_buy)} / 卖$${fmtCvdNet(Math.abs(data.cvd_of_medium_sell || 0))} (${(data.cvd_of_medium_count || 0).toLocaleString()}笔)`;
+    }
+
+    const largeNet = data.cvd_of_large_net;
+    const largeEl = document.getElementById('cvd-of-large');
+    if (largeNet !== null && largeNet !== undefined) {
+        largeEl.textContent = '$' + fmtCvdNet(largeNet);
+        largeEl.className = 'indicator-value ' + cvdColorClass(largeNet);
+    }
+    const largeSubEl = document.getElementById('cvd-of-large-sub');
+    if (data.cvd_of_large_buy != null) {
+        largeSubEl.textContent = `买$${fmtCvdNet(data.cvd_of_large_buy)} / 卖$${fmtCvdNet(Math.abs(data.cvd_of_large_sell || 0))} (${(data.cvd_of_large_count || 0).toLocaleString()}笔)`;
+    }
+
+    const cvdOfSignalEl = document.getElementById('cvd-of-signal');
+    const cvdOfSignalSubEl = document.getElementById('cvd-of-signal-sub');
+    const signalMap = {
+        smart_money_buying: '知情资金买入',
+        bullish_accumulation: '看涨积累',
+        distribution: '大户分发',
+        broad_selling: '全面抛售',
+        neutral: '中性',
+    };
+    const signalColorMap = {
+        smart_money_buying: 'green',
+        bullish_accumulation: 'green',
+        distribution: 'red',
+        broad_selling: 'red',
+        neutral: '',
+    };
+    const sig = data.cvd_of_signal || 'neutral';
+    cvdOfSignalEl.textContent = signalMap[sig] || sig;
+    cvdOfSignalEl.className = 'indicator-value ' + (signalColorMap[sig] || '');
+    cvdOfSignalEl.style.color = sig === 'neutral' ? 'var(--text-secondary)' : '';
+    const connText = data.cvd_of_connected ? '已连接' : '未连接';
+    const tradesText = data.cvd_of_total_trades != null ? `${data.cvd_of_total_trades.toLocaleString()}笔` : '--';
+    cvdOfSignalSubEl.textContent = `${connText} / ${tradesText} / ${data.cvd_of_window_min || '--'}min`;
 
     // News sentiment
     const sentimentEl = document.getElementById('news-sentiment');

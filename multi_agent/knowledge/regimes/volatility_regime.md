@@ -25,10 +25,10 @@
 - 布林收窄是**变盘前兆**，但不指示方向
 
 ### 默认 bias 倾向
-- 默认 NEUTRAL
-- confidence 上限 **55**
-- 优先 action："等待入场" / "持仓观望"
-- **禁止**在收敛期建议加仓
+- 默认 NEUTRAL，但若趋势方向明确（UP/DOWN）可顺势给出方向
+- confidence 上限 **65**
+- 优先 action："等待入场" / "持仓观望"，但 ≥3 个维度同向共振时可建议轻仓入场
+- 收敛期**谨慎**加仓，非绝对禁止
 
 ## NORMAL_VOL（正常波动）
 
@@ -98,6 +98,6 @@ AI 研判输出的 JSON 必须包含字段：
 
 特别规则：
 
-- 如果 volatility_regime = LOW_VOL_COMPRESSION，confidence 不得超过 55
+- 如果 volatility_regime = LOW_VOL_COMPRESSION，confidence 不得超过 65
 - 如果 volatility_regime = HIGH_VOL_EXTREME，confidence 不得超过 60 且 risks 必须列明流动性风险
 - 如果 volatility_regime = BREAKOUT_EXPANSION 且 bias 与突破方向相反，confidence 不得超过 50

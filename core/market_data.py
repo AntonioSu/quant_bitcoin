@@ -16,6 +16,7 @@ from data_sources.etf_flow import ETFFlow
 from data_sources.open_interest import OpenInterest
 from data_sources.liquidation import Liquidation
 from data_sources.btc_taker_kline import TakerData, taker_analyzer
+from data_sources.cvd_orderflow import CVDOrderFlow
 from data_sources.exchange_netflow import ExchangeNetflow
 from data_sources.macro_data import MacroData
 from data_sources.options_data import OptionsData
@@ -59,6 +60,7 @@ class MarketData:
     open_interest: Optional[DataPoint] = None
     liquidation: Optional[DataPoint] = None
     ai_analysis: Optional[DataPoint] = None
+    cvd_orderflow: Optional[DataPoint] = None
     exchange_netflow: Optional[DataPoint] = None
     macro: Optional[DataPoint] = None
     options: Optional[DataPoint] = None
@@ -66,6 +68,7 @@ class MarketData:
     mvrv: Optional[DataPoint] = None
     klines_4h: List[List] = field(default_factory=list)
     last_update: Optional[datetime] = None
+    position_context: Optional[dict] = None
     
     def is_ready(self) -> bool:
         """数据是否已初始化"""
@@ -159,6 +162,7 @@ class MarketData:
                 **(self.ai_analysis.raw or {}),
                 "updated_at": self.ai_analysis.timestamp.isoformat() if self.ai_analysis else None,
             } if self.ai_analysis else None,
+            "cvd_orderflow": self.cvd_orderflow.raw if self.cvd_orderflow and self.cvd_orderflow.raw else None,
             "exchange_netflow": self.exchange_netflow.raw if self.exchange_netflow and self.exchange_netflow.raw else None,
             "macro": self.macro.raw if self.macro and self.macro.raw else None,
             "options": self.options.raw if self.options and self.options.raw else None,
@@ -200,6 +204,7 @@ _liquidation = Liquidation(symbol="BTCUSDT", lookback_minutes=60)
 
 # 新增数据源
 import os as _os
+_cvd_orderflow = CVDOrderFlow(lookback_minutes=240)  # 4h aggTrade CVD 分层
 _exchange_netflow = ExchangeNetflow()  # CoinMetrics 免费 API
 _macro_data = MacroData(fred_api_key=_os.getenv("FRED_API_KEY", ""))
 _options_data = OptionsData()  # Deribit 公开 API
@@ -208,6 +213,20 @@ _mvrv_data = MVRVData()  # CoinMetrics 免费 API
 
 # 全局数据实例
 market = MarketData()
+
+# 启动时从磁盘恢复上次 AI 研判，避免重启后在 AI 分析完成前无退出保护
+if _market_analyzer._last_analysis:
+    _seed = _market_analyzer._last_analysis
+    market.ai_analysis = DataPoint(
+        value=float(_seed.get("confidence", 0)) if _seed.get("bias") != "NEUTRAL" else 0.0,
+        timestamp=datetime.now(),
+        source="Market Analyzer (restored)",
+        raw=_seed,
+    )
+    logger.info(
+        f"📂 启动恢复 AI 研判到 market: "
+        f"{_seed.get('bias')} ({_seed.get('confidence')}%) action={_seed.get('action')}"
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -253,6 +272,11 @@ def refresh_market_data() -> MarketData:
         market.liquidation = _liquidation.fetch()
     except Exception as e:
         logger.warning(f"获取爆仓数据失败: {e}")
+
+    try:
+        market.cvd_orderflow = _cvd_orderflow.fetch()
+    except Exception as e:
+        logger.warning(f"获取CVD分层订单流数据失败: {e}")
 
     try:
         market.exchange_netflow = _exchange_netflow.fetch()

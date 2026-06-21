@@ -1,7 +1,7 @@
 """核心模块"""
 
 from core.config import TradingConfig, ParameterSet
-from core.signal_aggregator import SignalAggregator, TradingMode, SignalResult
+from core.signal_aggregator import SignalAggregator, TradingMode, SignalResult, ExitSignal
 from core.performance import PerformanceTracker
 from core.market_data import (
     market,
@@ -21,6 +21,7 @@ __all__ = [
     "SignalAggregator",
     "TradingMode",
     "SignalResult",
+    "ExitSignal",
     "PerformanceTracker",
     "market",
     "MarketData",

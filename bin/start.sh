@@ -12,10 +12,11 @@ echo "启动服务..."
 cd "$PROJECT_DIR"
 ALL_FLAGS="$SIM_FLAG $DEMO_FLAG $LIVE_FLAG"
 # PYTHONUNBUFFERED=1 避免重定向到文件时 stdout 被全缓冲，导致日志不实时更新
-PYTHONPATH="$PROJECT_DIR" PYTHONUNBUFFERED=1 nohup python -m bin.run_server --port $PORT $ALL_FLAGS > "$LOG_FILE" 2>&1 &
+# setsid 让后台服务脱离当前调用会话，避免运维命令退出时带走子进程。
+PYTHONPATH="$PROJECT_DIR" PYTHONUNBUFFERED=1 nohup setsid python -m bin.run_server --port $PORT $ALL_FLAGS > "$LOG_FILE" 2>&1 &
 STARTED_PID=$!
 
-for i in {1..30}; do
+for i in {1..90}; do
     if ! ps -p $STARTED_PID > /dev/null 2>&1; then
         echo "❌ 启动失败，请查看日志: $LOG_FILE"
         exit 1

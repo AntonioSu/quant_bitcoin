@@ -44,31 +44,50 @@ class FundingRate(DataSourceBase):
     
     @retry_request(max_retries=3, delay=1.0)
     def fetch(self) -> DataPoint:
-        """获取当前预测资金费率"""
-        url = self.COIN_M_URL if self.use_coin_m else self.USDT_M_URL
-        
-        response = requests.get(url, params={"symbol": self.symbol}, timeout=10)
-        response.raise_for_status()
-        
-        data = response.json()
-        if isinstance(data, list):
-            data = data[0]
-        
-        # lastFundingRate: 上次结算费率
-        # interestRate: 基础利率 (通常0.01%)
-        # estimatedSettlePrice: 预计结算价格
-        last_rate = float(data.get("lastFundingRate", 0))
-        next_funding_time = int(data.get("nextFundingTime", 0))
-        mark_price = float(data.get("markPrice", 0))
-        index_price = float(data.get("indexPrice", 0))
-        
-        # 预测费率 ≈ 上次费率 (简化处理，实际可根据溢价计算)
-        predicted_rate = last_rate
-        
-        logger.info(f"💰 资金费率: {last_rate:.5%} (预测: {predicted_rate:.5%})")
-        
+        """获取最近一次已结算的资金费率 + 实时预测费率
+
+        premiumIndex 的 lastFundingRate 是实时预测值（可能为负），
+        不代表上次结算费率。这里改用 fundingRate 历史接口获取最近一次
+        已结算费率作为主值，premiumIndex 仅用于获取预测值和标记价。
+        """
+        # 1) 从历史接口拿最近一次已结算费率
+        history_url = self.COIN_M_HISTORY_URL if self.use_coin_m else self.USDT_M_HISTORY_URL
+        resp_h = requests.get(
+            history_url, params={"symbol": self.symbol, "limit": 1}, timeout=10
+        )
+        resp_h.raise_for_status()
+        history_data = resp_h.json()
+        if isinstance(history_data, list) and history_data:
+            last_rate = float(history_data[-1]["fundingRate"])
+        else:
+            last_rate = 0.0
+
+        # 2) 从 premiumIndex 拿预测费率和标记价
+        premium_url = self.COIN_M_URL if self.use_coin_m else self.USDT_M_URL
+        try:
+            resp_p = requests.get(
+                premium_url, params={"symbol": self.symbol}, timeout=10
+            )
+            resp_p.raise_for_status()
+            pdata = resp_p.json()
+            if isinstance(pdata, list):
+                pdata = pdata[0]
+            predicted_rate = float(pdata.get("lastFundingRate", 0))
+            next_funding_time = int(pdata.get("nextFundingTime", 0))
+            mark_price = float(pdata.get("markPrice", 0))
+            index_price = float(pdata.get("indexPrice", 0))
+        except Exception:
+            predicted_rate = last_rate
+            next_funding_time = 0
+            mark_price = 0.0
+            index_price = 0.0
+
+        logger.info(
+            f"💰 资金费率: {last_rate:.5%} (预测下期: {predicted_rate:.5%})"
+        )
+
         return DataPoint(
-            value=last_rate * 100,  # 转换为百分比 (0.0003 -> 0.02) 
+            value=last_rate * 100,  # 转换为百分比 (0.0003 -> 0.03%)
             timestamp=datetime.now(),
             source=self.name,
             raw={
@@ -77,7 +96,7 @@ class FundingRate(DataSourceBase):
                 "next_funding_time": next_funding_time,
                 "mark_price": mark_price,
                 "index_price": index_price,
-                "annual_yield": last_rate * 3 * 365,  # 年化收益
+                "annual_yield": last_rate * 3 * 365,
             }
         )
     

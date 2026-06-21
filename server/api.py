@@ -46,6 +46,7 @@ class IndicatorData(BaseModel):
     fear_greed: int
     fear_greed_class: str
     funding_rate: float
+    funding_rate_predicted: float
     funding_rate_annual: float
     top_trader_ratio: float
     top_trader_sentiment: str
@@ -114,6 +115,10 @@ class IndicatorData(BaseModel):
     ai_key_drivers: Optional[list] = None
     ai_risks: Optional[list] = None
     ai_horizon: Optional[str] = None
+    ai_entry_ok: Optional[bool] = None
+    ai_position_size_hint: Optional[str] = None
+    ai_invalidations: Optional[list] = None
+    ai_committee: Optional[dict] = None
     ai_updated_at: Optional[str] = None
     # 新增指标
     netflow_btc: Optional[float] = None
@@ -132,6 +137,23 @@ class IndicatorData(BaseModel):
     mvrv_value: Optional[float] = None
     mvrv_zone: Optional[str] = None
     mvrv_signal: Optional[str] = None
+    # CVD 分层订单流
+    cvd_of_retail_net: Optional[float] = None
+    cvd_of_retail_buy: Optional[float] = None
+    cvd_of_retail_sell: Optional[float] = None
+    cvd_of_retail_count: Optional[int] = None
+    cvd_of_medium_net: Optional[float] = None
+    cvd_of_medium_buy: Optional[float] = None
+    cvd_of_medium_sell: Optional[float] = None
+    cvd_of_medium_count: Optional[int] = None
+    cvd_of_large_net: Optional[float] = None
+    cvd_of_large_buy: Optional[float] = None
+    cvd_of_large_sell: Optional[float] = None
+    cvd_of_large_count: Optional[int] = None
+    cvd_of_total_trades: Optional[int] = None
+    cvd_of_window_min: Optional[int] = None
+    cvd_of_connected: Optional[bool] = None
+    cvd_of_signal: Optional[str] = None
     timestamp: str
 
 
@@ -183,6 +205,8 @@ def _get_indicators_from_market() -> IndicatorData:
     
     # 资金费率
     fr_value = market.funding_rate.value if market.funding_rate else 0
+    fr_predicted = (market.funding_rate.raw.get("predicted_rate", 0) * 100
+                    if market.funding_rate and market.funding_rate.raw else 0)
     fr_annual = (market.funding_rate.raw.get("annual_yield", 0) * 100 
                  if market.funding_rate and market.funding_rate.raw else 0)
     
@@ -275,6 +299,20 @@ def _get_indicators_from_market() -> IndicatorData:
             },
         )
 
+    # 记录交易所净流入历史（按自然日去重）
+    netflow_raw_hist = market.exchange_netflow.raw if market.exchange_netflow and market.exchange_netflow.raw else {}
+    if netflow_raw_hist.get("netflow_btc") is not None:
+        history_store.add(
+            HistoryStore.EXCHANGE_NETFLOW,
+            netflow_raw_hist["netflow_btc"],
+            extra={
+                "date": netflow_raw_hist.get("date"),
+                "inflow_btc": netflow_raw_hist.get("inflow_btc"),
+                "outflow_btc": netflow_raw_hist.get("outflow_btc"),
+                "signal": netflow_raw_hist.get("signal"),
+            },
+        )
+
     # 新闻分析数据
     news_score = market.news.value if market.news else None
     news_sentiment = market.news.raw.get("sentiment") if market.news and market.news.raw else None
@@ -310,6 +348,10 @@ def _get_indicators_from_market() -> IndicatorData:
     ai_key_drivers = ai_raw.get("key_drivers")
     ai_risks = ai_raw.get("risks")
     ai_horizon = ai_raw.get("horizon")
+    ai_entry_ok = ai_raw.get("entry_ok")
+    ai_position_size_hint = ai_raw.get("position_size_hint")
+    ai_invalidations = ai_raw.get("invalidations")
+    ai_committee = ai_raw.get("committee")
     ai_updated_at = market.ai_analysis.timestamp.isoformat() if market.ai_analysis else None
 
     # 交易所净流入
@@ -343,10 +385,17 @@ def _get_indicators_from_market() -> IndicatorData:
     mvrv_zone = mvrv_raw.get("zone")
     mvrv_signal = mvrv_raw.get("signal")
 
+    # CVD 分层订单流
+    cvd_of_raw = market.cvd_orderflow.raw if market.cvd_orderflow and market.cvd_orderflow.raw else {}
+    cvd_of_retail = cvd_of_raw.get("retail", {})
+    cvd_of_medium = cvd_of_raw.get("medium", {})
+    cvd_of_large = cvd_of_raw.get("large", {})
+
     return IndicatorData(
         fear_greed=fg_value,
         fear_greed_class=fg_class,
         funding_rate=fr_value,
+        funding_rate_predicted=fr_predicted,
         funding_rate_annual=fr_annual,
         top_trader_ratio=tt_value,
         top_trader_sentiment=tt_sentiment,
@@ -415,6 +464,10 @@ def _get_indicators_from_market() -> IndicatorData:
         ai_key_drivers=ai_key_drivers,
         ai_risks=ai_risks,
         ai_horizon=ai_horizon,
+        ai_entry_ok=ai_entry_ok,
+        ai_position_size_hint=ai_position_size_hint,
+        ai_invalidations=ai_invalidations,
+        ai_committee=ai_committee,
         ai_updated_at=ai_updated_at,
         netflow_btc=netflow_btc,
         netflow_signal=netflow_signal,
@@ -432,6 +485,22 @@ def _get_indicators_from_market() -> IndicatorData:
         mvrv_value=mvrv_value,
         mvrv_zone=mvrv_zone,
         mvrv_signal=mvrv_signal,
+        cvd_of_retail_net=cvd_of_retail.get("net_usd"),
+        cvd_of_retail_buy=cvd_of_retail.get("buy_usd"),
+        cvd_of_retail_sell=cvd_of_retail.get("sell_usd"),
+        cvd_of_retail_count=cvd_of_retail.get("trade_count"),
+        cvd_of_medium_net=cvd_of_medium.get("net_usd"),
+        cvd_of_medium_buy=cvd_of_medium.get("buy_usd"),
+        cvd_of_medium_sell=cvd_of_medium.get("sell_usd"),
+        cvd_of_medium_count=cvd_of_medium.get("trade_count"),
+        cvd_of_large_net=cvd_of_large.get("net_usd"),
+        cvd_of_large_buy=cvd_of_large.get("buy_usd"),
+        cvd_of_large_sell=cvd_of_large.get("sell_usd"),
+        cvd_of_large_count=cvd_of_large.get("trade_count"),
+        cvd_of_total_trades=cvd_of_raw.get("total_trades"),
+        cvd_of_window_min=cvd_of_raw.get("window_minutes"),
+        cvd_of_connected=cvd_of_raw.get("ws_connected"),
+        cvd_of_signal=cvd_of_raw.get("signal"),
         timestamp=market.last_update.isoformat() if market.last_update else datetime.now().isoformat(),
     )
 
@@ -716,6 +785,79 @@ async def get_etf_flow(limit: int = Query(default=0, le=9999)):
     return result
 
 
+@app.get("/api/exchange-netflow")
+async def get_exchange_netflow(limit: int = Query(default=0, le=9999)):
+    """获取 BTC 交易所每日流入/流出数据 (本地历史 + CoinMetrics 增量合并)
+
+    limit=0 返回全部历史, 否则返回最近 N 天 (newest first)
+    """
+    import json as _json
+    from data_sources.exchange_netflow import ExchangeNetflow
+
+    local_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "data", "exchange_netflow_history.json",
+    )
+
+    local_data: list = []
+    try:
+        if os.path.exists(local_path):
+            with open(local_path, "r", encoding="utf-8") as f:
+                local_data = _json.load(f)
+    except Exception as e:
+        logger.warning(f"读取交易所净流入本地历史失败: {e}")
+
+    try:
+        netflow = ExchangeNetflow()
+        api_data = await asyncio.to_thread(netflow.fetch_history, 240)
+        if api_data:
+            by_date = {d["date"]: d for d in local_data if d.get("date")}
+            changed = False
+            for item in api_data:
+                date = item.get("date")
+                if not date:
+                    continue
+                record = {
+                    "date": date,
+                    "netflow_btc": item["netflow_btc"],
+                    "inflow_btc": item["inflow_btc"],
+                    "outflow_btc": item["outflow_btc"],
+                    "signal": item.get("signal"),
+                }
+                if by_date.get(date) != record:
+                    by_date[date] = record
+                    changed = True
+
+            if changed:
+                local_data = sorted(by_date.values(), key=lambda x: x["date"])
+                try:
+                    with open(local_path, "w", encoding="utf-8") as f:
+                        _json.dump(local_data, f, ensure_ascii=False)
+                    logger.info("交易所净流入本地历史已更新")
+                except Exception as e:
+                    logger.warning(f"回写交易所净流入本地历史失败: {e}")
+    except Exception as e:
+        logger.warning(f"交易所净流入 API 增量更新失败: {e}")
+
+    result = [
+        {
+            "date": d["date"],
+            "netflow_btc": d.get("netflow_btc", 0),
+            "inflow_btc": d.get("inflow_btc", 0),
+            "outflow_btc": d.get("outflow_btc", 0),
+            "signal": d.get("signal"),
+        }
+        for d in local_data
+        if d.get("date")
+    ]
+    result.sort(key=lambda x: x["date"], reverse=True)
+
+    if limit > 0:
+        result = result[:limit]
+
+    return result
+
+
 def _ai_analysis_payload() -> dict:
     """读取 market.ai_analysis 当前值, 用于手动刷新接口返回"""
     if not market.ai_analysis:
@@ -729,6 +871,10 @@ def _ai_analysis_payload() -> dict:
         "ai_key_drivers": raw.get("key_drivers"),
         "ai_risks": raw.get("risks"),
         "ai_horizon": raw.get("horizon"),
+        "ai_entry_ok": raw.get("entry_ok"),
+        "ai_position_size_hint": raw.get("position_size_hint"),
+        "ai_invalidations": raw.get("invalidations"),
+        "ai_committee": raw.get("committee"),
         "ai_updated_at": market.ai_analysis.timestamp.isoformat(),
     }
 

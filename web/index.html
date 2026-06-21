@@ -74,6 +74,13 @@
                     </div>
                 </div>
                 <div class="ai-summary" id="ai-summary">等待首次 AI 综合研判...</div>
+                <div class="ai-committee" id="ai-committee" hidden>
+                    <div class="ai-committee-row">
+                        <span class="ai-committee-pill neutral" id="ai-entry-ok">入场 --</span>
+                        <span class="ai-committee-pill" id="ai-position-size">仓位 --</span>
+                    </div>
+                    <div class="ai-committee-note" id="ai-committee-note"></div>
+                </div>
                 <div class="ai-factors" id="ai-factors">
                     <div class="ai-factors-col">
                         <div class="ai-factors-title green">📈 关键多头驱动</div>
@@ -163,6 +170,15 @@
                 </div>
                 <div id="vol-container" style="height: 110px;"></div>
             </div>
+            <div class="exchange-flow-wrap" id="exchange-flow-wrap" style="display: none;">
+                <div class="macd-legend">
+                    <span class="macd-legend-title">Exchange Net Flow (BTC)</span>
+                    <span class="macd-legend-item" id="exchange-flow-bar-val">--</span>
+                    <span class="macd-legend-item">In: <span id="exchange-flow-in-val">--</span></span>
+                    <span class="macd-legend-item">Out: <span id="exchange-flow-out-val">--</span></span>
+                </div>
+                <div id="exchange-flow-container" style="height: 110px;"></div>
+            </div>
             <div class="etf-wrap" id="etf-wrap" style="display: none;">
                 <div class="macd-legend">
                     <span class="macd-legend-title">ETF Net Flow (USD)</span>
@@ -245,6 +261,28 @@
                     <div class="indicator-sub">CVD 背离</div>
                 </div>
 
+                <div class="indicator-group-title">CVD 分层订单流 (4H)</div>
+                <div class="indicator-item">
+                    <div class="indicator-label">散户 (&lt;$10K)</div>
+                    <div class="indicator-value" id="cvd-of-retail">--</div>
+                    <div class="indicator-sub" id="cvd-of-retail-sub">--</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">中等 ($10K–$100K)</div>
+                    <div class="indicator-value" id="cvd-of-medium">--</div>
+                    <div class="indicator-sub" id="cvd-of-medium-sub">--</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">大户 ($100K–$10M)</div>
+                    <div class="indicator-value" id="cvd-of-large">--</div>
+                    <div class="indicator-sub" id="cvd-of-large-sub">--</div>
+                </div>
+                <div class="indicator-item">
+                    <div class="indicator-label">分层信号</div>
+                    <div class="indicator-value" id="cvd-of-signal">--</div>
+                    <div class="indicator-sub" id="cvd-of-signal-sub">--</div>
+                </div>
+
                 <div class="indicator-group-title">资金 &amp; 持仓</div>
                 <div class="indicator-item">
                     <div class="indicator-label">合约未平仓量</div>
@@ -277,7 +315,7 @@
                 <div class="indicator-item">
                     <div class="indicator-label">资金费率</div>
                     <div class="indicator-value" id="funding-rate">--</div>
-                    <div class="indicator-sub">年化: <span id="funding-annual">--</span></div>
+                    <div class="indicator-sub">预测: <span id="funding-predicted">--</span> | 年化: <span id="funding-annual">--</span></div>
                 </div>
                 <div class="indicator-item">
                     <div class="indicator-label">聪明钱多空比</div>
@@ -412,11 +450,11 @@
     <script src="/static/js/config.js?v=20260522a"></script>
     <script src="/static/js/utils.js?v=20260520a"></script>
     <script src="/static/js/charts.js?v=20260522a"></script>
-    <script src="/static/js/indicators.js?v=20260526a"></script>
+    <script src="/static/js/indicators.js?v=20260613a"></script>
     <script src="/static/js/ai_analysis.js?v=20260520a"></script>
     <script src="/static/js/portfolio.js?v=20260520a"></script>
     <script src="/static/js/performance.js?v=20260520a"></script>
-    <script src="/static/js/trades.js?v=20260520a"></script>
+    <script src="/static/js/trades.js?v=20260621b"></script>
     <script src="/static/js/data_loader.js?v=20260520a"></script>
     <script src="/static/js/main.js?v=20260520a"></script>
 </body>
