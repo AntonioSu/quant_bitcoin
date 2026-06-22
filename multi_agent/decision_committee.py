@@ -29,6 +29,14 @@ class DecisionCommitteeError(Exception):
     """Raised when the final manager output cannot be used."""
 
 
+_ROLE_PROMPTS = (
+    "bull_researcher.md",
+    "bear_researcher.md",
+    "risk_reviewer.md",
+    "decision_manager.md",
+)
+
+
 class DecisionCommittee:
     """Run bull, bear, risk and manager roles in a conservative sequence."""
 
@@ -43,6 +51,7 @@ class DecisionCommittee:
             os.path.dirname(__file__), "prompts"
         )
         self._knowledge_files = knowledge_files or {}
+        self._system_prompts = self._build_system_prompts()
 
     def run(self, snapshot: Dict[str, Any], dynamic_context: str = "") -> Dict[str, Any]:
         """Return a MarketAnalyzer-compatible JSON dict (pure signal, no position awareness)."""
@@ -135,11 +144,29 @@ class DecisionCommittee:
             raise DecisionCommitteeError(str(e)) from e
 
     def _system_prompt(self, prompt_name: str) -> str:
-        role_prompt = read_file_prompt(os.path.join(self.prompt_dir, prompt_name))
-        knowledge = self._knowledge_for_role(prompt_name)
+        cached = self._system_prompts.get(prompt_name)
+        if cached is not None:
+            return cached
+        return self._compose_system_prompt(prompt_name)
+
+    def _build_system_prompts(self) -> Dict[str, str]:
+        """Pre-compose stable system prompts with knowledge prefix first."""
+        return {
+            prompt_name: self._compose_system_prompt(prompt_name)
+            for prompt_name in _ROLE_PROMPTS
+        }
+
+    @staticmethod
+    def _join_system_prompt(*, knowledge: str, role_prompt: str) -> str:
+        """Knowledge first so identical prefixes can hit LLM prompt cache."""
         if knowledge:
             return knowledge + "\n\n## 角色指令\n" + role_prompt
         return role_prompt
+
+    def _compose_system_prompt(self, prompt_name: str) -> str:
+        knowledge = self._knowledge_for_role(prompt_name)
+        role_prompt = read_file_prompt(os.path.join(self.prompt_dir, prompt_name))
+        return self._join_system_prompt(knowledge=knowledge, role_prompt=role_prompt)
 
     def _knowledge_for_role(self, prompt_name: str) -> str:
         if not self._knowledge_files:
