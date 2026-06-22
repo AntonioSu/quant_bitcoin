@@ -146,7 +146,7 @@ class NewsAnalyzer(DataSourceBase):
             )
             knowledge = self._load_knowledge()
             if knowledge:
-                sys_prompt += "\n\n" + knowledge
+                sys_prompt = knowledge + "\n\n## 角色指令\n" + sys_prompt
 
             resp = self.llm.chat(
                 system_prompt=sys_prompt,

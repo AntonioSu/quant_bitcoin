@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Sequence
 
 from pydantic import ValidationError
 
@@ -12,6 +12,17 @@ from multi_agent.schemas import CommitteeDecision, DebateCase, RiskReview
 from utils import logger
 from utils.common_utils import read_file_prompt
 from utils.llm_client import LLMClient
+
+
+_ROLE_KNOWLEDGE: Dict[str, Optional[Sequence[str]]] = {
+    "bull_researcher.md": ("indicators/indicator_guide.md",),
+    "bear_researcher.md": ("indicators/indicator_guide.md",),
+    "risk_reviewer.md": (
+        "regimes/volatility_regime.md",
+        "regimes/regime_matrix.md",
+    ),
+    "decision_manager.md": None,  # all files
+}
 
 
 class DecisionCommitteeError(Exception):
@@ -25,13 +36,13 @@ class DecisionCommittee:
         self,
         llm: LLMClient,
         prompt_dir: Optional[str] = None,
-        static_context: str = "",
+        knowledge_files: Optional[Dict[str, str]] = None,
     ):
         self.llm = llm
         self.prompt_dir = prompt_dir or os.path.join(
             os.path.dirname(__file__), "prompts"
         )
-        self.static_context = static_context
+        self._knowledge_files = knowledge_files or {}
 
     def run(self, snapshot: Dict[str, Any], dynamic_context: str = "") -> Dict[str, Any]:
         """Return a MarketAnalyzer-compatible JSON dict (pure signal, no position awareness)."""
@@ -124,10 +135,21 @@ class DecisionCommittee:
             raise DecisionCommitteeError(str(e)) from e
 
     def _system_prompt(self, prompt_name: str) -> str:
-        prompt = read_file_prompt(os.path.join(self.prompt_dir, prompt_name))
-        if self.static_context:
-            prompt += "\n\n## 共享交易规则与知识库\n" + self.static_context
-        return prompt
+        role_prompt = read_file_prompt(os.path.join(self.prompt_dir, prompt_name))
+        knowledge = self._knowledge_for_role(prompt_name)
+        if knowledge:
+            return knowledge + "\n\n## 角色指令\n" + role_prompt
+        return role_prompt
+
+    def _knowledge_for_role(self, prompt_name: str) -> str:
+        if not self._knowledge_files:
+            return ""
+        needed = _ROLE_KNOWLEDGE.get(prompt_name)
+        if needed is None:
+            keys = sorted(self._knowledge_files)
+        else:
+            keys = sorted(k for k in needed if k in self._knowledge_files)
+        return "\n\n".join(self._knowledge_files[k] for k in keys)
 
     @staticmethod
     def _debate_prompt(

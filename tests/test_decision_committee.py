@@ -131,7 +131,7 @@ def test_decision_committee_runs_roles_with_fake_llm():
         "multi_agent",
         "prompts",
     )
-    committee = DecisionCommittee(fake, prompt_dir=prompt_dir, static_context="rules")
+    committee = DecisionCommittee(fake, prompt_dir=prompt_dir, knowledge_files={"test": "rules"})
 
     result = committee.run(snapshot={"rsi_4h": {"value": 31}}, dynamic_context="")
 
