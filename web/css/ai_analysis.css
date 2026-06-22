@@ -1,10 +1,10 @@
 /* ═══════════════════════════════════════════
-   AI ANALYSIS CARD (替换原账户概览)
+   AI ANALYSIS CARD — Glassmorphism Purple
    ═══════════════════════════════════════════ */
 
 .ai-analysis-card {
-    background: linear-gradient(135deg, #FFFFFF 0%, #FAFCFF 100%);
-    border: 1px solid var(--border);
+    background: linear-gradient(135deg, rgba(255,255,255,0.48) 0%, rgba(233,213,255,0.3) 100%);
+    border: 1px solid rgba(168, 85, 247, 0.15);
     position: relative;
     overflow: hidden;
 }
@@ -16,14 +16,14 @@
     left: 0;
     right: 0;
     height: 2px;
-    background: linear-gradient(90deg, var(--teal), var(--blue), var(--purple));
+    background: linear-gradient(90deg, #8B5CF6, #EC4899, #6366F1);
     background-size: 200% 100%;
     animation: shimmer 6s ease-in-out infinite;
 }
 
 .card-icon.icon-ai {
-    background: linear-gradient(135deg, var(--teal-dim), rgba(124, 58, 237, 0.12));
-    color: var(--teal);
+    background: linear-gradient(135deg, rgba(139,92,246,0.12), rgba(236,72,153,0.1));
+    color: var(--accent);
 }
 
 .ai-horizon {
@@ -31,11 +31,12 @@
     font-size: 10px;
     font-weight: 500;
     color: var(--text-dim);
-    background: var(--bg-inset);
-    padding: 2px 6px;
-    border-radius: 4px;
+    background: rgba(139, 92, 246, 0.08);
+    padding: 2px 8px;
+    border-radius: 6px;
     margin-left: 6px;
     letter-spacing: 0.3px;
+    border: 1px solid rgba(139, 92, 246, 0.1);
 }
 
 .ai-header-actions {
@@ -51,21 +52,21 @@
     font-family: var(--font-display);
     font-size: 11px;
     font-weight: 600;
-    color: var(--teal);
-    background: var(--bg-inset);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 4px 10px;
+    color: var(--accent);
+    background: rgba(139, 92, 246, 0.06);
+    border: 1px solid rgba(139, 92, 246, 0.15);
+    border-radius: 8px;
+    padding: 5px 12px;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all 0.2s ease;
     line-height: 1;
     letter-spacing: 0.2px;
 }
 
 .ai-refresh-btn:hover:not(:disabled) {
-    background: var(--teal-dim);
-    border-color: var(--teal);
-    color: var(--teal);
+    background: rgba(139, 92, 246, 0.12);
+    border-color: var(--accent);
+    box-shadow: 0 2px 8px rgba(139, 92, 246, 0.15);
 }
 
 .ai-refresh-btn:active:not(:disabled) {
@@ -74,7 +75,7 @@
 
 .ai-refresh-btn:disabled {
     cursor: not-allowed;
-    opacity: 0.6;
+    opacity: 0.5;
 }
 
 .ai-refresh-icon {
@@ -125,7 +126,7 @@
     gap: 16px;
     margin-bottom: 14px;
     padding-bottom: 12px;
-    border-bottom: 1px dashed var(--border);
+    border-bottom: 1px dashed rgba(139, 92, 246, 0.15);
 }
 
 .ai-bias-block {
@@ -176,25 +177,29 @@
     font-size: 13px;
     font-weight: 700;
     font-family: var(--font-display);
-    padding: 5px 12px;
-    border-radius: 8px;
-    background: var(--bg-inset);
+    padding: 5px 14px;
+    border-radius: 10px;
+    background: rgba(139, 92, 246, 0.06);
     color: var(--text-primary);
+    border: 1px solid rgba(139, 92, 246, 0.1);
 }
 
 .ai-action.bullish {
     background: var(--green-bg);
     color: var(--green);
+    border-color: rgba(16, 185, 129, 0.15);
 }
 
 .ai-action.bearish {
     background: var(--red-bg);
     color: var(--red);
+    border-color: rgba(239, 68, 68, 0.15);
 }
 
 .ai-action.neutral {
-    background: var(--bg-inset);
+    background: rgba(139, 92, 246, 0.06);
     color: var(--text-secondary);
+    border-color: rgba(139, 92, 246, 0.1);
 }
 
 .ai-summary {
@@ -203,18 +208,22 @@
     line-height: 1.55;
     font-weight: 500;
     margin-bottom: 14px;
-    padding: 10px 14px;
-    background: var(--bg-inset);
-    border-left: 3px solid var(--teal);
-    border-radius: 6px;
+    padding: 12px 16px;
+    background: rgba(139, 92, 246, 0.04);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    border: 1px solid rgba(139, 92, 246, 0.08);
+    border-left: 3px solid var(--accent);
 }
 
 .ai-committee {
     margin: -4px 0 12px;
-    padding: 9px 12px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: rgba(255, 255, 255, 0.58);
+    padding: 10px 14px;
+    border: 1px solid rgba(139, 92, 246, 0.1);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.35);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
 }
 
 .ai-committee-row {
@@ -229,10 +238,10 @@
     font-family: var(--font-mono);
     font-size: 10px;
     font-weight: 700;
-    padding: 3px 7px;
-    border-radius: 4px;
+    padding: 3px 8px;
+    border-radius: 6px;
     color: var(--text-secondary);
-    background: var(--bg-inset);
+    background: rgba(139, 92, 246, 0.06);
 }
 
 .ai-committee-pill.bullish {
@@ -247,7 +256,7 @@
 
 .ai-committee-pill.neutral {
     color: var(--text-secondary);
-    background: var(--bg-inset);
+    background: rgba(139, 92, 246, 0.06);
 }
 
 .ai-committee-note {
@@ -308,23 +317,23 @@
     font-family: var(--font-mono);
     font-size: 9px;
     font-weight: 700;
-    padding: 1px 5px;
-    border-radius: 3px;
+    padding: 1px 6px;
+    border-radius: 4px;
     letter-spacing: 0.3px;
 }
 
 .ai-weight.high {
-    background: rgba(220, 38, 38, 0.1);
+    background: rgba(239, 68, 68, 0.1);
     color: var(--red);
 }
 
 .ai-weight.medium {
-    background: var(--gold-light);
+    background: rgba(232, 121, 160, 0.1);
     color: var(--gold);
 }
 
 .ai-weight.low {
-    background: var(--bg-inset);
+    background: rgba(139, 92, 246, 0.06);
     color: var(--text-dim);
 }
 

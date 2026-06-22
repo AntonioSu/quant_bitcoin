@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════
-   HEADER (kept dark for contrast/anchor)
+   HEADER — Glassmorphic Purple
    ═══════════════════════════════════════════ */
 
 .header {
@@ -10,6 +10,9 @@
     align-items: center;
     position: relative;
     z-index: 10;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 .header::after {
@@ -19,20 +22,20 @@
     left: 0;
     right: 0;
     height: 3px;
-    background: linear-gradient(90deg, var(--teal), var(--gold), var(--teal));
-    background-size: 200% 100%;
-    animation: shimmer 4s ease-in-out infinite;
+    background: linear-gradient(90deg, #A855F7, #EC4899, #F59E0B, #6366F1, #A855F7);
+    background-size: 300% 100%;
+    animation: shimmer 6s ease-in-out infinite;
 }
 
 @keyframes shimmer {
-    0%, 100% { background-position: 200% 0; }
-    50% { background-position: -200% 0; }
+    0%, 100% { background-position: 300% 0; }
+    50% { background-position: -300% 0; }
 }
 
 .header h1 {
     font-family: var(--font-display);
     font-size: 18px;
-    font-weight: 600;
+    font-weight: 700;
     letter-spacing: 0.3px;
     color: #FFFFFF;
     display: flex;
@@ -41,19 +44,25 @@
 }
 
 .header h1 .logo-icon {
-    width: 28px;
-    height: 28px;
-    background: linear-gradient(135deg, var(--teal), #10B981);
-    border-radius: 8px;
+    width: 32px;
+    height: 32px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.3), rgba(255,255,255,0.1));
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 14px;
+    font-size: 15px;
     color: #FFFFFF;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
 }
 
 .header h1 .title-accent {
-    color: #FBBF24;
+    background: linear-gradient(135deg, #FBBF24, #F59E0B);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
 }
 
 /* ═══════════════════════════════════════════
@@ -68,24 +77,28 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 1px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
 }
 
 .status-idle {
-    background: rgba(255,255,255,0.1);
-    color: #9CA3AF;
+    background: rgba(255,255,255,0.12);
+    color: rgba(255, 255, 255, 0.6);
     border: 1px solid rgba(255,255,255,0.15);
 }
 
 .status-aegis {
-    background: rgba(124, 58, 237, 0.2);
-    color: #C4B5FD;
-    border: 1px solid rgba(124, 58, 237, 0.3);
+    background: rgba(168, 85, 247, 0.3);
+    color: #E9D5FF;
+    border: 1px solid rgba(168, 85, 247, 0.4);
+    box-shadow: 0 0 12px rgba(168, 85, 247, 0.2);
 }
 
 .status-spear {
-    background: rgba(16, 163, 74, 0.2);
-    color: #86EFAC;
-    border: 1px solid rgba(16, 163, 74, 0.3);
+    background: rgba(16, 185, 129, 0.25);
+    color: #A7F3D0;
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    box-shadow: 0 0 12px rgba(16, 185, 129, 0.15);
 }
 
 /* ═══════════════════════════════════════════
@@ -95,15 +108,18 @@
 .config-selector {
     display: flex;
     gap: 4px;
-    background: rgba(255, 255, 255, 0.08);
-    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
     padding: 3px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
 }
 
 .config-btn {
     padding: 6px 16px;
     border: none;
-    border-radius: 8px;
+    border-radius: 9px;
     background: transparent;
     color: rgba(255, 255, 255, 0.5);
     cursor: pointer;
@@ -115,11 +131,12 @@
 
 .config-btn:hover {
     color: #FFFFFF;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.12);
 }
 
 .config-btn.active {
-    background: var(--teal);
+    background: rgba(255, 255, 255, 0.22);
     color: #FFFFFF;
     font-weight: 600;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }

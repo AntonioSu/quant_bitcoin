@@ -31,17 +31,17 @@ let ws = null;
 let selectedPreset = 'standard';
 
 const THEME = {
-    bg: '#FFFFFF',
-    grid: '#F0F1F5',
-    border: '#E2E4EB',
-    text: '#6B7280',
-    teal: '#0D9488',
-    green: '#16A34A',
-    red: '#DC2626',
-    blue: '#2563EB',
+    bg: 'rgba(255, 255, 255, 0.01)',
+    grid: 'rgba(139, 92, 246, 0.06)',
+    border: 'rgba(139, 92, 246, 0.1)',
+    text: '#6B5B7B',
+    teal: '#8B5CF6',
+    green: '#10B981',
+    red: '#EF4444',
+    blue: '#6366F1',
     macdDif: '#F59E0B',
     macdDea: '#A855F7',
     overlay1: '#F59E0B', // MA7 / BOLL UP
     overlay2: '#A855F7', // MA25 / BOLL MB
-    overlay3: '#2563EB', // MA99 / BOLL DN
+    overlay3: '#6366F1', // MA99 / BOLL DN
 };
