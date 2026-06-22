@@ -1,14 +1,9 @@
 """信号聚合器
 
-当前模式: 完全基于 AI 综合研判驱动开仓决策
+完全基于 AI 综合研判驱动开仓决策:
 - AI bias/action/置信度同时允许 → 触发开仓
 - AI action=持仓观望/等待入场 或文本含禁止入场语义 → IDLE
-- 其余情况 → IDLE
 - 做多优先级 > 做空 > 空闲
-
-# [已注释] 传统指标模式:
-# - 做空: 聪明钱多空比 < 阈值 + CVD 顶背离
-# - 做多: 聪明钱多空比 > 阈值 + CVD 底背离
 
 数据来源: 使用全局 market 实例
 """
@@ -20,12 +15,10 @@ from typing import Dict, Optional
 from core.config import TradingConfig, ParameterSet
 from core.market_data import market
 from multi_agent.schemas import (
-    CONFIDENCE_VERY_STRONG_THRESHOLD,
     CONFIDENCE_STRONG_THRESHOLD,
     CONFIDENCE_MODERATE_THRESHOLD,
     CONFIDENCE_CAUTIOUS_THRESHOLD,
 )
-# from ..indicators.cvd_divergence import DivergenceType  # 传统指标模式需要
 from utils import logger
 
 
@@ -113,8 +106,6 @@ def _has_directional_no_entry_keyword(raw: Dict, target: str) -> bool:
         *_DIRECTIONAL_NO_ENTRY_KEYWORDS[target],
     )
     return any(keyword in text for keyword in keywords)
-
-
 
 
 class TradingMode(Enum):

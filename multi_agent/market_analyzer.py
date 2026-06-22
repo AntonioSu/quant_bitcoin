@@ -18,15 +18,13 @@ import os
 from datetime import datetime
 from typing import Dict, Optional, Any
 
-from dotenv import load_dotenv
-
 from data_sources.base import DataPoint
 from multi_agent.decision_committee import DecisionCommittee
 from utils import logger
-from utils.common_utils import read_file_prompt
+from utils.common_utils import ensure_dotenv_loaded, read_file_prompt
 from utils.llm_client import LLMClient
 
-load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+ensure_dotenv_loaded()
 
 _PROMPT_DIR = os.path.join(os.path.dirname(__file__), 'prompts')
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')

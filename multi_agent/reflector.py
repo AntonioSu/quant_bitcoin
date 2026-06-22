@@ -21,14 +21,12 @@ import json
 import os
 from typing import Dict, Any, Optional
 
-from dotenv import load_dotenv
-
 from indicators.analysis_memory import AnalysisMemory
 from utils import logger
-from utils.common_utils import read_file_prompt
+from utils.common_utils import ensure_dotenv_loaded, parse_llm_json, read_file_prompt
 from utils.llm_client import LLMClient
 
-load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+ensure_dotenv_loaded()
 
 _PROMPT_DIR = os.path.join(os.path.dirname(__file__), 'prompts')
 
@@ -122,12 +120,7 @@ class Reflector:
 
     @staticmethod
     def _parse_json(text: str) -> Optional[Dict[str, Any]]:
-        if "```json" in text:
-            text = text.split("```json", 1)[1].split("```", 1)[0]
-        elif "```" in text:
-            text = text.split("```", 1)[1].split("```", 1)[0]
-        try:
-            return json.loads(text.strip())
-        except json.JSONDecodeError:
-            logger.error(f"🔍 复盘 JSON 解析失败: {text[:120]}")
-            return None
+        result = parse_llm_json(text)
+        if result is None:
+            logger.error(f"🔍 复盘 JSON 解析失败: {str(text)[:120]}")
+        return result

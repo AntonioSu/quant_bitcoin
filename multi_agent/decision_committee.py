@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from multi_agent.schemas import CommitteeDecision, DebateCase, RiskReview
 from utils import logger
-from utils.common_utils import read_file_prompt
+from utils.common_utils import parse_llm_json, read_file_prompt
 from utils.llm_client import LLMClient
 
 
@@ -217,18 +217,6 @@ class DecisionCommittee:
 
     @staticmethod
     def _parse_json(text: str) -> Dict[str, Any]:
-        raw = str(text or "").strip()
-        if "```json" in raw:
-            raw = raw.split("```json", 1)[1].split("```", 1)[0]
-        elif "```" in raw:
-            raw = raw.split("```", 1)[1].split("```", 1)[0]
-        else:
-            start = raw.find("{")
-            end = raw.rfind("}")
-            if start >= 0 and end > start:
-                raw = raw[start:end + 1]
-
-        parsed = json.loads(raw.strip())
-        if not isinstance(parsed, dict):
-            raise TypeError("LLM output is not a JSON object")
-        return parsed
+        result = parse_llm_json(text, strict=True)
+        assert result is not None
+        return result
