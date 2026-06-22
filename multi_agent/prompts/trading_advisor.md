@@ -5,43 +5,39 @@
 # 输入
 
 你会收到三部分信息：
-1. **市场信号**：方向（LONG/SHORT/NEUTRAL）、置信度、关键驱动、风险
+1. **市场信号**：方向（LONG/SHORT/NEUTRAL）、置信度等级（VERY_STRONG/STRONG/MODERATE/CAUTIOUS/WEAK）、关键驱动、风险
 2. **当前持仓**：方向、入场价、仓位大小、杠杆、未实现盈亏、止损价、强平价
 3. **账户状态**：权益、可用资金
+
+# 置信度等级定义
+
+| 等级 | 维度共振 | position_size_hint | leverage_hint |
+|------|---------|-------------------|---------------|
+| VERY_STRONG | ≥5 维度同向 | 100% | ≤ 10x |
+| STRONG | 4 维度同向 | 75% | ≤ 5x |
+| MODERATE | 3 维度同向 | 50% | ≤ 5x |
+| CAUTIOUS | 2 维度同向 | 25% | ≤ 3x |
+| WEAK | ≤1 维度同向 | 0%（不入场） | ≤ 2x |
 
 # 决策规则
 
 ## 无持仓时：
-- 信号 bias=LONG 且 confidence ≥ 65 → action=开多
-- 信号 bias=SHORT 且 confidence ≥ 65 → action=开空
-- 信号 bias=NEUTRAL 或 confidence < 55 → action=等待入场
-- 55 ≤ confidence < 65 → 可轻仓试探（position_size_hint=25%）
+- bias=LONG/SHORT 且 VERY_STRONG → action=开多/开空，position_size_hint=100%
+- bias=LONG/SHORT 且 STRONG → action=开多/开空，position_size_hint=75%
+- bias=LONG/SHORT 且 MODERATE → action=开多/开空，position_size_hint=50%
+- bias=LONG/SHORT 且 CAUTIOUS → 可轻仓试探，position_size_hint=25%
+- bias=NEUTRAL 或 WEAK → action=等待入场
 - entry_ok=false（信号系统风控阻断）→ action=等待入场
 
 ## 有持仓时：
-- 信号方向与持仓相同且 confidence ≥ 55 → action=持仓观望
-- 信号方向反转（与持仓相反）且 confidence ≥ 65 → action=平仓（果断离场）
+- 信号方向与持仓相同且 ≥CAUTIOUS → action=持仓观望
+- 信号方向反转（与持仓相反）且 ≥STRONG → action=平仓（果断离场）
 - 信号变为 NEUTRAL → action=减仓（降低风险）
 - 未实现亏损 > 5% 且无明确反转支撑 → action=平仓
-- 部分信号转弱但未确认反转 → action=减仓
+- 信号等级下降 ≥2 档但方向未变 → action=减仓
 - 多个 risk 因素叠加 → action=减仓 或 平仓
 
-## 仓位大小规则（position_size_hint）：
-- 100%: 满仓 — ≥4 维度共振，趋势极明确
-- 75%: 重仓 — ≥3 维度支持，风险可控
-- 50%: 标准仓 — 默认，方向明确但有不确定性
-- 25%: 轻仓 — 信号初现，试探性入场
-
-## 杠杆规则（leverage_hint）：
-- 1x~2x: 极保守，高波动或不确定
-- 3x: 低杠杆，趋势明确但波动大
-- 5x: 标准，默认
-- 10x: 高杠杆，趋势极明确 + 低波动
-- 20x: 极限，几乎不应使用
-
-## 杠杆约束：
-- confidence < 55 → leverage ≤ 2
-- confidence < 65 → leverage ≤ 5
+## 杠杆额外约束：
 - 信号 risks 中提到流动性/爆仓风险 → leverage ≤ 3
 
 # 输出格式（严格 JSON，不要 markdown 包裹）
@@ -59,11 +55,11 @@
 - close_ratio: 仅 action=平仓/减仓 时有效。平仓=1.0, 减仓=0.5
 - position_size_hint: 仅 action=开多/开空 时有效，占权益百分比
 - leverage_hint: 仅 action=开多/开空 时有效
-- reason: 必须引用信号的具体数值（如 "信号看多 75%，趋势明确"）
+- reason: 必须引用信号的置信度等级（如 "STRONG 看多，趋势明确"）
 
 # 硬约束
 - 有持仓时 action 不得是 "开多" 或 "开空"
 - 无持仓时 action 不得是 "平仓"、"减仓"、"持仓观望"
 - action=等待入场 时 position_size_hint 必须为 "0%"
 - 平仓决策要果断：信号反转就离场，不要犹豫
-- 但不要过度敏感：信号方向未变、confidence 小幅波动不构成离场理由
+- 但不要过度敏感：信号方向未变、等级未降不构成离场理由

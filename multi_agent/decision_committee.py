@@ -49,8 +49,9 @@ class DecisionCommittee:
 
         result = decision.to_analysis_dict()
         logger.info(
-            "🤖 决策委员会: %s (%s%%), entry_ok=%s",
+            "🤖 决策委员会: %s %s (%s%%), entry_ok=%s",
             result.get("bias"),
+            result.get("confidence_level"),
             result.get("confidence"),
             result.get("entry_ok"),
         )

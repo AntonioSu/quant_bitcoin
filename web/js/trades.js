@@ -89,7 +89,9 @@ function _buildIndicatorRows(ind) {
     // AI 综合研判
     if (ind.ai_bias) {
         const aiColor = ind.ai_bias === 'LONG' ? 'green' : ind.ai_bias === 'SHORT' ? 'red' : 'yellow';
-        const aiText = `${ind.ai_bias}${ind.ai_confidence ? ' ' + ind.ai_confidence + '%' : ''}`;
+        const levelLabel = { VERY_STRONG: '极强', STRONG: '强', MODERATE: '中', CAUTIOUS: '谨慎', WEAK: '弱' };
+        const lvl = ind.ai_confidence_level ? (levelLabel[ind.ai_confidence_level.toUpperCase()] || ind.ai_confidence_level) : '';
+        const aiText = `${ind.ai_bias}${lvl ? ' ' + lvl : ''}`;
         rows.push(_indCell('AI研判', aiText, aiColor));
     }
 

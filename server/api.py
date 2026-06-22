@@ -109,7 +109,7 @@ class IndicatorData(BaseModel):
     oi_change_4h: Optional[float] = None
     oi_change_24h: Optional[float] = None
     ai_bias: Optional[str] = None
-    ai_confidence: Optional[int] = None
+    ai_confidence_level: Optional[str] = None
     ai_summary: Optional[str] = None
     ai_action: Optional[str] = None
     ai_key_drivers: Optional[list] = None
@@ -342,7 +342,7 @@ def _get_indicators_from_market() -> IndicatorData:
     # AI 综合研判
     ai_raw = market.ai_analysis.raw if market.ai_analysis and market.ai_analysis.raw else {}
     ai_bias = ai_raw.get("bias")
-    ai_confidence = ai_raw.get("confidence")
+    ai_confidence_level = ai_raw.get("confidence_level")
     ai_summary = ai_raw.get("summary")
     ai_action = ai_raw.get("action")
     ai_key_drivers = ai_raw.get("key_drivers")
@@ -458,7 +458,7 @@ def _get_indicators_from_market() -> IndicatorData:
         oi_change_4h=oi_change_4h,
         oi_change_24h=oi_change_24h,
         ai_bias=ai_bias,
-        ai_confidence=ai_confidence,
+        ai_confidence_level=ai_confidence_level,
         ai_summary=ai_summary,
         ai_action=ai_action,
         ai_key_drivers=ai_key_drivers,
@@ -865,7 +865,7 @@ def _ai_analysis_payload() -> dict:
     raw = market.ai_analysis.raw or {}
     return {
         "ai_bias": raw.get("bias"),
-        "ai_confidence": raw.get("confidence"),
+        "ai_confidence_level": raw.get("confidence_level"),
         "ai_summary": raw.get("summary"),
         "ai_action": raw.get("action"),
         "ai_key_drivers": raw.get("key_drivers"),

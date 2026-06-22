@@ -98,10 +98,10 @@ def _format_indicators(ind: dict) -> list[str]:
     if ind.get("news_score") is not None:
         _append_line(lines, "新闻", ind["news_score"])
     if ind.get("ai_bias"):
-        conf = ind.get("ai_confidence")
+        level = ind.get("ai_confidence_level", "")
         ai_text = ind["ai_bias"]
-        if conf is not None:
-            ai_text = f"{ai_text} {conf}%"
+        if level:
+            ai_text = f"{ai_text} {level}"
         _append_line(lines, "AI研判", ai_text)
 
     return lines
