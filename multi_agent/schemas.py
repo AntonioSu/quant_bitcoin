@@ -34,7 +34,46 @@ VOL_REGIMES = {
 }
 
 
+CONFIDENCE_VERY_STRONG_THRESHOLD = 80
+CONFIDENCE_STRONG_THRESHOLD = 65
+CONFIDENCE_MODERATE_THRESHOLD = 50
+CONFIDENCE_CAUTIOUS_THRESHOLD = 35
+CONFIDENCE_LEVELS = ("VERY_STRONG", "STRONG", "MODERATE", "CAUTIOUS", "WEAK")
+
+
+_LEVEL_TO_CONFIDENCE = {
+    "VERY_STRONG": 85,
+    "STRONG": 70,
+    "MODERATE": 55,
+    "CAUTIOUS": 40,
+    "WEAK": 20,
+}
+
+
+def confidence_to_level(confidence: int) -> str:
+    """Map 0-99 confidence to a 5-level label."""
+    if confidence >= CONFIDENCE_VERY_STRONG_THRESHOLD:
+        return "VERY_STRONG"
+    if confidence >= CONFIDENCE_STRONG_THRESHOLD:
+        return "STRONG"
+    if confidence >= CONFIDENCE_MODERATE_THRESHOLD:
+        return "MODERATE"
+    if confidence >= CONFIDENCE_CAUTIOUS_THRESHOLD:
+        return "CAUTIOUS"
+    return "WEAK"
+
+
+def level_to_confidence(level: str) -> int:
+    """Map a 5-level label to a representative integer."""
+    return _LEVEL_TO_CONFIDENCE.get(level.upper().strip(), 20)
+
+
 def _clamp_confidence(value: Any) -> int:
+    """Accept an int, a numeric string, or a level label."""
+    if isinstance(value, str):
+        upper = value.strip().upper()
+        if upper in _LEVEL_TO_CONFIDENCE:
+            return _LEVEL_TO_CONFIDENCE[upper]
     try:
         confidence = int(value)
     except (TypeError, ValueError):
@@ -271,6 +310,7 @@ class CommitteeDecision(BaseModel):
     volatility_regime: str = "NORMAL_VOL"
     bias: Literal["LONG", "SHORT", "NEUTRAL"] = "NEUTRAL"
     confidence: int = 0
+    confidence_level: str = "WEAK"
     summary: str = ""
     action: str = "持仓观望"
     entry_ok: bool = False
@@ -281,6 +321,24 @@ class CommitteeDecision(BaseModel):
     invalidations: List[str] = Field(default_factory=list)
     horizon: str = "4H~24H"
     committee: CommitteeSummary = Field(default_factory=CommitteeSummary)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_confidence_from_level(cls, data: Any) -> Any:
+        """If LLM outputs confidence_level but no numerical confidence, derive it."""
+        if not isinstance(data, dict):
+            return data
+        level = str(data.get("confidence_level", "")).strip().upper()
+        has_numeric = isinstance(data.get("confidence"), (int, float))
+        if level in _LEVEL_TO_CONFIDENCE and not has_numeric:
+            data["confidence"] = _LEVEL_TO_CONFIDENCE[level]
+        return data
+
+    @field_validator("confidence_level", mode="before")
+    @classmethod
+    def _normalize_confidence_level(cls, value: Any) -> str:
+        level = str(value or "WEAK").strip().upper()
+        return level if level in CONFIDENCE_LEVELS else "WEAK"
 
     @field_validator("trend_regime", mode="before")
     @classmethod
@@ -344,7 +402,9 @@ class CommitteeDecision(BaseModel):
 
     @model_validator(mode="after")
     def _enforce_trade_rules(self) -> "CommitteeDecision":
-        if self.confidence < 60 and self.action in OPEN_ACTIONS:
+        self.confidence_level = confidence_to_level(self.confidence)
+
+        if self.confidence < CONFIDENCE_CAUTIOUS_THRESHOLD and self.action in OPEN_ACTIONS:
             self.action = "等待入场"
             self.entry_ok = False
             self.position_size_hint = "0%"
@@ -366,9 +426,13 @@ class CommitteeDecision(BaseModel):
             self.entry_ok = False
             self.position_size_hint = "0%"
 
-        if self.confidence < 55:
+        if self.confidence < CONFIDENCE_CAUTIOUS_THRESHOLD:
             self.leverage_hint = min(self.leverage_hint, 2)
-        elif self.confidence < 65:
+        elif self.confidence < CONFIDENCE_MODERATE_THRESHOLD:
+            self.leverage_hint = min(self.leverage_hint, 3)
+        elif self.confidence < CONFIDENCE_STRONG_THRESHOLD:
+            self.leverage_hint = min(self.leverage_hint, 5)
+        elif self.confidence < CONFIDENCE_VERY_STRONG_THRESHOLD:
             self.leverage_hint = min(self.leverage_hint, 5)
 
         if self.volatility_regime == "HIGH_VOL_EXTREME":

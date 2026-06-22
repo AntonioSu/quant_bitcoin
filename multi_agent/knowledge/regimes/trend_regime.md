@@ -71,7 +71,7 @@
 - 没有突破前优先 NEUTRAL
 - 在区间下沿 + 放量 + RSI 拐头 → 可考虑 LONG
 - 在区间上沿 + 缩量 + RSI 拐头 → 可考虑 SHORT
-- 任何情况下 confidence 上限 60
+- 任何情况下 confidence_level 上限 MODERATE
 
 ## UNCLEAR（趋势不明）
 
@@ -82,7 +82,7 @@
 
 ### 处理方式
 - 默认 NEUTRAL
-- confidence 上限 50
+- confidence_level WEAK
 - action 优先"等待入场"或"持仓观望"
 - 不应主动给出新的方向性入场建议
 

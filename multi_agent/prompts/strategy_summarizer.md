@@ -8,7 +8,7 @@
 # 输入
 
 1. **绩效概览**：总交易数、胜率、盈亏比、夏普率、最大回撤
-2. **复盘记录**：每笔交易的 bias / confidence / score / lesson / pattern_tag / 开仓时的 trend_regime / volatility_regime / correct_drivers / wrong_drivers
+2. **复盘记录**：每笔交易的 bias / confidence_level / score / lesson / pattern_tag / 开仓时的 trend_regime / volatility_regime / correct_drivers / wrong_drivers
 
 # 分析规则
 
@@ -19,7 +19,7 @@
 5. **逆势交易检查**：
    - 如果 DOWN_TREND × 任意波动 下的 LONG 持续亏损 → 输出"限制下跌趋势抢反弹"的规则
    - 如果 UP_TREND × 任意波动 下的 SHORT 持续亏损 → 输出"限制上涨趋势摸顶"的规则
-6. **改进建议必须具体**：不要说"提高纪律"，要说"DOWN_TREND × NORMAL_VOL 时 LONG 的 confidence 上限再下调 10 分"
+6. **改进建议必须具体**：不要说"提高纪律"，要说"DOWN_TREND × NORMAL_VOL 时 LONG 的 confidence_level 上限下调一档（如 STRONG → MODERATE）"
 
 # 输出格式
 

@@ -174,8 +174,13 @@ class TradingAdvisor:
     ) -> str:
         parts: list[str] = []
 
+        from multi_agent.schemas import confidence_to_level
+
         bias = signal.get("bias", "NEUTRAL")
         confidence = signal.get("confidence", 0)
+        confidence_level = signal.get(
+            "confidence_level", confidence_to_level(confidence)
+        )
         summary = signal.get("summary", "")
         entry_ok = signal.get("entry_ok", True)
         drivers = signal.get("key_drivers", [])
@@ -201,7 +206,7 @@ class TradingAdvisor:
         sig_section = (
             f"## 市场信号\n"
             f"- 方向: {bias}\n"
-            f"- 置信度: {confidence}%\n"
+            f"- 置信度: {confidence_level} ({confidence}%)\n"
             f"- 研判: {summary}\n"
             f"- entry_ok: {entry_ok}\n"
         )

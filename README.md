@@ -23,39 +23,133 @@ python run_server.py
 ### 3. 访问监控面板
 浏览器打开: http://localhost:8088
 
-## 模块结构
+## 系统架构
+
+### 数据流总览
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    数据采集层 (data_sources/)             │
+│  F&G · 资金费率 · 大户比 · CVD · RSI · 宏观 · 链上 · 期权  │
+└────────────────────────┬────────────────────────────────┘
+                         │ 6 维度市场快照
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│               AI 研判层 (multi_agent/)                    │
+│                                                         │
+│  MarketAnalyzer.fetch()                                 │
+│  ├── [委员会模式] DecisionCommittee                       │
+│  │   ├── Bull Researcher 🐂  构造多头论证                 │
+│  │   ├── Bear Researcher 🐻  构造空头论证                 │
+│  │   ├── Risk Reviewer ⚠️   风险审查 + 仓位约束            │
+│  │   └── Decision Manager 👔 综合裁定最终信号              │
+│  │                                                      │
+│  └── [单体模式] 单次 LLM 直接研判 (回退)                   │
+│                                                         │
+│  输出: bias · confidence_level · action · entry_ok       │
+│        position_size_hint · leverage_hint · key_drivers  │
+└────────────────────────┬────────────────────────────────┘
+                         │ 存入 market.ai_analysis.raw
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│             信号聚合层 (core/signal_aggregator.py)        │
+│                                                         │
+│  读取 market.ai_analysis.raw，执行 5 道入场检查:           │
+│  ┌─────────────────────────────────────────────┐        │
+│  │ 1. ai_direction    AI bias 匹配目标方向       │        │
+│  │ 2. ai_confidence   置信度 ≥ 阈值             │        │
+│  │ 3. ai_action       action = 加多/加空         │        │
+│  │ 4. committee_entry  委员会 entry_ok=true      │        │
+│  │ 5. entry_guard     无禁止关键词+无反转风险     │        │
+│  └─────────────────────────────────────────────┘        │
+│  全部通过 → SignalResult(LONG/SHORT)                     │
+│  任一失败 → SignalResult(IDLE)                           │
+│                                                         │
+│  持仓时: evaluate_exit() → ExitSignal(平仓/减仓/持有)     │
+└────────────────────────┬────────────────────────────────┘
+                         │ SignalResult / ExitSignal
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│              交易执行层 (server/trading_scheduler/)       │
+│                                                         │
+│  Scheduler 调度循环:                                     │
+│  ├── 无仓位 → evaluate() → LONG/SHORT → 开仓             │
+│  └── 有仓位 → evaluate_exit() → 平仓/减仓/持有            │
+│                                                         │
+│  执行器: BinanceAdapter → Binance API                    │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 置信度等级系统 (5 级)
+
+LLM 根据 6 个维度 (情绪/资金面、技术指标、资金流/主力行为、宏观、链上、衍生品) 的同向共振数量输出置信度等级，每个等级 1:1 映射仓位和杠杆:
+
+| confidence_level | 维度共振 | position_size_hint | leverage_hint 上限 |
+|---|---|---|---|
+| VERY_STRONG | ≥5 维度同向 | 100% | ≤ 10x |
+| STRONG | 4 维度同向 | 75% | ≤ 5x |
+| MODERATE | 3 维度同向 | 50% | ≤ 5x |
+| CAUTIOUS | 2 维度同向 | 25% | ≤ 3x |
+| WEAK | ≤1 维度同向 | 0% (不入场) | ≤ 2x |
+
+Python 后端 (`schemas.py`) 对 LLM 输出执行硬约束:
+- WEAK → 强制 position=0%, 阻断入场
+- HIGH_VOL_EXTREME 波动环境 → 强制 leverage ≤ 3x
+
+### 模块结构
 
 ```
 quant_bitcoin/
-├── utils/              # 工具 (日志、重试)
-├── data_sources/       # 数据源
-│   ├── fear_greed.py   # F&G 指数
-│   ├── funding_rate.py # 资金费率
-│   └── whale_alert.py  # 巨鲸预警
-├── indicators/         # 指标
-│   ├── atr.py          # ATR 止损计算
-│   └── cvd_divergence.py # CVD 背离
-├── core/               # 核心逻辑
-│   ├── config.py       # 参数配置
-│   ├── signal_aggregator.py
-│   ├── aegis_executor.py  # 做空执行器
-│   ├── spear_executor.py  # 做多执行器
-│   └── trading_engine.py  # 主引擎
-├── server/             # Web 服务
-│   ├── api.py          # FastAPI 后端
-│   ├── scheduler.py    # 24h 调度器
-│   ├── state_store.py  # 状态持久化
-│   └── history_store.py # 历史数据存储
-├── data/               # 数据目录
-│   ├── trading_state.json  # 交易状态
-│   └── history/            # 历史数据
-│       ├── fear_greed.json
-│       ├── funding_rate.json
-│       ├── whale_netflow.json
-│       └── btc_price.json
-├── web/                # 前端页面
-│   └── index.html      # 监控面板
-└── binance_utils/      # 交易所
+├── multi_agent/            # AI 多智能体研判
+│   ├── market_analyzer.py  # 入口: 市场综合分析
+│   ├── decision_committee.py # 4角色辩论委员会
+│   ├── trading_advisor.py  # 交易执行建议
+│   ├── schemas.py          # 数据结构 + 置信度常量 + 硬约束
+│   ├── prompts/            # LLM 提示词
+│   │   ├── market_analyzer.md
+│   │   ├── bull_researcher.md
+│   │   ├── bear_researcher.md
+│   │   ├── risk_reviewer.md
+│   │   ├── decision_manager.md
+│   │   └── trading_advisor.md
+│   └── knowledge/          # 知识库 (规则表)
+│       ├── README.md       # 自检清单
+│       ├── regimes/        # 趋势×波动矩阵
+│       └── indicators/     # 指标解读+组合规则
+├── core/                   # 核心交易逻辑
+│   ├── config.py           # 参数配置 (保守/标准/激进)
+│   ├── market_data.py      # 全局市场数据 (market 单例)
+│   ├── signal_aggregator.py # 信号聚合 + 入场/离场判定
+│   ├── trading_engine.py   # 主引擎
+│   ├── aegis_executor.py   # 做空执行器
+│   └── spear_executor.py   # 做多执行器
+├── data_sources/           # 数据采集
+│   ├── fear_greed.py       # F&G 指数
+│   ├── funding_rate.py     # 资金费率
+│   ├── top_trader.py       # 大户多空比
+│   ├── exchange_netflow.py # 交易所净流入
+│   └── ...                 # 宏观/链上/期权等
+├── indicators/             # 技术指标
+│   ├── atr.py              # ATR 止损计算
+│   ├── rsi.py              # RSI
+│   └── cvd_divergence.py   # CVD 背离
+├── server/                 # Web 服务
+│   ├── api.py              # FastAPI 后端
+│   ├── scheduler.py        # 24h 调度器
+│   ├── trading_scheduler/  # 交易调度 (模拟/实盘)
+│   ├── state_store.py      # 状态持久化
+│   └── history_store.py    # 历史数据存储
+├── notifications/          # 通知
+│   └── feishu_trade.py     # 飞书交易通知
+├── web/                    # 前端监控面板
+│   ├── index.html
+│   ├── js/                 # JavaScript
+│   └── css/                # 样式
+├── binance_utils/          # 交易所适配
+│   └── binance_adapter.py  # Binance API
+└── data/                   # 运行时数据
+    ├── trading_state.json
+    └── history/
 ```
 
 ## 状态持久化

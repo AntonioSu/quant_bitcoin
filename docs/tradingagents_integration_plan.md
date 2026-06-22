@@ -8,7 +8,7 @@
 
 本项目已经具备以下基础:
 
-- `multi_agent/market_analyzer.py`: 把 BTC 多维数据快照交给 LLM，输出 `bias/confidence/action/key_drivers/risks`。
+- `multi_agent/market_analyzer.py`: 把 BTC 多维数据快照交给 LLM，输出 `bias/confidence_level/action/key_drivers/risks`。
 - `multi_agent/news_analyzer.py`: 对加密新闻做多空情绪评分，并保留来源、权重、可信度等 provenance。
 - `multi_agent/reflector.py`: 平仓后对“开仓研判 vs 实际 PnL”做复盘。
 - `multi_agent/strategy_summarizer.py`: 聚合复盘，生成可注入下一轮研判的策略备忘录。
@@ -80,7 +80,7 @@ TradingAgents 有 append-only decision log，会把 pending decision 后续补�
 ```json
 {
   "bias": "LONG|SHORT|NEUTRAL",
-  "confidence": 0,
+  "confidence_level": "VERY_STRONG|STRONG|MODERATE|CAUTIOUS|WEAK",
   "action": "加多|加空|持仓观望|等待入场|减仓|离场",
   "entry_ok": false,
   "position_size_hint": "0%-100%",
@@ -98,7 +98,7 @@ TradingAgents 有 append-only decision log，会把 pending decision 后续补�
 接入点:
 
 - `MarketAnalyzer._analyze()` 内部先生成 snapshot，再交给 committee。
-- `SignalAggregator` 不直接信任 `bias/action/confidence`，还要检查 `entry_ok == true`。
+- `SignalAggregator` 不直接信任 `bias/action/confidence_level`，还要检查 `entry_ok == true`。
 
 ### Phase 2: 把风险审查接到交易状态
 

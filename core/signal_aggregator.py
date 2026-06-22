@@ -19,15 +19,20 @@ from typing import Dict, Optional
 
 from core.config import TradingConfig, ParameterSet
 from core.market_data import market
+from multi_agent.schemas import (
+    CONFIDENCE_VERY_STRONG_THRESHOLD,
+    CONFIDENCE_STRONG_THRESHOLD,
+    CONFIDENCE_MODERATE_THRESHOLD,
+    CONFIDENCE_CAUTIOUS_THRESHOLD,
+)
 # from ..indicators.cvd_divergence import DivergenceType  # 传统指标模式需要
 from utils import logger
 
 
-# 各参数组对应的 AI 置信度门槛
 _AI_CONFIDENCE_THRESHOLDS = {
     ParameterSet.CONSERVATIVE: 75,
-    ParameterSet.STANDARD: 65,
-    ParameterSet.AGGRESSIVE: 55,
+    ParameterSet.STANDARD: CONFIDENCE_STRONG_THRESHOLD,
+    ParameterSet.AGGRESSIVE: CONFIDENCE_MODERATE_THRESHOLD,
 }
 
 _OPEN_ACTIONS = {
@@ -62,16 +67,21 @@ _DIRECTIONAL_NO_ENTRY_KEYWORDS = {
 def _get_ai_signal() -> tuple:
     """获取当前 AI 研判信号
 
-    Returns: (bias: str, confidence: int, summary: str, action: str, memory_id: str)
+    Returns: (bias, confidence, confidence_level, summary, action, memory_id)
         bias: "LONG" / "SHORT" / "NEUTRAL" / "N/A"(不可用)
+        confidence_level: "STRONG" / "MODERATE" / "WEAK"
     """
     if not market.ai_analysis or not market.ai_analysis.raw:
-        return "N/A", 0, "AI 研判未就绪", "", None
+        return "N/A", 0, "WEAK", "AI 研判未就绪", "", None
 
     raw = market.ai_analysis.raw
+    conf = int(raw.get("confidence", 0))
+    from multi_agent.schemas import confidence_to_level
+    level = raw.get("confidence_level", confidence_to_level(conf))
     return (
         raw.get("bias", "NEUTRAL"),
-        int(raw.get("confidence", 0)),
+        conf,
+        level,
         raw.get("summary", ""),
         raw.get("action", ""),
         raw.get("_memory_id"),
@@ -191,7 +201,7 @@ class SignalAggregator:
         Args:
             target: "LONG" 或 "SHORT"
         """
-        ai_bias, ai_conf, ai_summary, ai_action, analysis_id = _get_ai_signal()
+        ai_bias, ai_conf, ai_level, ai_summary, ai_action, analysis_id = _get_ai_signal()
         ai_raw = market.ai_analysis.raw if market.ai_analysis and market.ai_analysis.raw else {}
 
         fg_value = market.fear_greed.value if market.fear_greed else 50
@@ -225,10 +235,10 @@ class SignalAggregator:
         action_allows_entry = ai_action == _OPEN_ACTIONS[target]
         no_entry_action = ai_action in _NO_ENTRY_ACTIONS
         no_entry_keyword = _has_directional_no_entry_keyword(ai_raw, target)
-        low_confidence_entry = ai_conf < 55
+        low_confidence_entry = ai_conf < CONFIDENCE_CAUTIOUS_THRESHOLD
         reversal_risk_short = (
             target == "SHORT"
-            and ai_conf < 65
+            and ai_conf < CONFIDENCE_STRONG_THRESHOLD
             and (
                 fg_value <= 35
                 or rsi_signal in ("oversold", "bullish_divergence")
@@ -256,8 +266,8 @@ class SignalAggregator:
         if all_green:
             tag = "⚔️ 做多" if target == "LONG" else "🛡️ 做空"
             reason = (
-                f"{tag}模式触发: AI 研判 {ai_bias} "
-                f"(置信度 {ai_conf}% >= {self._confidence_threshold}%, action={ai_action}) "
+                f"{tag}模式触发: AI 研判 {ai_bias} {ai_level} "
+                f"({ai_conf}%, action={ai_action}) "
                 f"| {ai_summary}"
             )
             logger.info(reason)
@@ -266,7 +276,7 @@ class SignalAggregator:
             if not direction_match:
                 parts.append(f"AI 方向={ai_bias} (需要 {target})")
             if not confidence_enough:
-                parts.append(f"置信度 {ai_conf}% < {self._confidence_threshold}%")
+                parts.append(f"置信度 {ai_level} ({ai_conf}%) < 阈值")
             if not action_allows_entry:
                 parts.append(f"action={ai_action or '空'} (需要 {_OPEN_ACTIONS[target]})")
             if has_committee_gate and not committee_entry_ok:
@@ -274,7 +284,7 @@ class SignalAggregator:
             if no_entry_keyword:
                 parts.append("研判文本含禁止/等待入场语义")
             if low_confidence_entry:
-                parts.append("置信度 < 55，仅允许观望")
+                parts.append(f"置信度 < {CONFIDENCE_MODERATE_THRESHOLD}，仅允许观望")
             if reversal_risk_short:
                 parts.append("低置信空单遇恐惧/反转风险，禁止追空")
             reason = f"{'做多' if target == 'LONG' else '做空'}模式未触发: {', '.join(parts)}"
@@ -375,7 +385,7 @@ class SignalAggregator:
         Returns:
             ExitSignal
         """
-        ai_bias, ai_conf, ai_summary, ai_action, analysis_id = _get_ai_signal()
+        ai_bias, ai_conf, ai_level, ai_summary, ai_action, analysis_id = _get_ai_signal()
 
         if ai_bias == "N/A":
             return ExitSignal(False, 0.0, "AI 研判未就绪", "", 0)
@@ -391,7 +401,7 @@ class SignalAggregator:
                 )
             reason = (
                 f"AI 建议{ai_action}: {ai_summary} "
-                f"(bias={ai_bias}, 置信度={ai_conf}%)"
+                f"(bias={ai_bias}, {ai_level})"
             )
             logger.info(f"🚪 {reason}")
             if close_ratio < 1.0:
@@ -401,18 +411,18 @@ class SignalAggregator:
             return ExitSignal(True, close_ratio, reason, ai_action, ai_conf)
 
         opposite = "SHORT" if current_direction == "LONG" else "LONG"
-        if ai_bias == opposite and ai_conf >= 65:
+        if ai_bias == opposite and ai_conf >= CONFIDENCE_STRONG_THRESHOLD:
             self._last_partial_close_analysis_id = None
             reason = (
                 f"AI 方向反转 {current_direction}→{ai_bias} "
-                f"(置信度={ai_conf}%, action={ai_action}): {ai_summary}"
+                f"({ai_level}, action={ai_action}): {ai_summary}"
             )
             logger.info(f"🔄 {reason}")
             return ExitSignal(True, 1.0, reason, ai_action, ai_conf)
 
         return ExitSignal(
             False, 0.0,
-            f"AI 未建议平仓 (bias={ai_bias}, action={ai_action}, 置信度={ai_conf}%)",
+            f"AI 未建议平仓 (bias={ai_bias}, action={ai_action}, {ai_level})",
             ai_action, ai_conf,
         )
 
@@ -426,7 +436,7 @@ class SignalAggregator:
         if short_result.mode == TradingMode.SHORT:
             return short_result
         
-        ai_bias, ai_conf, ai_summary, ai_action, analysis_id = _get_ai_signal()
+        ai_bias, ai_conf, ai_level, ai_summary, ai_action, analysis_id = _get_ai_signal()
         ai_raw = market.ai_analysis.raw if market.ai_analysis and market.ai_analysis.raw else {}
         return SignalResult(
             mode=TradingMode.IDLE,
@@ -434,13 +444,14 @@ class SignalAggregator:
             values={
                 "ai_bias": ai_bias,
                 "ai_confidence": ai_conf,
+                "ai_confidence_level": ai_level,
                 "ai_action": ai_action,
                 "analysis_id": analysis_id,
                 "entry_ok": ai_raw.get("entry_ok"),
                 "position_size_hint": ai_raw.get("position_size_hint"),
             },
             confidence=0.0,
-            reason=f"无交易信号 (AI: {ai_bias} {ai_conf}%)"
+            reason=f"无交易信号 (AI: {ai_bias} {ai_level})"
                    if ai_bias != "N/A"
                    else "无交易信号 (AI 研判未就绪)",
         )

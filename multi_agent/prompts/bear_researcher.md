@@ -15,7 +15,7 @@
 {
   "side": "bear",
   "thesis": "空头核心论点，中文 1-2 句",
-  "confidence": 0,
+  "confidence_level": "WEAK | MODERATE | STRONG",
   "evidence": [
     {
       "factor": "支持空头的证据，必须包含具体数值或明确状态",
@@ -33,6 +33,5 @@
 
 - side 必须是 "bear"。
 - evidence 2-5 条。
-- confidence 为 0-99，不要给 100。
-- 如果空头证据不足，confidence <= 45，best_action 用 "持仓观望" 或 "等待入场"。
+- 如果空头证据不足，confidence_level 必须为 WEAK，best_action 用 "持仓观望" 或 "等待入场"。
 - 失效条件至少 1 条。

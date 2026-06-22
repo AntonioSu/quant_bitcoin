@@ -26,7 +26,7 @@
 
 ### 默认 bias 倾向
 - 默认 NEUTRAL，但若趋势方向明确（UP/DOWN）可顺势给出方向
-- confidence 上限 **65**
+- confidence_level 上限 **MODERATE**
 - 优先 action："等待入场" / "持仓观望"，但 ≥3 个维度同向共振时可建议轻仓入场
 - 收敛期**谨慎**加仓，非绝对禁止
 
@@ -43,7 +43,7 @@
 - 这是规则的"基准状态"
 
 ### 默认 bias 倾向
-- 顺势交易标准门槛：≥3 个维度同向 → confidence 55~70
+- 顺势交易标准门槛：≥3 个维度同向 → confidence_level MODERATE ~ VERY_STRONG（按维度数递增）
 - 逆势交易仍需多重确认
 
 ## BREAKOUT_EXPANSION（突破扩张）
@@ -61,8 +61,8 @@
 - 不要试图"预测"突破方向，等价格用动作给出答案
 
 ### 默认 bias 倾向
-- 顺突破方向 confidence 可到 65~75
-- 逆突破方向 confidence 上限 50
+- 顺突破方向 confidence_level STRONG~VERY_STRONG（按维度数）
+- 逆突破方向 confidence_level WEAK
 - action 偏"加仓 / 顺势入场"，但要标注追高/追空风险
 
 ## HIGH_VOL_EXTREME（高波动极端）
@@ -80,7 +80,7 @@
 - 风控优先级 > 入场信号
 
 ### 默认 bias 倾向
-- confidence 上限 **60**
+- confidence_level 上限 **MODERATE**
 - action 偏"减仓 / 观望"，**不建议加仓**
 - 若已有仓位，应主动评估止损是否需要收紧
 
@@ -98,6 +98,6 @@ AI 研判输出的 JSON 必须包含字段：
 
 特别规则：
 
-- 如果 volatility_regime = LOW_VOL_COMPRESSION，confidence 不得超过 65
-- 如果 volatility_regime = HIGH_VOL_EXTREME，confidence 不得超过 60 且 risks 必须列明流动性风险
-- 如果 volatility_regime = BREAKOUT_EXPANSION 且 bias 与突破方向相反，confidence 不得超过 50
+- 如果 volatility_regime = LOW_VOL_COMPRESSION，confidence_level 最高 MODERATE
+- 如果 volatility_regime = HIGH_VOL_EXTREME，confidence_level 最高 MODERATE 且 risks 必须列明流动性风险
+- 如果 volatility_regime = BREAKOUT_EXPANSION 且 bias 与突破方向相反，confidence_level 必须为 WEAK

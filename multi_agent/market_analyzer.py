@@ -4,13 +4,13 @@
 得到一份 4H~24H 周期的综合多空研判。
 
 输出:
-  - bias:        LONG / SHORT / NEUTRAL
-  - confidence:  0~100
-  - summary:     一句话研判
-  - action:      建议动作
-  - key_drivers: 关键驱动因素列表
-  - risks:       反向风险列表
-  - horizon:     时间周期
+  - bias:             LONG / SHORT / NEUTRAL
+  - confidence_level: STRONG / MODERATE / WEAK
+  - summary:          一句话研判
+  - action:           建议动作
+  - key_drivers:      关键驱动因素列表
+  - risks:            反向风险列表
+  - horizon:          时间周期
 """
 
 import json
@@ -38,7 +38,7 @@ class MarketAnalyzer:
 
     输入: MarketData 实例 (或其 to_dict 结果)
     输出: DataPoint
-        - value: confidence (0~100, NEUTRAL 时 0)
+        - value: confidence_level 对应数值 (NEUTRAL 时 0)
         - raw:   完整 JSON 分析结果
     """
 
@@ -83,8 +83,14 @@ class MarketAnalyzer:
         prompt = self._build_prompt(snapshot)
         analysis = self._analyze(prompt, snapshot=snapshot)
 
+        from multi_agent.schemas import confidence_to_level
+
         bias = analysis.get("bias", "NEUTRAL")
         confidence = analysis.get("confidence", 0)
+        confidence_level = analysis.get(
+            "confidence_level", confidence_to_level(confidence)
+        )
+        analysis["confidence_level"] = confidence_level
         summary = analysis.get("summary", "")
 
         # 写入研判记忆
@@ -105,7 +111,7 @@ class MarketAnalyzer:
         direction_changed = prev_bias and prev_bias != bias and prev_bias != "NEUTRAL"
         change_tag = f" (方向变化: {prev_bias}→{bias})" if direction_changed else ""
         logger.info(
-            f"🤖 市场综合分析: {bias} ({confidence}%) — {summary[:50]}{change_tag}"
+            f"🤖 市场综合分析: {bias} {confidence_level} ({confidence}%) — {summary[:50]}{change_tag}"
         )
 
         return DataPoint(
@@ -537,9 +543,10 @@ class MarketAnalyzer:
                     f"  - [{d.get('side','?')}/{d.get('weight','?')}] {d.get('factor','')}"
                     for d in last["key_drivers"] if isinstance(d, dict)
                 )
+            last_level = last.get("confidence_level", "")
             section = (
                 "## 上次研判结果（请遵守一致性规则）\n"
-                f"- 方向: {last.get('bias')}  置信度: {last.get('confidence')}%\n"
+                f"- 方向: {last.get('bias')}  置信度: {last_level} ({last.get('confidence')}%)\n"
                 f"- 研判: {last.get('summary', '')}\n"
                 f"- 动作: {last.get('action', '')}\n"
             )
@@ -610,15 +617,29 @@ class MarketAnalyzer:
     @staticmethod
     def _normalize(data: Dict[str, Any]) -> Dict[str, Any]:
         """字段兜底，避免前端拿到空字段炸"""
+        from multi_agent.schemas import (
+            CONFIDENCE_LEVELS, confidence_to_level, level_to_confidence,
+        )
+
         bias = str(data.get("bias", "NEUTRAL")).upper()
         if bias not in ("LONG", "SHORT", "NEUTRAL"):
             bias = "NEUTRAL"
 
+        raw_level = str(data.get("confidence_level", "")).strip().upper()
+        has_level = raw_level in CONFIDENCE_LEVELS
+
         try:
             confidence = int(data.get("confidence", 0))
+            has_numeric = True
         except (TypeError, ValueError):
             confidence = 0
+            has_numeric = False
+
+        if has_level and not has_numeric:
+            confidence = level_to_confidence(raw_level)
         confidence = max(0, min(100, confidence))
+
+        confidence_level = raw_level if has_level else confidence_to_level(confidence)
 
         trend = str(data.get("trend_regime", "UNCLEAR")).upper()
         if trend not in ("UP_TREND", "DOWN_TREND", "RANGE", "UNCLEAR"):
@@ -632,6 +653,7 @@ class MarketAnalyzer:
         normalized = {
             "bias": bias,
             "confidence": confidence,
+            "confidence_level": confidence_level,
             "summary": str(data.get("summary", "")),
             "key_drivers": data.get("key_drivers") or [],
             "risks": data.get("risks") or [],

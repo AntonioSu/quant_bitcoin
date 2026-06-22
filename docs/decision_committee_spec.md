@@ -18,7 +18,7 @@ TradingAgents 的核心价值不是数据源，而是决策组织方式:
 ## 2. 设计目标
 
 - 保留 `MarketAnalyzer.fetch(market) -> DataPoint` 不变。
-- 保留 `market.ai_analysis.raw` 当前主字段不变: `bias`, `confidence`, `summary`, `action`, `key_drivers`, `risks`, `horizon`, `trend_regime`, `volatility_regime`。
+- 保留 `market.ai_analysis.raw` 当前主字段不变: `bias`, `confidence_level`, `confidence`, `summary`, `action`, `key_drivers`, `risks`, `horizon`, `trend_regime`, `volatility_regime`。
 - 新增 `entry_ok`, `position_size_hint`, `invalidations`, `committee` 等扩展字段。
 - Committee 内部顺序运行 `bull -> bear -> risk -> manager`。
 - Manager 最终输出仍兼容当前 `SignalAggregator` 与前端。
@@ -48,7 +48,7 @@ MarketData
   -> MarketAnalyzer._normalize()
   -> DataPoint(raw=analysis)
   -> SignalAggregator
-       -> bias/confidence/action
+       -> bias/confidence_level/action
        -> entry_ok guard
        -> existing keyword/risk guards
 ```
@@ -85,7 +85,7 @@ Bull 和 Bear 都输出同一种结构，区别在 `side`。
 {
   "side": "bull | bear",
   "thesis": "核心论点，中文，1-2 句",
-  "confidence": 0,
+  "confidence_level": "WEAK | MODERATE | STRONG",
   "evidence": [
     {
       "factor": "必须包含具体数值",
@@ -103,7 +103,7 @@ Bull 和 Bear 都输出同一种结构，区别在 `side`。
 约束:
 
 - `evidence` 2-5 条。
-- `confidence` 0-100，永远不得为 100。
+- `confidence_level`: STRONG / MODERATE / WEAK（代替数值 confidence，由代码映射为内部数值）。
 - Bull 不得输出 `side=bear`，Bear 不得输出 `side=bull`。
 - 证据必须来自 snapshot 或动态上下文，不允许编造外部行情。
 
@@ -129,7 +129,7 @@ Bull 和 Bear 都输出同一种结构，区别在 `side`。
 - `risk_level=extreme` 时 `entry_ok=false`。
 - `position_size_hint=0%` 时 `entry_ok=false`。
 - 如果 `volatility_regime=HIGH_VOL_EXTREME`，必须至少一个 blocker 提到流动性、爆仓或滑点。
-- 如果 `confidence < 60` 的方向性观点进入 risk review，默认不得允许开仓。
+- 如果 confidence_level 为 WEAK 的方向性观点进入 risk review，默认不得允许开仓。
 
 ### 6.3 CommitteeDecision
 
@@ -140,7 +140,7 @@ Manager 最终输出，必须兼容当前 `MarketAnalyzer`。
   "trend_regime": "UP_TREND | DOWN_TREND | RANGE | UNCLEAR",
   "volatility_regime": "LOW_VOL_COMPRESSION | NORMAL_VOL | BREAKOUT_EXPANSION | HIGH_VOL_EXTREME",
   "bias": "LONG | SHORT | NEUTRAL",
-  "confidence": 0,
+  "confidence_level": "VERY_STRONG | STRONG | MODERATE | CAUTIOUS | WEAK",
   "summary": "≤40 字，中文",
   "action": "加多 | 加空 | 持仓观望 | 减仓 | 离场 | 等待入场",
   "entry_ok": false,
@@ -165,7 +165,7 @@ Manager 最终输出，必须兼容当前 `MarketAnalyzer`。
 - `entry_ok=false` 时，`action` 不得为 `加多` 或 `加空`。
 - `bias=LONG` 时，`action=加多` 必须同时满足 `entry_ok=true`。
 - `bias=SHORT` 时，`action=加空` 必须同时满足 `entry_ok=true`。
-- `confidence < 60` 时，`action` 必须是 `持仓观望` 或 `等待入场`。
+- confidence_level 为 WEAK 时，`action` 必须是 `持仓观望` 或 `等待入场`。
 - `key_drivers` 3-5 条，仍按当前前端习惯区分 `side=bull/bear`。
 - 保持 `trend_regime` 和 `volatility_regime` 的现有枚举不变。
 
@@ -188,7 +188,7 @@ Manager 最终输出，必须兼容当前 `MarketAnalyzer`。
 
 Fallback 策略:
 
-- Bull/Bear 单边失败: 用空 case 代替，confidence=0，thesis 标记失败原因。
+- Bull/Bear 单边失败: 用空 case 代替，confidence_level=WEAK，thesis 标记失败原因。
 - Risk 失败: 默认 `entry_ok=false`, `risk_level=high`, `position_size_hint=0%`。
 - Manager 失败: 回退到当前旧版 `MarketAnalyzer._analyze()` 单体 prompt 逻辑，避免 AI 分析完全不可用。
 
@@ -317,7 +317,7 @@ entry_guard_ok = (
 兼容策略:
 
 - 如果 `ENABLE_DECISION_COMMITTEE=false` 或旧分析没有 `entry_ok` 字段，则维持当前行为。
-- 如果 `entry_ok=false`，即使 `bias/confidence/action` 看起来满足，也不得开仓。
+- 如果 `entry_ok=false`，即使 `bias/confidence_level/action` 看起来满足，也不得开仓。
 
 `conditions` 建议新增:
 
@@ -355,7 +355,7 @@ Web 面板第一版只展示:
 - bear token usage: `usage_tag="[bear]"`
 - risk token usage: `usage_tag="[risk]"`
 - manager token usage: `usage_tag="[manager]"`
-- 最终结论: `bias/confidence/action/entry_ok`
+- 最终结论: `bias/confidence_level/action/entry_ok`
 - fallback 原因
 
 建议 `committee` 字段保留简短摘要，完整原始输出可选写入 `data/last_committee_analysis.json`，避免 WebSocket payload 过大。
@@ -382,7 +382,7 @@ Web 面板第一版只展示:
 单元测试:
 
 - `CommitteeDecision` 校验 `entry_ok=false` 时不得 `action=加多/加空`。
-- `confidence < 60` 时 action 自动归一到观望/等待。
+- confidence_level=WEAK 时 action 自动归一到观望/等待。
 - Risk 解析失败时默认阻断开仓。
 - Manager 解析失败时回退 legacy。
 - `SignalAggregator` 在 `entry_ok=false` 时不触发 LONG/SHORT。

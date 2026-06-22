@@ -508,7 +508,7 @@ class BaseTradingScheduler(ABC):
                 ai_raw = market.ai_analysis.raw or {}
                 result.update({
                     "ai_bias": ai_raw.get("bias"),
-                    "ai_confidence": ai_raw.get("confidence"),
+                    "ai_confidence_level": ai_raw.get("confidence_level"),
                     "ai_summary": ai_raw.get("summary"),
                 })
 

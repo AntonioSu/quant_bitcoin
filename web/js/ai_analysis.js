@@ -18,9 +18,10 @@ function updateAiAnalysis(data) {
     biasEl.textContent = biasMap[bias] || '--';
     biasEl.className = 'ai-bias ' + biasClass;
 
-    const conf = data.ai_confidence;
-    if (conf !== null && conf !== undefined) {
-        confEl.textContent = conf + '%';
+    const confLevel = data.ai_confidence_level;
+    const levelMap = { VERY_STRONG: '极强', STRONG: '强', MODERATE: '中', CAUTIOUS: '谨慎', WEAK: '弱' };
+    if (confLevel) {
+        confEl.textContent = levelMap[confLevel.toUpperCase()] || confLevel;
         confEl.className = 'ai-confidence ' + biasClass;
     } else {
         confEl.textContent = '--';

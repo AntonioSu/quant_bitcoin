@@ -25,9 +25,9 @@
    - 输出 `volatility_regime` 枚举值
 
 3. **第三步：综合方向研判**
-   - 根据 `regimes/regime_matrix.md` 找到所在格子，决定默认 bias 和 confidence 上限
+   - 根据 `regimes/regime_matrix.md` 找到所在格子，决定默认 bias 和 confidence_level 上限
    - 用 `indicators/indicator_guide.md` 和 `indicators/combination_rules.md` 解读具体指标
-   - 输出 `bias` / `confidence` / `key_drivers` / `risks` / `action`
+   - 输出 `bias` / `confidence_level` / `key_drivers` / `risks` / `action`
 
 ---
 
@@ -39,9 +39,9 @@
 2. 我输出的 `volatility_regime` 是否符合 `regimes/volatility_regime.md` 的判定条件？
 3. 我的 `bias` 是否落在 `regimes/regime_matrix.md` 当前格子的允许范围内？
 4. 如果 `bias` 与 `trend_regime` 方向相反，我是否在 `key_drivers` 中列出了 ≥2 条反转确认证据？
-5. 我的 `confidence` 是否同时满足趋势/波动两个维度的上限约束？
+5. 我的 `confidence_level` 是否同时满足趋势/波动两个维度的上限约束？
 6. 如果 `volatility_regime = LOW_VOL_COMPRESSION` 或 `HIGH_VOL_EXTREME`，我是否避免了"主动加仓"类的 action？
-7. 我的 `action` 是否与 `confidence` 匹配？（confidence < 60 → 持仓观望 / 等待入场）
+7. 我的 `action` 是否与 `confidence_level` 匹配？（WEAK → 等待入场，CAUTIOUS → 轻仓试探或等待）
 8. 我的 `key_drivers` 描述中是否混淆了术语？特别是：surge_down(放量下跌) ≠ 量价背离，只有 divergence_top/divergence_bottom 才是量价背离
 
 任何一条不满足，必须回到上一步重新调整。
