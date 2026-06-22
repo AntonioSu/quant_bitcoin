@@ -1,7 +1,9 @@
 /* ═══════════════════════════════════════════
-   RESPONSIVE — Glassmorphism Purple
+   RESPONSIVE — iPhone 17 Optimized
+   iPhone 17: 393×852 CSS px, Dynamic Island
    ═══════════════════════════════════════════ */
 
+/* ── Tablet: ≤1200px ── */
 @media (max-width: 1200px) {
     .container {
         grid-template-columns: repeat(2, 1fr);
@@ -10,37 +12,430 @@
     .full-width, .status-bar {
         grid-column: span 2;
     }
+    .indicator-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
 }
 
+/* ── Mobile: ≤768px ── */
 @media (max-width: 768px) {
     .container {
         grid-template-columns: 1fr;
-        padding: 12px;
-        gap: 12px;
+        padding: 10px;
+        gap: 10px;
     }
-    .trades-section, .full-width, .half-width, .status-bar {
-        grid-column: span 1;
+    .card, .half-width, .full-width, .trades-section, .status-bar {
+        grid-column: span 1 !important;
     }
     .header {
-        padding: 12px 16px;
+        padding: 10px 14px;
         flex-wrap: wrap;
-        gap: 12px;
+        gap: 10px;
+    }
+    .header h1 {
+        font-size: 15px;
+        gap: 8px;
+    }
+    .header h1 .logo-icon {
+        width: 26px;
+        height: 26px;
+        font-size: 12px;
+    }
+    .card {
+        padding: 14px;
+        border-radius: 14px;
+    }
+    .card-header {
+        margin-bottom: 12px;
+        padding-left: 10px;
+    }
+    .card-title {
+        font-size: 13px;
     }
     .portfolio-grid {
         grid-template-columns: repeat(2, 1fr);
     }
-    .portfolio-item::after {
+    .portfolio-item:not(:last-child)::after {
         display: none;
+    }
+    .portfolio-value {
+        font-size: 15px;
     }
     .perf-grid {
         grid-template-columns: repeat(2, 1fr);
     }
+    .perf-value {
+        font-size: 14px;
+    }
+    .indicator-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+    }
+    .indicator-value {
+        font-size: 16px;
+    }
+    .indicator-label {
+        font-size: 9px;
+    }
+    .indicator-sub {
+        font-size: 10px;
+    }
+    .trade-info-box {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+/* ── iPhone 17 & Small Phones: ≤430px ── */
+@media (max-width: 430px) {
+    body {
+        padding-top: env(safe-area-inset-top);
+        padding-left: env(safe-area-inset-left);
+        padding-right: env(safe-area-inset-right);
+        padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    .header {
+        padding: 8px 12px;
+        padding-top: calc(8px + env(safe-area-inset-top));
+        gap: 8px;
+    }
+    .header h1 {
+        font-size: 14px;
+        gap: 6px;
+        width: 100%;
+    }
+    .header h1 .logo-icon {
+        width: 24px;
+        height: 24px;
+        border-radius: 7px;
+        font-size: 11px;
+    }
+    .header > div {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .config-selector {
+        border-radius: 10px;
+    }
+    .config-btn {
+        padding: 5px 12px;
+        font-size: 11px;
+        border-radius: 7px;
+    }
+    .status-badge {
+        padding: 4px 10px;
+        font-size: 10px;
+    }
+
+    .container {
+        padding: 8px;
+        gap: 8px;
+    }
+
+    /* ── Status Bar ── */
+    .status-bar {
+        padding: 10px 12px;
+        font-size: 11px;
+        border-radius: 12px;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+        justify-content: flex-start;
+    }
+    .status-item {
+        gap: 5px;
+    }
+    .status-item strong {
+        font-size: 11px;
+    }
+
+    /* ── Cards ── */
     .card {
-        padding: 16px;
+        padding: 12px;
         border-radius: 14px;
     }
-    .status-bar {
-        flex-wrap: wrap;
+    .card-header {
+        margin-bottom: 10px;
+    }
+    .card-title {
+        font-size: 12px;
+    }
+    .card-icon {
+        width: 24px;
+        height: 24px;
+        font-size: 10px;
+        border-radius: 7px;
+    }
+
+    /* ── AI Analysis ── */
+    .ai-bias {
+        font-size: 24px;
+    }
+    .ai-confidence {
+        font-size: 16px;
+    }
+    .ai-headline {
+        gap: 10px;
+        margin-bottom: 10px;
+        padding-bottom: 10px;
+    }
+    .ai-action {
+        font-size: 11px;
+        padding: 4px 10px;
+    }
+    .ai-summary {
+        font-size: 12px;
+        padding: 8px 12px;
+        line-height: 1.5;
+    }
+    .ai-factors {
+        flex-direction: column;
         gap: 8px;
+    }
+    .ai-factors-title {
+        font-size: 10px;
+    }
+    .ai-factors-list li {
+        font-size: 10.5px;
+    }
+    .ai-refresh-btn {
+        padding: 4px 8px;
+        font-size: 10px;
+    }
+    .ai-horizon {
+        font-size: 9px;
+        padding: 1px 5px;
+    }
+    .ai-committee {
+        padding: 8px 10px;
+    }
+    .ai-committee-pill {
+        font-size: 9px;
+        padding: 2px 6px;
+    }
+
+    /* ── News ── */
+    .news-panel {
+        padding: 8px 10px;
+    }
+    .news-sentiment {
+        font-size: 16px;
+    }
+    .news-score {
+        font-size: 26px;
+    }
+    .news-factors {
+        flex-direction: column;
+        gap: 6px;
+    }
+    .news-factors-list li {
+        font-size: 10px;
+    }
+    .news-reasoning {
+        font-size: 11px;
+    }
+
+    /* ── Indicator Grid ── */
+    .indicator-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+    }
+    .indicator-item {
+        padding: 8px 6px;
+        border-radius: 10px;
+    }
+    .indicator-value {
+        font-size: 15px;
+    }
+    .indicator-label {
+        font-size: 9px;
+        letter-spacing: 0.3px;
+        margin-bottom: 3px;
+    }
+    .indicator-sub {
+        font-size: 9px;
+        margin-top: 4px;
+    }
+    .indicator-group-title {
+        font-size: 10px;
+        padding: 10px 2px 2px;
+    }
+    .etf-val {
+        font-size: 12px;
+    }
+    .etf-tag {
+        font-size: 9px;
+    }
+
+    /* ── Charts ── */
+    #chart-container {
+        height: 220px !important;
+    }
+    #macd-container {
+        height: 90px !important;
+    }
+    #vol-container {
+        height: 80px !important;
+    }
+    #exchange-flow-container {
+        height: 80px !important;
+    }
+    #etf-container {
+        height: 80px !important;
+    }
+    #equity-chart-container {
+        height: 180px !important;
+    }
+
+    .kline-toolbar {
+        gap: 6px;
+    }
+    .kline-tabs {
+        padding: 2px;
+        border-radius: 6px;
+    }
+    .kline-tab {
+        padding: 3px 8px;
+        font-size: 10px;
+        border-radius: 4px;
+    }
+    .kline-legend, .macd-legend {
+        font-size: 9px;
+        gap: 6px;
+    }
+    .equity-header {
+        padding: 0 2px 8px;
+    }
+    .equity-range {
+        font-size: 10px;
+    }
+    .equity-return {
+        font-size: 16px;
+    }
+
+    /* ── Performance ── */
+    .perf-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .perf-item {
+        padding: 10px 6px;
+    }
+    .perf-label {
+        font-size: 9px;
+        margin-bottom: 4px;
+    }
+    .perf-value {
+        font-size: 13px;
+    }
+
+    /* ── Trades ── */
+    .trades-section {
+        max-height: 400px;
+    }
+    .trade-item {
+        padding: 10px 14px 10px 14px;
+    }
+    .trade-action {
+        font-size: 12px;
+    }
+    .trade-price {
+        font-size: 11px;
+    }
+    .trade-pnl {
+        font-size: 12px;
+    }
+    .trade-info-box {
+        grid-template-columns: repeat(2, 1fr);
+        padding: 6px 8px;
+        gap: 4px;
+    }
+    .indicator-row .indicator-value {
+        font-size: 10px;
+    }
+    .indicator-row.trigger-reason {
+        grid-column: span 2;
+    }
+
+    /* ── Portfolio ── */
+    .portfolio-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 4px;
+    }
+    .portfolio-item {
+        padding: 10px 8px;
+    }
+    .portfolio-label {
+        font-size: 10px;
+    }
+    .portfolio-value {
+        font-size: 14px;
+    }
+
+    /* ── Bottom safe area ── */
+    .container {
+        padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    }
+}
+
+/* ── Tiny phones: ≤375px ── */
+@media (max-width: 375px) {
+    .header h1 {
+        font-size: 13px;
+    }
+    .config-btn {
+        padding: 4px 10px;
+        font-size: 10px;
+    }
+    .container {
+        padding: 6px;
+        gap: 6px;
+    }
+    .card {
+        padding: 10px;
+        border-radius: 12px;
+    }
+    .ai-bias {
+        font-size: 20px;
+    }
+    .ai-confidence {
+        font-size: 14px;
+    }
+    .indicator-value {
+        font-size: 13px;
+    }
+}
+
+/* ── Touch-friendly tap targets ── */
+@media (pointer: coarse) {
+    .config-btn {
+        min-height: 36px;
+    }
+    .kline-tab {
+        min-height: 32px;
+        min-width: 36px;
+    }
+    .ai-refresh-btn {
+        min-height: 32px;
+    }
+}
+
+/* ── Landscape phone ── */
+@media (max-height: 500px) and (orientation: landscape) {
+    .header {
+        padding: 6px 14px;
+    }
+    .container {
+        grid-template-columns: repeat(2, 1fr);
+        padding: 8px;
+        gap: 8px;
+    }
+    .card, .half-width, .full-width, .status-bar {
+        grid-column: span 1 !important;
+    }
+    #chart-container {
+        height: 180px !important;
+    }
+    #equity-chart-container {
+        height: 140px !important;
     }
 }
