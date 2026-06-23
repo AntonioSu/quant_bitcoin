@@ -350,3 +350,54 @@
     .ai-confidence { font-size: 18px; }
     .ai-factors { flex-direction: column; gap: 10px; }
 }
+
+/* ═══════════════════════════════════════════
+   WHITE THEME OVERRIDES
+   ═══════════════════════════════════════════ */
+
+body.theme-white .ai-analysis-card {
+    background: linear-gradient(135deg, #F9FAFB 0%, #F3F4F6 100%);
+    border: 1px solid var(--border);
+}
+
+body.theme-white .ai-analysis-card::before {
+    background: linear-gradient(90deg, #6366F1, #EC4899, #8B5CF6);
+}
+
+body.theme-white .ai-horizon {
+    background: var(--accent-light);
+    border-color: var(--border);
+}
+
+body.theme-white .ai-refresh-btn {
+    background: var(--bg-inset);
+    border-color: var(--border);
+}
+
+body.theme-white .ai-refresh-btn:hover:not(:disabled) {
+    background: #E5E7EB;
+    border-color: var(--accent);
+}
+
+body.theme-white .ai-headline {
+    border-bottom-color: var(--border);
+}
+
+body.theme-white .ai-summary {
+    background: var(--bg-inset);
+    border-color: var(--border);
+}
+
+body.theme-white .ai-committee {
+    background: var(--bg-inset);
+    border-color: var(--border);
+}
+
+body.theme-white .ai-committee-pill {
+    background: var(--bg-card);
+}
+
+body.theme-white .ai-action {
+    background: var(--bg-inset);
+    border-color: var(--border);
+}

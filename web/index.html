@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>BTC 神盾-长矛 监控系统</title>
+    <title>BTC 监控分析系统</title>
     <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.min.js"></script>
-    <link rel="stylesheet" href="/static/css/base.css?v=20260622a">
-    <link rel="stylesheet" href="/static/css/header.css?v=20260622a">
-    <link rel="stylesheet" href="/static/css/layout.css?v=20260622a">
-    <link rel="stylesheet" href="/static/css/ai_analysis.css?v=20260622a">
-    <link rel="stylesheet" href="/static/css/indicators.css?v=20260622a">
-    <link rel="stylesheet" href="/static/css/trades.css?v=20260622a">
+    <link rel="stylesheet" href="/static/css/base.css?v=20260623b">
+    <link rel="stylesheet" href="/static/css/header.css?v=20260623b">
+    <link rel="stylesheet" href="/static/css/layout.css?v=20260623b">
+    <link rel="stylesheet" href="/static/css/ai_analysis.css?v=20260623b">
+    <link rel="stylesheet" href="/static/css/indicators.css?v=20260623b">
+    <link rel="stylesheet" href="/static/css/trades.css?v=20260623b">
     <link rel="stylesheet" href="/static/css/responsive.css?v=20260622b">
 </head>
 <body>
@@ -25,6 +25,9 @@
                 <button class="config-btn" data-preset="standard">标准</button>
                 <button class="config-btn active" data-preset="aggressive">激进</button>
             </div>
+            <button id="theme-toggle" class="theme-toggle" title="切换主题">
+                <span class="theme-icon">&#9728;</span>
+            </button>
             <span id="mode-badge" class="status-badge status-idle">IDLE</span>
         </div>
     </header>
@@ -447,6 +450,7 @@
         </div>
     </div>
 
+    <script src="/static/js/theme.js?v=20260623b"></script>
     <script src="/static/js/config.js?v=20260622a"></script>
     <script src="/static/js/utils.js?v=20260520a"></script>
     <script src="/static/js/charts.js?v=20260522a"></script>

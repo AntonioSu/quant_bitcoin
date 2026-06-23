@@ -294,3 +294,36 @@
         grid-template-columns: repeat(3, 1fr);
     }
 }
+
+/* ═══════════════════════════════════════════
+   WHITE THEME OVERRIDES
+   ═══════════════════════════════════════════ */
+
+body.theme-white .status-bar {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+}
+
+body.theme-white .card::before {
+    background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.15), transparent);
+}
+
+body.theme-white .card-header.section-divider {
+    border-top-color: var(--border);
+}
+
+body.theme-white .experiment-card {
+    background: var(--bg-inset);
+}
+
+body.theme-white .experiment-card:hover {
+    background: var(--bg-card-hover);
+}
+
+body.theme-white .experiment-card.selected {
+    background: var(--accent-light);
+}
+
+body.theme-white .experiment-header {
+    border-bottom-color: var(--border);
+}

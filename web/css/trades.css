@@ -278,3 +278,40 @@
         grid-template-columns: repeat(3, 1fr);
     }
 }
+
+/* ═══════════════════════════════════════════
+   WHITE THEME OVERRIDES
+   ═══════════════════════════════════════════ */
+
+body.theme-white .perf-grid {
+    border-bottom-color: var(--border);
+}
+
+body.theme-white .perf-item:nth-child(odd) {
+    background: var(--bg-inset);
+}
+
+body.theme-white .trades-section::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.2);
+}
+
+body.theme-white .trade-item {
+    border-bottom-color: var(--border);
+}
+
+body.theme-white .trade-item:hover {
+    background: var(--bg-inset);
+}
+
+body.theme-white .trade-info-box {
+    background: var(--bg-inset);
+    border-color: var(--border);
+}
+
+body.theme-white .indicator-row.trigger-reason {
+    background: var(--accent-light);
+}
+
+body.theme-white .portfolio-item:not(:last-child)::after {
+    background: var(--border);
+}

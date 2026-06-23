@@ -43,6 +43,39 @@
     --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
 }
 
+/* White Theme */
+body.theme-white {
+    --bg-body: #FFFFFF;
+    --bg-gradient: #FFFFFF;
+    --bg-card: #FFFFFF;
+    --bg-card-hover: #F9FAFB;
+    --bg-inset: #F3F4F6;
+    --bg-header: linear-gradient(135deg, #FFFFFF 0%, #F9FAFB 100%);
+    --border: #E5E7EB;
+    --border-hover: #D1D5DB;
+    --glass-blur: 0px;
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06);
+    --shadow-hover: 0 10px 15px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05);
+    --text-primary: #111827;
+    --text-secondary: #4B5563;
+    --text-dim: #9CA3AF;
+    --accent: #6366F1;
+    --accent-light: rgba(99, 102, 241, 0.1);
+    --accent-dim: rgba(99, 102, 241, 0.05);
+    --accent-gradient: linear-gradient(135deg, #6366F1, #818CF8, #A5B4FC);
+    --teal: #0891B2;
+    --teal-light: rgba(8, 145, 178, 0.1);
+    --teal-dim: rgba(8, 145, 178, 0.05);
+    --gold: #F59E0B;
+    --gold-light: rgba(245, 158, 11, 0.1);
+}
+
+body.theme-white::before,
+body.theme-white::after {
+    display: none;
+}
+
 * {
     margin: 0;
     padding: 0;

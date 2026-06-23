@@ -447,3 +447,61 @@
     margin-top: 8px;
     font-family: var(--font-mono);
 }
+
+/* ═══════════════════════════════════════════
+   WHITE THEME OVERRIDES
+   ═══════════════════════════════════════════ */
+
+body.theme-white .indicator-group-title::after {
+    background: linear-gradient(to right, var(--border), transparent);
+}
+
+body.theme-white .indicator-item {
+    background: var(--bg-inset);
+    border-color: var(--border);
+}
+
+body.theme-white .indicator-item:hover {
+    background: var(--bg-card-hover);
+    box-shadow: var(--shadow-sm);
+}
+
+body.theme-white .indicator-grid.scrollable {
+    scrollbar-color: rgba(99, 102, 241, 0.2) transparent;
+}
+
+body.theme-white .indicator-grid.scrollable::-webkit-scrollbar-thumb {
+    background-color: rgba(99, 102, 241, 0.2);
+}
+
+body.theme-white .indicator-grid.scrollable::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(99, 102, 241, 0.35);
+}
+
+body.theme-white .kline-tabs {
+    background: var(--bg-inset);
+    border-color: var(--border);
+}
+
+body.theme-white .kline-tab.active {
+    background: #FFFFFF;
+    color: var(--accent);
+    box-shadow: var(--shadow-sm);
+}
+
+body.theme-white #chart-container,
+body.theme-white .macd-wrap,
+body.theme-white .vol-wrap,
+body.theme-white .exchange-flow-wrap,
+body.theme-white .etf-wrap,
+body.theme-white #equity-chart-container {
+    border-color: var(--border);
+}
+
+body.theme-white .macd-wrap,
+body.theme-white .vol-wrap,
+body.theme-white .exchange-flow-wrap,
+body.theme-white .etf-wrap {
+    background: var(--bg-inset);
+    border-top-color: var(--border);
+}
