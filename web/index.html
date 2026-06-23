@@ -3,7 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>BTC 监控分析系统</title>
+    <title>BTC Analytics Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260623c">
+    <link rel="apple-touch-icon" href="/static/favicon.svg?v=20260623c">
     <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.min.js"></script>
     <link rel="stylesheet" href="/static/css/base.css?v=20260623b">
     <link rel="stylesheet" href="/static/css/header.css?v=20260623b">
@@ -16,8 +18,26 @@
 <body>
     <header class="header">
         <h1>
-            <span class="logo-icon">&#9878;</span>
-            BTC <span class="title-accent">神盾-长矛</span> 监控系统
+            <span class="logo-icon" aria-hidden="true">
+                <svg viewBox="0 0 32 32" width="20" height="20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path
+                        d="M16 5.8L24.2 9.2v6.4c0 5-3.6 9.2-8.2 11.2-4.6-2-8.2-6.2-8.2-11.2V9.2L16 5.8z"
+                        fill="rgba(255,255,255,0.18)"
+                        stroke="#FFFFFF"
+                        stroke-width="1.8"
+                        stroke-linejoin="round"
+                    />
+                    <path
+                        d="M10.8 19.2L13.6 15.6L16.4 17.2L20.8 11.2"
+                        stroke="#FBBF24"
+                        stroke-width="2.4"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    />
+                    <circle cx="20.8" cy="11.2" r="1.8" fill="#FBBF24"/>
+                </svg>
+            </span>
+            BTC <span class="title-accent"></span> 监控系统
         </h1>
         <div style="display: flex; align-items: center; gap: 16px;">
             <div class="config-selector">
@@ -62,7 +82,6 @@
                         <span class="ai-refresh-icon">&#x21bb;</span>
                         <span class="ai-refresh-label">立即分析</span>
                     </button>
-                    <span class="card-icon icon-ai">&#129302;</span>
                 </div>
             </div>
             <div class="ai-panel">
@@ -102,7 +121,6 @@
         <div class="card half-width">
             <div class="card-header">
                 <span class="card-title">新闻多空分析</span>
-                <span class="card-icon">&#128240;</span>
             </div>
             <div class="news-panel">
                 <div class="news-score-row">

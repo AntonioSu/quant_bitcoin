@@ -565,7 +565,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="BTC 神盾-长矛监控系统 (多策略实验)",
+    title="BTC 监控分析系统 (多策略实验)",
     version="2.0.0",
     lifespan=lifespan,
 )
@@ -1038,6 +1038,16 @@ async def index():
     return FileResponse(
         os.path.join(WEB_DIR, "index.html"),
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """浏览器默认 favicon 请求"""
+    return FileResponse(
+        os.path.join(WEB_DIR, "favicon.svg"),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
     )
 
 
