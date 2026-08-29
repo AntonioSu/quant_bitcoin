@@ -185,9 +185,19 @@ class SignalAggregator:
         mode = TradingMode.LONG if target == "LONG" else TradingMode.SHORT
         direction_match = ai_bias == target
         confidence_enough = ai_conf >= self._confidence_threshold
-        action_allows_entry = ai_action == _OPEN_ACTIONS[target]
-        no_entry_action = ai_action in _NO_ENTRY_ACTIONS
-        no_entry_keyword = _has_directional_no_entry_keyword(ai_raw, target)
+        # 委员会常省略 action；entry_ok + 方向匹配时按开仓动作处理
+        derived_open_action = _OPEN_ACTIONS[target]
+        effective_action = ai_action or (
+            derived_open_action if (has_committee_gate and committee_entry_ok and direction_match) else ""
+        )
+        action_allows_entry = effective_action == derived_open_action
+        no_entry_action = effective_action in _NO_ENTRY_ACTIONS
+        # entry_ok=true 时，summary 里的“等待确认”只是风险提示，不再一票否决
+        no_entry_keyword = (
+            False
+            if (has_committee_gate and committee_entry_ok and action_allows_entry)
+            else _has_directional_no_entry_keyword(ai_raw, target)
+        )
         low_confidence_entry = ai_conf < CONFIDENCE_CAUTIOUS_THRESHOLD
         reversal_risk_short = (
             target == "SHORT"
