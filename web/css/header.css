@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════
-   HEADER (kept dark for contrast/anchor)
+   HEADER — Glassmorphic Purple
    ═══════════════════════════════════════════ */
 
 .header {
@@ -10,6 +10,9 @@
     align-items: center;
     position: relative;
     z-index: 10;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 .header::after {
@@ -19,20 +22,20 @@
     left: 0;
     right: 0;
     height: 3px;
-    background: linear-gradient(90deg, var(--teal), var(--gold), var(--teal));
-    background-size: 200% 100%;
-    animation: shimmer 4s ease-in-out infinite;
+    background: linear-gradient(90deg, #A855F7, #EC4899, #F59E0B, #6366F1, #A855F7);
+    background-size: 300% 100%;
+    animation: shimmer 6s ease-in-out infinite;
 }
 
 @keyframes shimmer {
-    0%, 100% { background-position: 200% 0; }
-    50% { background-position: -200% 0; }
+    0%, 100% { background-position: 300% 0; }
+    50% { background-position: -300% 0; }
 }
 
 .header h1 {
     font-family: var(--font-display);
     font-size: 18px;
-    font-weight: 600;
+    font-weight: 700;
     letter-spacing: 0.3px;
     color: #FFFFFF;
     display: flex;
@@ -41,19 +44,29 @@
 }
 
 .header h1 .logo-icon {
-    width: 28px;
-    height: 28px;
-    background: linear-gradient(135deg, var(--teal), #10B981);
-    border-radius: 8px;
+    width: 32px;
+    height: 32px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.3), rgba(255,255,255,0.1));
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 14px;
     color: #FFFFFF;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    flex-shrink: 0;
+}
+
+.header h1 .logo-icon svg {
+    display: block;
 }
 
 .header h1 .title-accent {
-    color: #FBBF24;
+    background: linear-gradient(135deg, #FBBF24, #F59E0B);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
 }
 
 /* ═══════════════════════════════════════════
@@ -68,24 +81,28 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 1px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
 }
 
 .status-idle {
-    background: rgba(255,255,255,0.1);
-    color: #9CA3AF;
+    background: rgba(255,255,255,0.12);
+    color: rgba(255, 255, 255, 0.6);
     border: 1px solid rgba(255,255,255,0.15);
 }
 
 .status-aegis {
-    background: rgba(124, 58, 237, 0.2);
-    color: #C4B5FD;
-    border: 1px solid rgba(124, 58, 237, 0.3);
+    background: rgba(168, 85, 247, 0.3);
+    color: #E9D5FF;
+    border: 1px solid rgba(168, 85, 247, 0.4);
+    box-shadow: 0 0 12px rgba(168, 85, 247, 0.2);
 }
 
 .status-spear {
-    background: rgba(16, 163, 74, 0.2);
-    color: #86EFAC;
-    border: 1px solid rgba(16, 163, 74, 0.3);
+    background: rgba(16, 185, 129, 0.25);
+    color: #A7F3D0;
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    box-shadow: 0 0 12px rgba(16, 185, 129, 0.15);
 }
 
 /* ═══════════════════════════════════════════
@@ -95,15 +112,18 @@
 .config-selector {
     display: flex;
     gap: 4px;
-    background: rgba(255, 255, 255, 0.08);
-    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
     padding: 3px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
 }
 
 .config-btn {
     padding: 6px 16px;
     border: none;
-    border-radius: 8px;
+    border-radius: 9px;
     background: transparent;
     color: rgba(255, 255, 255, 0.5);
     cursor: pointer;
@@ -115,11 +135,114 @@
 
 .config-btn:hover {
     color: #FFFFFF;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.12);
 }
 
 .config-btn.active {
-    background: var(--teal);
+    background: rgba(255, 255, 255, 0.22);
     color: #FFFFFF;
     font-weight: 600;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* ═══════════════════════════════════════════
+   THEME TOGGLE
+   ═══════════════════════════════════════════ */
+
+.theme-toggle {
+    width: 38px;
+    height: 38px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.15);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+}
+
+.theme-toggle:hover {
+    background: rgba(255, 255, 255, 0.25);
+    border-color: rgba(255, 255, 255, 0.35);
+    transform: scale(1.05);
+}
+
+.theme-icon {
+    font-size: 18px;
+    color: #FFFFFF;
+    transition: transform 0.3s ease;
+}
+
+.theme-toggle:active .theme-icon {
+    transform: rotate(180deg);
+}
+
+/* White Theme Header Adjustments */
+body.theme-white .header {
+    background: var(--bg-header);
+    border-bottom: 1px solid var(--border);
+}
+
+body.theme-white .header h1 {
+    color: var(--text-primary);
+}
+
+body.theme-white .header h1 .logo-icon {
+    background: linear-gradient(135deg, #6366F1, #818CF8);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    color: #FFFFFF;
+}
+
+body.theme-white .theme-toggle {
+    border: 1px solid var(--border);
+    background: #F9FAFB;
+}
+
+body.theme-white .theme-toggle:hover {
+    background: #F3F4F6;
+    border-color: var(--border-hover);
+}
+
+body.theme-white .theme-icon {
+    color: var(--text-primary);
+}
+
+body.theme-white .config-selector {
+    background: #F3F4F6;
+    border: 1px solid var(--border);
+}
+
+body.theme-white .config-btn {
+    color: var(--text-secondary);
+}
+
+body.theme-white .config-btn:hover {
+    color: var(--text-primary);
+    background: #E5E7EB;
+}
+
+body.theme-white .config-btn.active {
+    background: #6366F1;
+    color: #FFFFFF;
+}
+
+body.theme-white .status-badge {
+    background: #F3F4F6;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+}
+
+body.theme-white .status-aegis {
+    background: rgba(99, 102, 241, 0.1);
+    color: #6366F1;
+    border: 1px solid rgba(99, 102, 241, 0.2);
+}
+
+body.theme-white .status-spear {
+    background: rgba(16, 185, 129, 0.1);
+    color: #059669;
+    border: 1px solid rgba(16, 185, 129, 0.2);
 }

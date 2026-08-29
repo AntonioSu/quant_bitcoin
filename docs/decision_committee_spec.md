@@ -242,7 +242,7 @@ Fallback 策略:
 职责:
 
 - 综合 bull / bear / risk。
-- 遵守 `market_analyzer.md` 当前所有硬约束。
+- 遵守各角色 prompt 定义的硬约束。
 - 输出 `CommitteeDecision`。
 
 关键规则:
@@ -254,41 +254,22 @@ Fallback 策略:
 
 ## 9. MarketAnalyzer 集成
 
-建议改造:
+委员会是唯一的分析路径（旧的单体 LLM 路径已移除）:
 
 ```python
 def fetch(self, market) -> DataPoint:
     snapshot = self._build_snapshot(market)
-    prompt = self._build_prompt(snapshot)
-    analysis = self._analyze(prompt, snapshot=snapshot)
+    analysis = self._analyze(snapshot)
     ...
 ```
 
 `_analyze()` 内部:
 
 ```python
-if self._committee_enabled:
-    context = self._build_dynamic_context()
-    result = self.committee.run(snapshot=snapshot, context=context)
-    return self._normalize(result)
-
-return self._analyze_legacy(prompt)
+dynamic_context = self._build_dynamic_context()
+result = self._get_committee().run(snapshot=snapshot, dynamic_context=dynamic_context)
+return self._normalize(result)
 ```
-
-需要从现有 `_analyze()` 中拆出:
-
-- `_load_static_system_prompt()`
-- `_build_dynamic_context()`
-- `_append_dynamic_context(prompt, context)`
-- `_analyze_legacy(prompt)`
-
-这样旧逻辑保留，committee 失败时能回退。
-
-Feature flag:
-
-- 环境变量: `ENABLE_DECISION_COMMITTEE=true|false`
-- 初始默认: `false`
-- 手动验证后再改为默认开启
 
 ## 10. SignalAggregator 集成
 
@@ -316,7 +297,7 @@ entry_guard_ok = (
 
 兼容策略:
 
-- 如果 `ENABLE_DECISION_COMMITTEE=false` 或旧分析没有 `entry_ok` 字段，则维持当前行为。
+- 如果旧分析没有 `entry_ok` 字段，则维持当前行为。
 - 如果 `entry_ok=false`，即使 `bias/confidence_level/action` 看起来满足，也不得开仓。
 
 `conditions` 建议新增:
@@ -406,12 +387,11 @@ Web 面板第一版只展示:
 1. 新增 `multi_agent/schemas.py`，先完成 schema、枚举、校验和 normalize。
 2. 新增四个 prompt 文件，严格要求 JSON 输出。
 3. 新增 `DecisionCommittee`，实现 `run()`、解析、fallback 和日志。
-4. 拆分 `MarketAnalyzer._analyze()`，接入 feature flag。
-5. 修改 `SignalAggregator`，增加 `entry_ok` 守门和兼容逻辑。
-6. 扩展 API payload。
-7. 最小扩展前端展示 committee 摘要。
-8. 添加测试并跑现有测试。
-9. 本地用 `ENABLE_DECISION_COMMITTEE=true` 手动跑一次 AI 刷新，观察日志和输出。
+4. 修改 `SignalAggregator`，增加 `entry_ok` 守门和兼容逻辑。
+5. 扩展 API payload。
+6. 最小扩展前端展示 committee 摘要。
+7. 添加测试并跑现有测试。
+8. 本地手动跑一次 AI 刷新，观察日志和输出。
 
 ## 16. 验收标准
 

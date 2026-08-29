@@ -32,15 +32,15 @@ AI 研判必须先识别落在哪一格，再决定 bias 与 confidence_level。
 - confidence_level 上限 MODERATE
 
 ### UP × NORM（最舒服的顺势做多场景）
-- 默认 LONG MODERATE ~ VERY_STRONG（取决于维度共振数量）
-- 反弹回 EMA7 + RSI 回到 50 上方 → 加仓点
-- 唯一允许给 SHORT 的情况：≥3 个反转维度同时出现（含 MACD 死叉 + CVD 顶背离）
-- confidence_level 上限 VERY_STRONG（需 ≥5 维度同向）
+- 默认 LONG MODERATE ~ VERY_STRONG（取决于维度共振数量；优先计 M2/稳定币/MA/ETF）
+- 反弹回 EMA7 + 稳定币仍流入 → 加仓点（RSI 回到 50 仅旁证）
+- 唯一允许给 SHORT 的情况：≥3 个反转维度同时出现（须含稳定币转流出或 CVD 顶背离；**MACD 死叉不够**）
+- confidence_level 上限 VERY_STRONG（需 ≥5 维度同向；RSI+MACD 合计最多算 1 维）
 
 ### UP × BRK（顺势加速）
 - 顺突破 LONG，confidence_level STRONG~VERY_STRONG（多维确认）
-- RSI 80+ 不立即看空；动能为王
-- 此时反向背离信号**忽略**
+- RSI 80+ / MACD 顶背离不立即看空；流动性与动能为王
+- 此时反向振荡信号**忽略**
 
 ### UP × EXT（顶部高波动）
 - 警惕"恐慌做多顶部"
@@ -50,14 +50,14 @@ AI 研判必须先识别落在哪一格，再决定 bias 与 confidence_level。
 
 ### DOWN × NORM（顺势做空主战场）
 - 默认 SHORT MODERATE ~ VERY_STRONG（取决于维度共振数量）
-- 反弹到 EMA7 被压制 + RSI 反弹 60 失败 → 加仓点
-- LONG 必须同时满足 ≥2 项反转确认（放量、MACD 翻转、CVD/RSI 底背离、收回下轨/均线）
+- 反弹到 EMA7 被压制 + 稳定币仍流出 → 加仓点（RSI 反弹失败仅旁证）
+- LONG 必须同时满足 ≥2 项反转确认，且至少一项为稳定币流入/M2 扩张或放量买盘/CVD（**不能两项都是 RSI/MACD**）
 - **来自模拟盘复盘**：本格中"靠 RSI 超卖抢反弹"样本胜率为 0，禁止仅凭超卖做多
 
 ### DOWN × BRK（破位加速下跌）
 - 顺突破 SHORT，confidence_level STRONG~VERY_STRONG
-- RSI 30 以下不立即抄底
-- 反向信号不可信，等待右侧确认
+- RSI 30 以下 / MACD 金叉不立即抄底
+- 反向振荡信号不可信；若稳定币仍流出，等待右侧确认
 
 ### DOWN × EXT（恐慌底部）
 - 警惕"恐慌做空底部"

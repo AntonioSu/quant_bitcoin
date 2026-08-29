@@ -2,22 +2,42 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BTC 神盾-长矛 监控系统</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>BTC Analytics Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260623c">
+    <link rel="apple-touch-icon" href="/static/favicon.svg?v=20260623c">
     <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.min.js"></script>
-    <link rel="stylesheet" href="/static/css/base.css?v=20260523a">
-    <link rel="stylesheet" href="/static/css/header.css?v=20260520a">
-    <link rel="stylesheet" href="/static/css/layout.css?v=20260520a">
-    <link rel="stylesheet" href="/static/css/ai_analysis.css?v=20260520a">
-    <link rel="stylesheet" href="/static/css/indicators.css?v=20260523a">
-    <link rel="stylesheet" href="/static/css/trades.css?v=20260520a">
-    <link rel="stylesheet" href="/static/css/responsive.css?v=20260520a">
+    <link rel="stylesheet" href="/static/css/base.css?v=20260623b">
+    <link rel="stylesheet" href="/static/css/header.css?v=20260623b">
+    <link rel="stylesheet" href="/static/css/layout.css?v=20260623b">
+    <link rel="stylesheet" href="/static/css/ai_analysis.css?v=20260623b">
+    <link rel="stylesheet" href="/static/css/indicators.css?v=20260623b">
+    <link rel="stylesheet" href="/static/css/trades.css?v=20260623b">
+    <link rel="stylesheet" href="/static/css/responsive.css?v=20260622b">
 </head>
 <body>
     <header class="header">
         <h1>
-            <span class="logo-icon">&#9878;</span>
-            BTC <span class="title-accent">神盾-长矛</span> 监控系统
+            <span class="logo-icon" aria-hidden="true">
+                <svg viewBox="0 0 32 32" width="20" height="20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path
+                        d="M16 5.8L24.2 9.2v6.4c0 5-3.6 9.2-8.2 11.2-4.6-2-8.2-6.2-8.2-11.2V9.2L16 5.8z"
+                        fill="rgba(255,255,255,0.18)"
+                        stroke="#FFFFFF"
+                        stroke-width="1.8"
+                        stroke-linejoin="round"
+                    />
+                    <path
+                        d="M10.8 19.2L13.6 15.6L16.4 17.2L20.8 11.2"
+                        stroke="#FBBF24"
+                        stroke-width="2.4"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    />
+                    <circle cx="20.8" cy="11.2" r="1.8" fill="#FBBF24"/>
+                </svg>
+            </span>
+            BTC  Analytics Dashboard
         </h1>
         <div style="display: flex; align-items: center; gap: 16px;">
             <div class="config-selector">
@@ -25,6 +45,9 @@
                 <button class="config-btn" data-preset="standard">标准</button>
                 <button class="config-btn active" data-preset="aggressive">激进</button>
             </div>
+            <button id="theme-toggle" class="theme-toggle" title="切换主题">
+                <span class="theme-icon">&#9728;</span>
+            </button>
             <span id="mode-badge" class="status-badge status-idle">IDLE</span>
         </div>
     </header>
@@ -51,7 +74,7 @@
         </div>
 
         <!-- AI 综合研判 -->
-        <div class="card ai-analysis-card" style="grid-column: span 2;">
+        <div class="card ai-analysis-card half-width">
             <div class="card-header">
                 <span class="card-title">AI 综合研判 <span class="ai-horizon" id="ai-horizon">4H~24H</span></span>
                 <div class="ai-header-actions">
@@ -59,7 +82,6 @@
                         <span class="ai-refresh-icon">&#x21bb;</span>
                         <span class="ai-refresh-label">立即分析</span>
                     </button>
-                    <span class="card-icon icon-ai">&#129302;</span>
                 </div>
             </div>
             <div class="ai-panel">
@@ -96,10 +118,9 @@
         </div>
 
         <!-- 新闻多空分析 -->
-        <div class="card" style="grid-column: span 2;">
+        <div class="card half-width">
             <div class="card-header">
                 <span class="card-title">新闻多空分析</span>
-                <span class="card-icon">&#128240;</span>
             </div>
             <div class="news-panel">
                 <div class="news-score-row">
@@ -123,7 +144,7 @@
 
 
         <!-- K线图 -->
-        <div class="card" style="grid-column: span 2;">
+        <div class="card half-width">
             <div class="card-header">
                 <span class="card-title">BTC/USDT K线图</span>
                 <div class="kline-toolbar">
@@ -189,12 +210,12 @@
         </div>
 
         <!-- 信号指标 -->
-        <div class="card" style="grid-column: span 2;">
+        <div class="card half-width">
             <div class="card-header">
                 <span class="card-title">信号指标</span>
                 <span class="card-icon icon-signal">&#9670;</span>
             </div>
-            <div class="indicator-grid scrollable" style="grid-template-columns: repeat(4, 1fr);">
+            <div class="indicator-grid scrollable">
                 <div class="indicator-group-title">趋势 &amp; 动能</div>
                 <div class="indicator-item">
                     <div class="indicator-label">MACD (12,26,9)</div>
@@ -353,7 +374,7 @@
         </div>
 
         <!-- 权益曲线 -->
-        <div class="card" style="grid-column: span 2;">
+        <div class="card half-width">
             <div class="card-header">
                 <span class="card-title">模拟资金曲线</span>
                 <span class="card-icon icon-equity">&#9650;</span>
@@ -421,12 +442,12 @@
         </div>
 
         <!-- 持仓信息 -->
-        <div class="card" style="grid-column: span 4;">
+        <div class="card full-width">
             <div class="card-header">
                 <span class="card-title">持仓信息</span>
                 <span class="card-icon icon-pos">&#9632;</span>
             </div>
-            <div class="portfolio-grid" style="grid-template-columns: repeat(4, 1fr);">
+            <div class="portfolio-grid">
                 <div class="portfolio-item">
                     <div class="portfolio-label">现货 BTC</div>
                     <div class="portfolio-value" id="spot-btc">0.0000</div>
@@ -447,15 +468,16 @@
         </div>
     </div>
 
-    <script src="/static/js/config.js?v=20260522a"></script>
-    <script src="/static/js/utils.js?v=20260520a"></script>
+    <script src="/static/js/theme.js?v=20260623b"></script>
+    <script src="/static/js/config.js?v=20260622a"></script>
+    <script src="/static/js/utils.js?v=20260828b"></script>
     <script src="/static/js/charts.js?v=20260522a"></script>
-    <script src="/static/js/indicators.js?v=20260613a"></script>
-    <script src="/static/js/ai_analysis.js?v=20260520a"></script>
+    <script src="/static/js/indicators.js?v=20260828a"></script>
+    <script src="/static/js/ai_analysis.js?v=20260828a"></script>
     <script src="/static/js/portfolio.js?v=20260520a"></script>
     <script src="/static/js/performance.js?v=20260520a"></script>
     <script src="/static/js/trades.js?v=20260621b"></script>
-    <script src="/static/js/data_loader.js?v=20260520a"></script>
+    <script src="/static/js/data_loader.js?v=20260828c"></script>
     <script src="/static/js/main.js?v=20260520a"></script>
 </body>
 </html>

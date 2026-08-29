@@ -545,8 +545,7 @@ function updateIndicators(data) {
         reasoningEl.textContent = data.news_reasoning || '';
 
         if (data.news_updated_at) {
-            const dt = new Date(data.news_updated_at);
-            newsMetaEl.textContent = '更新: ' + dt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+            newsMetaEl.textContent = '更新: ' + formatClockTime(data.news_updated_at);
         }
     }
 }

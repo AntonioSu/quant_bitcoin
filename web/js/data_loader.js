@@ -34,8 +34,7 @@ async function loadIndicators() {
     try {
         const resp = await fetch(`${API_BASE}/api/indicators`);
         const data = await resp.json();
-        updateIndicators(data);
-        updateAiAnalysis(data);
+        applyDashboardUpdate({ indicators: data });
     } catch (e) {
         console.error('加载指标失败:', e);
     }
@@ -68,8 +67,31 @@ async function loadPerformance() {
     }
 }
 
+function applyDashboardUpdate(data) {
+    if (data.indicators) {
+        updateIndicators(data.indicators);
+        updateAiAnalysis(data.indicators);
+    }
+    if (data.portfolio) {
+        updatePortfolio(data.portfolio);
+    }
+    if (data.status) {
+        updateStatus(data.status);
+    }
+    const el = document.getElementById('last-update');
+    if (el) {
+        el.textContent = new Date().toLocaleTimeString('zh-CN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+        });
+    }
+}
+
 function connectWebSocket() {
-    const wsUrl = `ws://${window.location.host}/ws`;
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${proto}//${window.location.host}/ws`;
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
@@ -80,12 +102,7 @@ function connectWebSocket() {
         const data = JSON.parse(event.data);
 
         if (data.type === 'update') {
-            updateIndicators(data.indicators);
-            updateAiAnalysis(data.indicators);
-            updatePortfolio(data.portfolio);
-            updateStatus(data.status);
-            document.getElementById('last-update').textContent =
-                new Date().toLocaleTimeString();
+            applyDashboardUpdate(data);
         }
     };
 

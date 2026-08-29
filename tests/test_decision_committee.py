@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data_sources.base import DataPoint
 from multi_agent.decision_committee import DecisionCommittee
+from multi_agent.market_analyzer import MarketAnalyzer
 from multi_agent.schemas import CommitteeDecision, RiskReview
 
 
@@ -35,7 +36,7 @@ def test_committee_decision_blocks_open_action_when_entry_not_ok():
 def test_low_confidence_open_action_is_normalized_to_wait():
     decision = CommitteeDecision.model_validate({
         "bias": "SHORT",
-        "confidence": 55,
+        "confidence": 20,
         "action": "加空",
         "entry_ok": True,
         "position_size_hint": "25%",
@@ -43,6 +44,21 @@ def test_low_confidence_open_action_is_normalized_to_wait():
 
     assert decision.action == "等待入场"
     assert decision.entry_ok is False
+
+
+def test_entry_ok_without_size_hint_derives_size_and_action():
+    """Manager 常省略 action/仓位；不可因默认 0% 把 entry_ok 误杀为 false。"""
+    decision = CommitteeDecision.model_validate({
+        "bias": "LONG",
+        "confidence": 55,
+        "confidence_level": "MODERATE",
+        "summary": "均线多头，允许轻仓",
+        "entry_ok": True,
+    })
+
+    assert decision.entry_ok is True
+    assert decision.action == "加多"
+    assert decision.position_size_hint == "50%"
 
 
 def test_risk_review_zero_position_blocks_entry():
@@ -55,6 +71,52 @@ def test_risk_review_zero_position_blocks_entry():
 
     assert review.entry_ok is False
     assert "加多" not in review.allowed_actions
+
+
+def test_merge_risk_veto_overrides_manager_entry_ok():
+    merged = DecisionCommittee._merge_risk_into_manager_payload(
+        {"bias": "LONG", "entry_ok": True, "position_size_hint": "50%"},
+        RiskReview.model_validate({
+            "entry_ok": False,
+            "risk_level": "high",
+            "position_size_hint": "0%",
+            "blockers": ["极端波动"],
+        }),
+    )
+    assert merged["entry_ok"] is False
+    assert merged["position_size_hint"] == "0%"
+
+
+def test_merge_risk_fills_missing_size_hint():
+    merged = DecisionCommittee._merge_risk_into_manager_payload(
+        {"bias": "SHORT", "entry_ok": True},
+        RiskReview.model_validate({
+            "entry_ok": True,
+            "risk_level": "medium",
+            "position_size_hint": "25%",
+        }),
+    )
+    assert merged["entry_ok"] is True
+    assert merged["position_size_hint"] == "25%"
+
+
+def test_market_analyzer_normalize_keeps_action_and_size():
+    normalized = MarketAnalyzer._normalize({
+        "bias": "LONG",
+        "confidence": 55,
+        "confidence_level": "MODERATE",
+        "summary": "测试透传",
+        "action": "加多",
+        "entry_ok": True,
+        "position_size_hint": "50%",
+        "leverage_hint": 5,
+        "key_drivers": [],
+        "risks": [],
+    })
+    assert normalized["action"] == "加多"
+    assert normalized["entry_ok"] is True
+    assert normalized["position_size_hint"] == "50%"
+    assert normalized["leverage_hint"] == 5
 
 
 def test_decision_committee_runs_roles_with_fake_llm():
@@ -131,7 +193,7 @@ def test_decision_committee_runs_roles_with_fake_llm():
         "multi_agent",
         "prompts",
     )
-    committee = DecisionCommittee(fake, prompt_dir=prompt_dir, static_context="rules")
+    committee = DecisionCommittee(fake, prompt_dir=prompt_dir, knowledge_files={"test": "rules"})
 
     result = committee.run(snapshot={"rsi_4h": {"value": 31}}, dynamic_context="")
 
@@ -140,6 +202,84 @@ def test_decision_committee_runs_roles_with_fake_llm():
     assert result["entry_ok"] is False
     assert result["committee"]["bull_case"] == "多头有技术修复机会"
     assert result["committee"]["risk_review"].startswith("entry_ok=False")
+
+
+def test_decision_committee_allows_entry_when_manager_omits_size():
+    class FakeLLM:
+        def chat(self, system_prompt=None, prompt=None, usage_tag=""):
+            if usage_tag == "[bull]":
+                return """
+                {
+                  "side": "bull",
+                  "thesis": "趋势多头",
+                  "confidence": 70,
+                  "evidence": [
+                    {"factor": "EMA7>EMA25", "weight": "high", "source": "technical"},
+                    {"factor": "恐惧贪婪=25", "weight": "high", "source": "sentiment"}
+                  ],
+                  "invalidations": ["跌破 EMA25"],
+                  "best_action": "加多"
+                }
+                """
+            if usage_tag == "[bear]":
+                return """
+                {
+                  "side": "bear",
+                  "thesis": "上方抛压",
+                  "confidence": 40,
+                  "evidence": [
+                    {"factor": "稳定币流出", "weight": "medium", "source": "onchain"}
+                  ],
+                  "invalidations": ["稳定币转正"],
+                  "best_action": "持仓观望"
+                }
+                """
+            if usage_tag == "[risk]":
+                return """
+                {
+                  "entry_ok": true,
+                  "risk_level": "medium",
+                  "position_size_hint": "25%",
+                  "max_leverage": 5,
+                  "blockers": [],
+                  "risk_controls": ["跌破均线离场"]
+                }
+                """
+            # Manager 省略 action / position_size_hint（线上真实形态）
+            return """
+            {
+              "trend_regime": "UP_TREND",
+              "volatility_regime": "LOW_VOL_COMPRESSION",
+              "bias": "LONG",
+              "confidence_level": "MODERATE",
+              "summary": "均线多头+极度恐惧，允许轻仓",
+              "entry_ok": true,
+              "key_drivers": [
+                {"factor": "EMA7>EMA25", "side": "bull", "weight": "high"},
+                {"factor": "恐惧贪婪=25", "side": "bull", "weight": "high"},
+                {"factor": "稳定币流出", "side": "bear", "weight": "medium"}
+              ],
+              "risks": ["缩量收窄后向下突破"],
+              "invalidations": ["跌破 EMA25"],
+              "horizon": "4H~24H",
+              "committee": {"manager_rationale": "顺势轻仓"}
+            }
+            """
+
+    prompt_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "multi_agent",
+        "prompts",
+    )
+    committee = DecisionCommittee(
+        FakeLLM(), prompt_dir=prompt_dir, knowledge_files={"test": "rules"}
+    )
+    result = committee.run(snapshot={"ma_4h": {"trend": "bullish"}}, dynamic_context="")
+
+    assert result["bias"] == "LONG"
+    assert result["entry_ok"] is True
+    assert result["action"] == "加多"
+    assert result["position_size_hint"] == "25%"
 
 
 def test_signal_aggregator_respects_committee_entry_gate():
@@ -187,3 +327,26 @@ def test_signal_aggregator_keeps_legacy_behavior_without_entry_gate():
 
     assert result.mode == TradingMode.LONG
     assert result.conditions["committee_entry_ok"] is True
+
+
+def test_signal_aggregator_allows_entry_ok_without_action_text():
+    from core.market_data import market
+    from core.signal_aggregator import SignalAggregator, TradingMode
+
+    market.ai_analysis = DataPoint(
+        value=70,
+        timestamp=datetime.now(),
+        source="test",
+        raw={
+            "bias": "LONG",
+            "confidence": 70,
+            "summary": "趋势多头，等待放量突破确认",
+            "entry_ok": True,
+            "position_size_hint": "50%",
+        },
+    )
+
+    result = SignalAggregator().check_long_conditions()
+
+    assert result.mode == TradingMode.LONG
+    assert result.conditions["entry_guard"] is True

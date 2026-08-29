@@ -1,10 +1,10 @@
 /* ═══════════════════════════════════════════
-   INDICATOR CARDS
+   INDICATOR CARDS — Glassmorphism Purple
    ═══════════════════════════════════════════ */
 
 .indicator-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 10px;
 }
 
@@ -15,7 +15,7 @@
     gap: 12px;
     font-size: 11px;
     font-weight: 700;
-    color: var(--teal);
+    color: var(--accent);
     padding: 14px 2px 4px;
     letter-spacing: 0.5px;
     font-family: var(--font-display);
@@ -25,7 +25,7 @@
     content: '';
     flex: 1;
     height: 1px;
-    background: linear-gradient(to right, rgba(13, 148, 136, 0.25), transparent);
+    background: linear-gradient(to right, rgba(139, 92, 246, 0.25), transparent);
 }
 
 .indicator-group-title:first-child {
@@ -33,18 +33,21 @@
 }
 
 .indicator-item {
-    background: var(--bg-inset);
-    padding: 8px 10px;
-    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.3);
+    padding: 10px 12px;
+    border-radius: 12px;
     text-align: center;
-    border: 1px solid transparent;
+    border: 1px solid rgba(255, 255, 255, 0.3);
     transition: all 0.25s ease;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
 }
 
 .indicator-item:hover {
-    border-color: var(--border);
-    background: #FFFFFF;
-    box-shadow: var(--shadow-sm);
+    border-color: var(--border-hover);
+    background: rgba(255, 255, 255, 0.5);
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.08);
+    transform: translateY(-1px);
 }
 
 .indicator-label {
@@ -96,22 +99,18 @@
     font-family: var(--font-mono);
 }
 
-/* 让包含信号指标的卡片用 flex 列布局，
-   使指标网格能填满与同行最高卡片对齐后的剩余高度，
-   避免下方出现大块留白。 */
 .card:has(> .indicator-grid.scrollable) {
     display: flex;
     flex-direction: column;
 }
 
-/* 可滚动指标面板：自适应填满卡片剩余高度，仅在内容超出时滚动 */
 .indicator-grid.scrollable {
     flex: 1 1 auto;
     min-height: 0;
     align-content: start;
     overflow-y: auto;
     scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
+    scrollbar-color: rgba(139, 92, 246, 0.2) transparent;
 }
 
 .indicator-grid.scrollable::-webkit-scrollbar {
@@ -123,12 +122,12 @@
 }
 
 .indicator-grid.scrollable::-webkit-scrollbar-thumb {
-    background-color: var(--border);
+    background-color: rgba(139, 92, 246, 0.2);
     border-radius: 3px;
 }
 
 .indicator-grid.scrollable::-webkit-scrollbar-thumb:hover {
-    background-color: var(--text-dim);
+    background-color: rgba(139, 92, 246, 0.35);
 }
 
 /* ═══════════════════════════════════════════
@@ -145,10 +144,10 @@
 .kline-tabs {
     display: inline-flex;
     gap: 4px;
-    background: var(--bg-inset, #F5F6F8);
+    background: rgba(139, 92, 246, 0.05);
     padding: 3px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
+    border-radius: 8px;
+    border: 1px solid rgba(139, 92, 246, 0.1);
 }
 
 .kline-tab {
@@ -160,7 +159,7 @@
     font-weight: 600;
     font-family: var(--font-mono);
     color: var(--text-secondary);
-    border-radius: 4px;
+    border-radius: 6px;
     cursor: pointer;
     transition: all 0.15s ease;
     letter-spacing: 0.5px;
@@ -171,9 +170,9 @@
 }
 
 .kline-tab.active {
-    background: #FFFFFF;
-    color: var(--text-primary);
-    box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.06));
+    background: rgba(255, 255, 255, 0.6);
+    color: var(--accent);
+    box-shadow: 0 1px 4px rgba(139, 92, 246, 0.1);
 }
 
 .kline-wrap {
@@ -218,19 +217,19 @@
 }
 
 #chart-container {
-    border-radius: 10px 10px 0 0;
+    border-radius: 12px 12px 0 0;
     overflow: hidden;
-    border: 1px solid var(--border);
+    border: 1px solid rgba(139, 92, 246, 0.1);
     border-bottom: none;
 }
 
 .macd-wrap {
     position: relative;
-    border: 1px solid var(--border);
-    border-top: 1px dashed var(--border);
+    border: 1px solid rgba(139, 92, 246, 0.1);
+    border-top: 1px dashed rgba(139, 92, 246, 0.12);
     border-bottom: none;
     overflow: hidden;
-    background: var(--bg-inset, #FAFBFC);
+    background: rgba(255, 255, 255, 0.15);
 }
 
 #macd-container {
@@ -239,11 +238,11 @@
 
 .vol-wrap {
     position: relative;
-    border: 1px solid var(--border);
-    border-top: 1px dashed var(--border);
-    border-radius: 0 0 10px 10px;
+    border: 1px solid rgba(139, 92, 246, 0.1);
+    border-top: 1px dashed rgba(139, 92, 246, 0.12);
+    border-radius: 0 0 12px 12px;
     overflow: hidden;
-    background: var(--bg-inset, #FAFBFC);
+    background: rgba(255, 255, 255, 0.15);
 }
 
 .vol-wrap.no-bottom-radius {
@@ -257,11 +256,11 @@
 
 .exchange-flow-wrap {
     position: relative;
-    border: 1px solid var(--border);
-    border-top: 1px dashed var(--border);
-    border-radius: 0 0 10px 10px;
+    border: 1px solid rgba(139, 92, 246, 0.1);
+    border-top: 1px dashed rgba(139, 92, 246, 0.12);
+    border-radius: 0 0 12px 12px;
     overflow: hidden;
-    background: var(--bg-inset, #FAFBFC);
+    background: rgba(255, 255, 255, 0.15);
 }
 
 .exchange-flow-wrap.no-bottom-radius {
@@ -275,11 +274,11 @@
 
 .etf-wrap {
     position: relative;
-    border: 1px solid var(--border);
-    border-top: 1px dashed var(--border);
-    border-radius: 0 0 10px 10px;
+    border: 1px solid rgba(139, 92, 246, 0.1);
+    border-top: 1px dashed rgba(139, 92, 246, 0.12);
+    border-radius: 0 0 12px 12px;
     overflow: hidden;
-    background: var(--bg-inset, #FAFBFC);
+    background: rgba(255, 255, 255, 0.15);
 }
 
 #etf-container {
@@ -324,9 +323,9 @@
 #equity-chart-container {
     height: 200px;
     margin: 0 -4px 8px;
-    border-radius: 10px;
+    border-radius: 12px;
     overflow: hidden;
-    border: 1px solid var(--border);
+    border: 1px solid rgba(139, 92, 246, 0.1);
 }
 
 .equity-header {
@@ -427,6 +426,7 @@
 
 .news-factors-list li a:hover {
     text-decoration: underline;
+    color: var(--accent);
 }
 
 .news-reasoning {
@@ -446,4 +446,62 @@
     color: var(--text-dim);
     margin-top: 8px;
     font-family: var(--font-mono);
+}
+
+/* ═══════════════════════════════════════════
+   WHITE THEME OVERRIDES
+   ═══════════════════════════════════════════ */
+
+body.theme-white .indicator-group-title::after {
+    background: linear-gradient(to right, var(--border), transparent);
+}
+
+body.theme-white .indicator-item {
+    background: var(--bg-inset);
+    border-color: var(--border);
+}
+
+body.theme-white .indicator-item:hover {
+    background: var(--bg-card-hover);
+    box-shadow: var(--shadow-sm);
+}
+
+body.theme-white .indicator-grid.scrollable {
+    scrollbar-color: rgba(99, 102, 241, 0.2) transparent;
+}
+
+body.theme-white .indicator-grid.scrollable::-webkit-scrollbar-thumb {
+    background-color: rgba(99, 102, 241, 0.2);
+}
+
+body.theme-white .indicator-grid.scrollable::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(99, 102, 241, 0.35);
+}
+
+body.theme-white .kline-tabs {
+    background: var(--bg-inset);
+    border-color: var(--border);
+}
+
+body.theme-white .kline-tab.active {
+    background: #FFFFFF;
+    color: var(--accent);
+    box-shadow: var(--shadow-sm);
+}
+
+body.theme-white #chart-container,
+body.theme-white .macd-wrap,
+body.theme-white .vol-wrap,
+body.theme-white .exchange-flow-wrap,
+body.theme-white .etf-wrap,
+body.theme-white #equity-chart-container {
+    border-color: var(--border);
+}
+
+body.theme-white .macd-wrap,
+body.theme-white .vol-wrap,
+body.theme-white .exchange-flow-wrap,
+body.theme-white .etf-wrap {
+    background: var(--bg-inset);
+    border-top-color: var(--border);
 }

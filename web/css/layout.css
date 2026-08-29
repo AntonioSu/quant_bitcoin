@@ -6,9 +6,11 @@
     padding: 20px 28px 40px;
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 14px;
+    gap: 16px;
     max-width: 1600px;
     margin: 0 auto;
+    position: relative;
+    z-index: 1;
 }
 
 /* ═══════════════════════════════════════════
@@ -20,10 +22,12 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 10px 20px;
-    background: var(--bg-card);
+    padding: 12px 24px;
+    background: rgba(255, 255, 255, 0.35);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 14px;
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
     box-shadow: var(--shadow-sm);
     font-size: 13px;
     color: var(--text-secondary);
@@ -66,37 +70,54 @@
 }
 
 /* ═══════════════════════════════════════════
-   CARDS
+   CARDS — Glassmorphism
    ═══════════════════════════════════════════ */
 
 .card {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--card-radius);
-    padding: 20px;
+    padding: 22px;
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
     box-shadow: var(--shadow-sm);
-    transition: all 0.25s ease;
-    animation: fadeInUp 0.4s ease both;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    animation: fadeInUp 0.5s ease both;
+    position: relative;
+    overflow: hidden;
+}
+
+.card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.6), transparent);
+    pointer-events: none;
 }
 
 .card:hover {
+    background: var(--bg-card-hover);
     box-shadow: var(--shadow-hover);
     border-color: var(--border-hover);
-    transform: translateY(-1px);
+    transform: translateY(-2px);
 }
 
 .container > :nth-child(1) { animation-delay: 0s; }
-.container > :nth-child(2) { animation-delay: 0.05s; }
-.container > :nth-child(3) { animation-delay: 0.10s; }
-.container > :nth-child(4) { animation-delay: 0.15s; }
-.container > :nth-child(5) { animation-delay: 0.20s; }
-.container > :nth-child(6) { animation-delay: 0.25s; }
-.container > :nth-child(7) { animation-delay: 0.30s; }
+.container > :nth-child(2) { animation-delay: 0.06s; }
+.container > :nth-child(3) { animation-delay: 0.12s; }
+.container > :nth-child(4) { animation-delay: 0.18s; }
+.container > :nth-child(5) { animation-delay: 0.24s; }
+.container > :nth-child(6) { animation-delay: 0.30s; }
+.container > :nth-child(7) { animation-delay: 0.36s; }
+.container > :nth-child(8) { animation-delay: 0.42s; }
 
 @keyframes fadeInUp {
     from {
         opacity: 0;
-        transform: translateY(10px);
+        transform: translateY(12px);
     }
     to {
         opacity: 1;
@@ -109,7 +130,7 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 16px;
-    padding-left: 12px;
+    padding-left: 14px;
     position: relative;
 }
 
@@ -120,7 +141,7 @@
     top: 2px;
     bottom: 2px;
     width: 3px;
-    background: var(--teal);
+    background: linear-gradient(180deg, var(--accent), var(--gold));
     border-radius: 3px;
 }
 
@@ -128,40 +149,42 @@
     font-family: var(--font-display);
     font-size: 14px;
     color: var(--text-primary);
-    font-weight: 600;
+    font-weight: 700;
     letter-spacing: 0.2px;
 }
 
 .card-icon {
-    width: 26px;
-    height: 26px;
-    border-radius: 7px;
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 12px;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
 }
 
-.card-icon.icon-chart { background: var(--teal-dim); color: var(--teal); }
+.card-icon.icon-chart { background: var(--accent-light); color: var(--accent); }
 .card-icon.icon-signal { background: var(--gold-light); color: var(--gold); }
 .card-icon.icon-equity { background: var(--green-bg); color: var(--green); }
-.card-icon.icon-perf { background: rgba(37, 99, 235, 0.08); color: var(--blue); }
-.card-icon.icon-trade { background: rgba(124, 58, 237, 0.08); color: var(--purple); }
+.card-icon.icon-perf { background: rgba(99, 102, 241, 0.1); color: var(--blue); }
+.card-icon.icon-trade { background: rgba(168, 85, 247, 0.1); color: var(--purple); }
 .card-icon.icon-pos { background: var(--yellow-bg); color: var(--yellow); }
-.card-icon.icon-experiment { background: rgba(37, 99, 235, 0.08); color: var(--blue); }
+.card-icon.icon-experiment { background: rgba(99, 102, 241, 0.1); color: var(--blue); }
 
 /* ═══════════════════════════════════════════
    SECTION DIVIDER
    ═══════════════════════════════════════════ */
 
 .card-header.section-divider {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid rgba(139, 92, 246, 0.12);
     margin-top: 4px;
     padding-top: 16px;
 }
 
 .card-header.section-divider::before {
-    background: var(--purple);
+    background: linear-gradient(180deg, var(--purple), var(--blue));
 }
 
 /* ═══════════════════════════════════════════
@@ -180,23 +203,25 @@
 
 .experiment-card {
     background: var(--bg-inset);
-    border: 2px solid transparent;
-    border-radius: 10px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
     padding: 16px;
     cursor: pointer;
     transition: all 0.25s ease;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
 }
 
 .experiment-card:hover {
-    border-color: var(--border);
-    background: #FFFFFF;
+    border-color: var(--border-hover);
+    background: rgba(255, 255, 255, 0.5);
     box-shadow: var(--shadow-sm);
 }
 
 .experiment-card.selected {
-    border-color: var(--teal);
-    background: rgba(13, 148, 136, 0.03);
-    box-shadow: 0 0 0 1px var(--teal), var(--shadow-sm);
+    border-color: var(--accent);
+    background: rgba(139, 92, 246, 0.06);
+    box-shadow: 0 0 0 1px var(--accent), var(--shadow-sm);
 }
 
 .experiment-header {
@@ -205,7 +230,7 @@
     align-items: center;
     margin-bottom: 14px;
     padding-bottom: 10px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid rgba(139, 92, 246, 0.1);
 }
 
 .experiment-name {
@@ -268,4 +293,37 @@
     .experiment-metrics {
         grid-template-columns: repeat(3, 1fr);
     }
+}
+
+/* ═══════════════════════════════════════════
+   WHITE THEME OVERRIDES
+   ═══════════════════════════════════════════ */
+
+body.theme-white .status-bar {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+}
+
+body.theme-white .card::before {
+    background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.15), transparent);
+}
+
+body.theme-white .card-header.section-divider {
+    border-top-color: var(--border);
+}
+
+body.theme-white .experiment-card {
+    background: var(--bg-inset);
+}
+
+body.theme-white .experiment-card:hover {
+    background: var(--bg-card-hover);
+}
+
+body.theme-white .experiment-card.selected {
+    background: var(--accent-light);
+}
+
+body.theme-white .experiment-header {
+    border-bottom-color: var(--border);
 }

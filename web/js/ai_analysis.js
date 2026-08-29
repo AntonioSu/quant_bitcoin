@@ -93,8 +93,7 @@ function updateAiAnalysis(data) {
     renderDrivers('ai-risk-list', [...bearDrivers, ...risks]);
 
     if (data.ai_updated_at) {
-        const dt = new Date(data.ai_updated_at);
-        metaEl.textContent = '更新: ' + dt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        metaEl.textContent = '更新: ' + formatClockTime(data.ai_updated_at);
     }
 }
 

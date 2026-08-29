@@ -59,7 +59,8 @@ class BaseTradingScheduler(ABC):
     """
     
     DEFAULT_EQUITY = 1000.0 # 默认权益
-    OPEN_NOTIONAL = 500.0 # 开仓金额
+    OPEN_NOTIONAL = 500.0 # 兜底名义本金（止损重算 / 资金检查）
+    MIN_NOTIONAL = 50.0
     FUTURES_SYMBOL = "BTC/USDT:USDT"
 
     def __init__(
@@ -564,16 +565,17 @@ class BaseTradingScheduler(ABC):
             market.position_context = {"is_active": False}
 
     def _resolve_ai_sizing(self, decision: TradingDecision) -> tuple:
-        """从 Trading AI 决策中解析仓位大小和杠杆
+        """从 Trading AI 决策中解析仓位大小和杠杆。
+
+        position_size_hint 是保证金占权益的比例，名义本金 = 保证金 × 杠杆。
+        例如权益 $500、50%、5x → 保证金 $250，名义 $1250。
 
         Returns:
             (notional: float, leverage: int)
         """
         size_hint = decision.position_size_hint if decision else "50%"
-        pct_map = {"25%": 0.25, "50%": 0.50, "75%": 0.75, "100%": 1.0}
+        pct_map = {"0%": 0.0, "25%": 0.25, "50%": 0.50, "75%": 0.75, "100%": 1.0}
         size_pct = pct_map.get(size_hint, 0.50)
-        notional = self.equity * size_pct
-        notional = max(50.0, min(notional, self.equity))
 
         leverage = decision.leverage_hint if decision else 5
         try:
@@ -581,9 +583,15 @@ class BaseTradingScheduler(ABC):
         except (TypeError, ValueError):
             leverage = 5
 
+        usable = max(float(self.equity or 0), 0.0)
+        margin = min(usable * size_pct, usable)
+        notional = margin * leverage
+        if size_pct > 0:
+            notional = max(self.MIN_NOTIONAL, notional)
+
         logger.info(
-            f"📐 Trading AI 仓位: size_hint={size_hint} → ${notional:,.0f}, "
-            f"leverage={leverage}x"
+            f"📐 Trading AI 仓位: size_hint={size_hint} → "
+            f"保证金=${margin:,.0f}, 名义=${notional:,.0f}, leverage={leverage}x"
         )
         return notional, leverage
 

@@ -565,7 +565,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="BTC 神盾-长矛监控系统 (多策略实验)",
+    title="BTC 监控分析系统 (多策略实验)",
     version="2.0.0",
     lifespan=lifespan,
 )
@@ -909,6 +909,7 @@ async def refresh_ai_analysis_manual():
             await refresh_ai_analysis_async()
             app_state.ai_last_refresh_ts = time.time()
         logger.info("🤖 手动触发的 AI 综合研判已完成")
+        await app_state.notify_frontend()
         return {"status": "ok", **_ai_analysis_payload()}
     except Exception as e:
         logger.error(f"手动 AI 分析失败: {e}")
@@ -996,6 +997,25 @@ async def get_account():
 # WebSocket
 # ══════════════════════════════════════════════════════════════
 
+async def _dashboard_update_payload() -> dict:
+    return {
+        "type": "update",
+        "selected_preset": app_state.selected_preset,
+        "indicators": (await _get_indicators_cached()).model_dump(),
+        "portfolio": (await get_portfolio()).model_dump(),
+        "status": (await get_status()).model_dump(),
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+async def broadcast_dashboard_update() -> None:
+    """把当前仪表盘快照推给所有已连接的前端。"""
+    await app_state.broadcast(await _dashboard_update_payload())
+
+
+app_state.push_dashboard = broadcast_dashboard_update
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket 实时推送"""
@@ -1006,15 +1026,7 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             try:
-                data = {
-                    "type": "update",
-                    "selected_preset": app_state.selected_preset,
-                    "indicators": (await _get_indicators_cached()).model_dump(),
-                    "portfolio": (await get_portfolio()).model_dump(),
-                    "status": (await get_status()).model_dump(),
-                    "timestamp": datetime.now().isoformat(),
-                }
-                await websocket.send_json(data)
+                await websocket.send_json(await _dashboard_update_payload())
             except WebSocketDisconnect:
                 raise
             except Exception as e:
@@ -1038,6 +1050,16 @@ async def index():
     return FileResponse(
         os.path.join(WEB_DIR, "index.html"),
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """浏览器默认 favicon 请求"""
+    return FileResponse(
+        os.path.join(WEB_DIR, "favicon.svg"),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
     )
 
 

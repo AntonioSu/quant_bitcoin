@@ -106,7 +106,6 @@ quant_bitcoin/
 │   ├── trading_advisor.py  # 交易执行建议
 │   ├── schemas.py          # 数据结构 + 置信度常量 + 硬约束
 │   ├── prompts/            # LLM 提示词
-│   │   ├── market_analyzer.md
 │   │   ├── bull_researcher.md
 │   │   ├── bear_researcher.md
 │   │   ├── risk_reviewer.md

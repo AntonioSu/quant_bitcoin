@@ -390,7 +390,7 @@ async def refresh_market_data_async() -> MarketData:
 
 
 async def refresh_news_data_async() -> None:
-    """刷新新闻多空分析 (独立于市场数据，30分钟一次)"""
+    """刷新新闻多空分析 (独立于市场数据，2 小时一次)"""
     import asyncio
     try:
         market.news = await asyncio.to_thread(_news_analyzer.fetch)
@@ -400,7 +400,7 @@ async def refresh_news_data_async() -> None:
 
 
 async def refresh_ai_analysis_async() -> None:
-    """刷新 AI 综合多空研判 (独立刷新, 默认 15 分钟一次)
+    """刷新 AI 综合多空研判 (独立刷新, 默认 1 小时一次)
 
     依赖 market 已经被 refresh_market_data 填充过, 否则跳过本轮.
     失败时保留上一次的结果, 不会清空 market.ai_analysis.

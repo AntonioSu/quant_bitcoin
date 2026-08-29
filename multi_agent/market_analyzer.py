@@ -18,15 +18,13 @@ import os
 from datetime import datetime
 from typing import Dict, Optional, Any
 
-from dotenv import load_dotenv
-
 from data_sources.base import DataPoint
 from multi_agent.decision_committee import DecisionCommittee
 from utils import logger
-from utils.common_utils import read_file_prompt
+from utils.common_utils import ensure_dotenv_loaded, read_file_prompt
 from utils.llm_client import LLMClient
 
-load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+ensure_dotenv_loaded()
 
 _PROMPT_DIR = os.path.join(os.path.dirname(__file__), 'prompts')
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
@@ -50,9 +48,8 @@ class MarketAnalyzer:
             key=os.getenv("LLM_API_KEY"),
             api_url=os.getenv("LLM_API_URL"),
             timeout=120,
-            # 启用服务端 Prompt Caching：sys_prompt = role + 知识库（多 md 拼接），
-            # 不含任何随时间变化的内容（memo / 上次研判 / 最近回顾 都已挪到 user prompt），
-            # 因此 sys_prompt 在 cache TTL 内字节稳定，前缀缓存可稳定命中。
+            # 启用服务端 Prompt Caching：system = 知识库（前缀，各角色共享）+ 角色指令。
+            # 动态内容（memo / 上次研判 / snapshot）放在 user prompt，保证前缀字节稳定。
             extra_body={
                 "caching": {"type": "enabled", "prefix": True},
                 "thinking": {"type": "disabled"},
@@ -61,13 +58,8 @@ class MarketAnalyzer:
         self.memory = memory            # AnalysisMemory 实例
         self.summarizer = summarizer    # StrategySummarizer 实例
         self._last_analysis: Optional[Dict[str, Any]] = self._load_last_analysis()
-        self._static_system_prompt: Optional[str] = None
-        self._knowledge_context: Optional[str] = None
+        self._knowledge_files: Optional[Dict[str, str]] = None
         self._committee: Optional[DecisionCommittee] = None
-        self._committee_enabled = (
-            os.getenv("ENABLE_DECISION_COMMITTEE", "false").strip().lower()
-            in {"1", "true", "yes", "on"}
-        )
 
     def fetch(self, market) -> DataPoint:
         """对当前 market 数据做一次综合分析
@@ -80,8 +72,7 @@ class MarketAnalyzer:
             return self._neutral("market 数据未就绪")
 
         snapshot = self._build_snapshot(market)
-        prompt = self._build_prompt(snapshot)
-        analysis = self._analyze(prompt, snapshot=snapshot)
+        analysis = self._analyze(snapshot)
 
         from multi_agent.schemas import confidence_to_level
 
@@ -431,42 +422,21 @@ class MarketAnalyzer:
 
         return snap
 
-    @staticmethod
-    def _build_prompt(snapshot: Dict[str, Any]) -> str:
-        """把 snapshot 渲染成 LLM 提示"""
-        body = json.dumps(snapshot, ensure_ascii=False, indent=2)
-        return (
-            "以下是当前 BTC 市场的多维度指标快照（4H 周期为主），"
-            "请按照系统提示词的规则做综合多空研判：\n\n"
-            f"```json\n{body}\n```"
-        )
-
-    def _analyze(
-        self,
-        prompt: str,
-        snapshot: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    def _analyze(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
         dynamic_context = self._build_dynamic_context()
-
-        if self._committee_enabled and snapshot:
-            try:
-                return self._normalize(
-                    self._get_committee().run(
-                        snapshot=snapshot,
-                        dynamic_context=dynamic_context,
-                    )
-                )
-            except Exception as e:
-                logger.warning(f"🤖 决策委员会失败，回退单体研判: {e}")
-
         try:
-            return self._analyze_legacy(prompt, dynamic_context=dynamic_context)
+            return self._normalize(
+                self._get_committee().run(
+                    snapshot=snapshot,
+                    dynamic_context=dynamic_context,
+                )
+            )
         except Exception as e:
-            logger.error(f"🤖 LLM 市场分析失败: {e}")
+            logger.error(f"🤖 决策委员会分析失败: {e}")
             return {
                 "bias": "NEUTRAL",
                 "confidence": 0,
-                "summary": f"LLM 调用失败: {e}",
+                "summary": f"决策委员会调用失败: {e}",
                 "key_drivers": [],
                 "risks": [],
                 "horizon": "4H~24H",
@@ -480,48 +450,31 @@ class MarketAnalyzer:
             self._committee = DecisionCommittee(
                 llm=self.llm,
                 prompt_dir=_PROMPT_DIR,
-                static_context=self._load_knowledge_context(),
+                knowledge_files=self._load_knowledge_files(),
             )
         return self._committee
 
-    def _load_static_system_prompt(self) -> str:
-        """Load stable role + knowledge text for prompt caching."""
-        if self._static_system_prompt is not None:
-            return self._static_system_prompt
-
-        sys_prompt = read_file_prompt(
-            os.path.join(_PROMPT_DIR, 'market_analyzer.md')
-        )
-
-        knowledge = self._load_knowledge_context()
-        if knowledge:
-            sys_prompt += "\n\n" + knowledge
-
-        self._static_system_prompt = sys_prompt
-        return sys_prompt
-
-    def _load_knowledge_context(self) -> str:
-        """Load stable market knowledge without the legacy final-output prompt."""
-        if self._knowledge_context is not None:
-            return self._knowledge_context
+    def _load_knowledge_files(self) -> Dict[str, str]:
+        """Load knowledge files as {relative_path: content} dict."""
+        if self._knowledge_files is not None:
+            return self._knowledge_files
 
         knowledge_dir = os.path.join(os.path.dirname(__file__), 'knowledge')
-        chunks: list[str] = []
+        files: Dict[str, str] = {}
         if os.path.isdir(knowledge_dir):
-            md_files: list[str] = []
-            for root, dirs, files in os.walk(knowledge_dir):
+            for root, dirs, fnames in os.walk(knowledge_dir):
                 dirs[:] = [d for d in dirs if d != 'news']
-                for fname in files:
+                for fname in fnames:
                     if fname.endswith('.md'):
-                        md_files.append(os.path.join(root, fname))
-            for fpath in sorted(md_files):
-                chunks.append(read_file_prompt(fpath))
+                        fpath = os.path.join(root, fname)
+                        rel = os.path.relpath(fpath, knowledge_dir)
+                        files[rel] = read_file_prompt(fpath)
 
-        self._knowledge_context = "\n\n".join(chunks)
-        return self._knowledge_context
+        self._knowledge_files = files
+        return files
 
     def _build_dynamic_context(self) -> str:
-        """Build dynamic memory/context text shared by legacy and committee paths."""
+        """Build dynamic memory/context text for the committee."""
         parts: list[str] = []
 
         # 关键原则：让 sys_prompt 在 cache TTL 内保持字节级稳定，
@@ -582,43 +535,16 @@ class MarketAnalyzer:
 
         return "\n\n".join(parts)
 
-    def _analyze_legacy(self, prompt: str, dynamic_context: str = "") -> Dict[str, Any]:
-        if dynamic_context:
-            prompt += "\n\n" + dynamic_context
-
-        resp = self.llm.chat(
-            system_prompt=self._load_static_system_prompt(),
-            prompt=prompt,
-            usage_tag="[market]",
-        )
-        parsed = self._parse_json(resp)
-        return self._normalize(parsed)
-
-    @staticmethod
-    def _parse_json(text: str) -> Dict[str, Any]:
-        if "```json" in text:
-            text = text.split("```json", 1)[1].split("```", 1)[0]
-        elif "```" in text:
-            text = text.split("```", 1)[1].split("```", 1)[0]
-        try:
-            return json.loads(text.strip())
-        except json.JSONDecodeError:
-            return {
-                "bias": "NEUTRAL",
-                "confidence": 0,
-                "summary": f"JSON 解析失败: {text[:120]}",
-                "key_drivers": [],
-                "risks": [],
-                "horizon": "4H~24H",
-                "trend_regime": "UNCLEAR",
-                "volatility_regime": "NORMAL_VOL",
-            }
-
     @staticmethod
     def _normalize(data: Dict[str, Any]) -> Dict[str, Any]:
         """字段兜底，避免前端拿到空字段炸"""
         from multi_agent.schemas import (
-            CONFIDENCE_LEVELS, confidence_to_level, level_to_confidence,
+            CONFIDENCE_LEVELS,
+            confidence_to_level,
+            level_to_confidence,
+            normalize_action,
+            normalize_leverage_hint,
+            normalize_position_hint,
         )
 
         bias = str(data.get("bias", "NEUTRAL")).upper()
@@ -660,10 +586,12 @@ class MarketAnalyzer:
             "horizon": str(data.get("horizon", "4H~24H")),
             "trend_regime": trend,
             "volatility_regime": vol,
+            "action": normalize_action(data.get("action")),
+            "entry_ok": bool(data.get("entry_ok", False)),
+            "position_size_hint": normalize_position_hint(data.get("position_size_hint")),
+            "leverage_hint": normalize_leverage_hint(data.get("leverage_hint")),
         }
 
-        if "entry_ok" in data:
-            normalized["entry_ok"] = bool(data.get("entry_ok"))
         if "invalidations" in data:
             normalized["invalidations"] = data.get("invalidations") or []
         if "committee" in data:

@@ -21,15 +21,13 @@ import os
 from datetime import datetime
 from typing import Dict, Optional
 
-from dotenv import load_dotenv
-
 from data_sources.base import DataSourceBase, DataPoint
 from data_sources.crypto_news import CryptoNewsSentiment
 from utils import logger
-from utils.common_utils import read_file_prompt
+from utils.common_utils import ensure_dotenv_loaded, parse_llm_json, read_file_prompt
 from utils.llm_client import LLMClient
 
-load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+ensure_dotenv_loaded()
 
 _PROMPT_DIR = os.path.join(os.path.dirname(__file__), 'prompts')
 _KNOWLEDGE_DIR = os.path.join(os.path.dirname(__file__), 'knowledge')
@@ -68,7 +66,7 @@ class NewsAnalyzer(DataSourceBase):
                 "thinking": {"type": "disabled"},
             },
         )
-        self._cache_ttl = 1800
+        self._cache_ttl = 7200
 
     def fetch(self) -> DataPoint:
         news_data = self.news_source.fetch()
@@ -146,7 +144,7 @@ class NewsAnalyzer(DataSourceBase):
             )
             knowledge = self._load_knowledge()
             if knowledge:
-                sys_prompt += "\n\n" + knowledge
+                sys_prompt = knowledge + "\n\n## 角色指令\n" + sys_prompt
 
             resp = self.llm.chat(
                 system_prompt=sys_prompt,
@@ -160,35 +158,27 @@ class NewsAnalyzer(DataSourceBase):
 
     @staticmethod
     def _parse_json(text: str) -> Dict:
-        if "```json" in text:
-            text = text.split("```json", 1)[1].split("```", 1)[0]
-        elif "```" in text:
-            text = text.split("```", 1)[1].split("```", 1)[0]
+        result = parse_llm_json(text)
+        if result is not None:
+            return NewsAnalyzer._normalize_analysis(result)
 
-        stripped = text.strip()
-        try:
-            return NewsAnalyzer._normalize_analysis(json.loads(stripped))
-        except json.JSONDecodeError as e:
-            total_len = len(stripped)
-            ends_well = stripped.endswith("}")
-            tail = stripped[-200:]
-            head = stripped[:200]
-            likely_truncated = (not ends_well) and total_len > 1000
-            diag = (
-                f"JSON 解析失败（{e.msg} at pos {e.pos}）: "
-                f"len={total_len}, ends_with_brace={ends_well}, "
-                f"likely_truncated={likely_truncated}\n"
-                f"  head: {head}\n  tail: {tail}"
-            )
-            logger.error(f"📰 {diag}")
-            return {
-                "sentiment": "neutral",
-                "score": 0,
-                "reasoning": (
-                    f"JSON 解析失败（{'疑似输出被截断，需调高 max_tokens' if likely_truncated else '格式错误'}）: "
-                    f"len={total_len}, tail={tail[-120:]}"
-                ),
-            }
+        stripped = str(text or "").strip()
+        total_len = len(stripped)
+        ends_well = stripped.endswith("}")
+        likely_truncated = (not ends_well) and total_len > 1000
+        logger.error(
+            f"📰 JSON 解析失败: len={total_len}, "
+            f"ends_with_brace={ends_well}, likely_truncated={likely_truncated}\n"
+            f"  head: {stripped[:200]}\n  tail: {stripped[-200:]}"
+        )
+        return {
+            "sentiment": "neutral",
+            "score": 0,
+            "reasoning": (
+                f"JSON 解析失败（{'疑似输出被截断，需调高 max_tokens' if likely_truncated else '格式错误'}）: "
+                f"len={total_len}, tail={stripped[-120:]}"
+            ),
+        }
 
     @staticmethod
     def _normalize_analysis(raw: Dict) -> Dict:
