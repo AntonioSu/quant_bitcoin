@@ -66,7 +66,7 @@ class NewsAnalyzer(DataSourceBase):
                 "thinking": {"type": "disabled"},
             },
         )
-        self._cache_ttl = 1800
+        self._cache_ttl = 7200
 
     def fetch(self) -> DataPoint:
         news_data = self.news_source.fetch()

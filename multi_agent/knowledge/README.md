@@ -14,6 +14,19 @@
 
 ---
 
+## 维度权重优先级（全局）
+
+研判与打分时必须遵守：
+
+1. **P0** 宏观流动性 / 稳定币资金池：M2、稳定币供应量 → 默认 high
+2. **P1** 趋势结构 / 机构资金流：MA 排列、ETF → high / medium
+3. **P2** 链上与订单流：CVD、净流、Taker → medium
+4. **P3** 股票型振荡指标：RSI、MACD → **默认 low，禁止 high**
+
+RSI/MACD 不得单独决定 `bias`，也不得推翻 M2 与稳定币同向的流动性结论。
+
+---
+
 ## 标准分析流程（三步法）
 
 1. **第一步：判趋势状态**
@@ -41,7 +54,7 @@
 4. 如果 `bias` 与 `trend_regime` 方向相反，我是否在 `key_drivers` 中列出了 ≥2 条反转确认证据？
 5. 我的 `confidence_level` 是否同时满足趋势/波动两个维度的上限约束？
 6. 如果 `volatility_regime = LOW_VOL_COMPRESSION` 或 `HIGH_VOL_EXTREME`，我是否避免了"主动加仓"类的 action？
-7. 我的 `action` 是否与 `confidence_level` 匹配？（WEAK → 等待入场，CAUTIOUS → 轻仓试探或等待）
+7. 我的 `action` 是否与 `confidence_level` 匹配？（WEAK/CAUTIOUS → 等待入场；开仓门槛 ≥MODERATE）
 8. 我的 `key_drivers` 描述中是否混淆了术语？特别是：surge_down(放量下跌) ≠ 量价背离，只有 divergence_top/divergence_bottom 才是量价背离
 
 任何一条不满足，必须回到上一步重新调整。

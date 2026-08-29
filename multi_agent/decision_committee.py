@@ -135,6 +135,7 @@ class DecisionCommittee:
                 usage_tag="[manager]",
             )
             data = self._parse_json(resp)
+            data = self._merge_risk_into_manager_payload(data, risk)
             return CommitteeDecision.model_validate(data)
         except (json.JSONDecodeError, ValidationError, KeyError, TypeError, ValueError) as e:
             logger.warning(f"🤖 decision manager 输出不可用: {e}")
@@ -233,6 +234,30 @@ class DecisionCommittee:
             f"```json\n{json.dumps(committee_inputs, ensure_ascii=False, indent=2)}\n```\n\n"
             f"{dynamic_context}"
         )
+
+    @staticmethod
+    def _merge_risk_into_manager_payload(
+        data: Dict[str, Any],
+        risk: RiskReview,
+    ) -> Dict[str, Any]:
+        """补全 Manager 省略字段，并落实 Risk Reviewer 的否决权。"""
+        payload = dict(data or {})
+
+        if "entry_ok" not in payload:
+            payload["entry_ok"] = risk.entry_ok
+        elif not risk.entry_ok:
+            # 风险审查否决优先：不允许 Manager 覆盖为可入场
+            payload["entry_ok"] = False
+
+        size = str(payload.get("position_size_hint") or "").strip()
+        if payload.get("entry_ok") and (not size or size == "0%"):
+            if risk.entry_ok and risk.position_size_hint != "0%":
+                payload["position_size_hint"] = risk.position_size_hint
+
+        if not payload.get("entry_ok"):
+            payload["position_size_hint"] = "0%"
+
+        return payload
 
     @staticmethod
     def _summarize_risk(risk: RiskReview) -> str:

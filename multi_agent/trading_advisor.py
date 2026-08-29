@@ -28,6 +28,15 @@ _PROMPT_DIR = os.path.join(os.path.dirname(__file__), 'prompts')
 
 VALID_ACTIONS = {"开多", "开空", "平仓", "减仓", "持仓观望", "等待入场"}
 _SIZE_HINTS = {"0%", "25%", "50%", "75%", "100%"}
+_LEVEL_RANK = {
+    "WEAK": 0,
+    "CAUTIOUS": 1,
+    "MODERATE": 2,
+    "STRONG": 3,
+    "VERY_STRONG": 4,
+}
+_MIN_OPEN_LEVEL = "MODERATE"
+_MAX_REDUCE_RATIO = 0.25
 
 
 @dataclass
@@ -77,6 +86,7 @@ class TradingAdvisor:
         self._last_signal_id: Optional[str] = None
         self._last_position_hash: Optional[str] = None
         self._cached_decision: Optional[TradingDecision] = None
+        self._last_partial_close_signal_id: Optional[str] = None
 
     def decide(
         self,
@@ -129,6 +139,16 @@ class TradingAdvisor:
             logger.error(f"🤖 交易决策 LLM 调用失败: {e}")
             decision = self._safe_default(position_direction)
 
+        decision = self._apply_policy(
+            decision,
+            signal=signal,
+            position_direction=position_direction,
+            position_entry=position_entry,
+            position_size_btc=position_size_btc,
+            btc_price=btc_price,
+            signal_id=signal_id,
+        )
+
         self._last_signal_id = signal_id
         self._last_position_hash = position_hash
         self._cached_decision = decision
@@ -152,12 +172,165 @@ class TradingAdvisor:
         self._last_position_hash = None
         self._cached_decision = None
 
+    def reload_prompt(self):
+        """重新加载系统提示词（热更新）"""
+        self._system_prompt = None
+
     def _load_system_prompt(self) -> str:
         if self._system_prompt is None:
             self._system_prompt = read_file_prompt(
                 os.path.join(_PROMPT_DIR, "trading_advisor.md")
             )
         return self._system_prompt
+
+    @staticmethod
+    def _signal_level(signal: Dict[str, Any]) -> str:
+        from multi_agent.schemas import confidence_to_level
+
+        level = str(signal.get("confidence_level") or "").strip().upper()
+        if level in _LEVEL_RANK:
+            return level
+        try:
+            conf = int(signal.get("confidence", 0) or 0)
+        except (TypeError, ValueError):
+            conf = 0
+        return confidence_to_level(conf)
+
+    @staticmethod
+    def _unrealized_pct(
+        position_direction: str,
+        position_entry: float,
+        position_size_btc: float,
+        btc_price: float,
+    ) -> float:
+        if position_direction == "NONE" or position_size_btc <= 0 or position_entry <= 0:
+            return 0.0
+        sign = 1 if position_direction == "LONG" else -1
+        unrealized = sign * (btc_price - position_entry) * position_size_btc
+        notional = position_entry * position_size_btc
+        return (unrealized / notional * 100) if notional > 0 else 0.0
+
+    def _apply_policy(
+        self,
+        decision: TradingDecision,
+        signal: Dict[str, Any],
+        position_direction: str,
+        position_entry: float,
+        position_size_btc: float,
+        btc_price: float,
+        signal_id: str,
+    ) -> TradingDecision:
+        """硬性护栏：防止小赚就跑 / CAUTIOUS 滥开 / entry_ok 误平仓。"""
+        bias = str(signal.get("bias", "NEUTRAL") or "NEUTRAL").strip().upper()
+        level = self._signal_level(signal)
+        entry_ok = signal.get("entry_ok", True)
+        if entry_ok is None:
+            entry_ok = True
+        else:
+            entry_ok = bool(entry_ok)
+
+        has_position = position_direction != "NONE" and position_size_btc > 0
+        level_rank = _LEVEL_RANK.get(level, 0)
+        min_open_rank = _LEVEL_RANK[_MIN_OPEN_LEVEL]
+
+        if not has_position:
+            if not decision.is_open:
+                return decision
+
+            allow_open = (
+                bool(entry_ok)
+                and bias in ("LONG", "SHORT")
+                and level_rank >= min_open_rank
+                and (
+                    (decision.action == "开多" and bias == "LONG")
+                    or (decision.action == "开空" and bias == "SHORT")
+                )
+            )
+            if allow_open:
+                return decision
+
+            reason = (
+                f"护栏拦截开仓: entry_ok={entry_ok}, bias={bias}, "
+                f"{level}<{_MIN_OPEN_LEVEL}"
+            )
+            logger.info("🛡️ %s", reason)
+            return TradingDecision(
+                action="等待入场",
+                position_size_hint="0%",
+                reason=reason[:80],
+            )
+
+        # ── 有持仓 ──
+        opposite = "SHORT" if position_direction == "LONG" else "LONG"
+        pnl_pct = self._unrealized_pct(
+            position_direction, position_entry, position_size_btc, btc_price
+        )
+        hard_loss_exit = pnl_pct < -5.0
+        strong_reversal = bias == opposite and level_rank >= _LEVEL_RANK["STRONG"]
+        moderate_reversal = bias == opposite and level == "MODERATE"
+
+        if hard_loss_exit or strong_reversal:
+            reason = decision.reason or (
+                "未实现亏损>5%，止损离场" if hard_loss_exit
+                else f"{level} 反向，果断平仓"
+            )
+            self._last_partial_close_signal_id = None
+            return TradingDecision(
+                action="平仓",
+                close_ratio=1.0,
+                reason=reason[:80],
+            )
+
+        if decision.action == "平仓":
+            if moderate_reversal:
+                logger.info("🛡️ 护栏: 仅 MODERATE 反转，平仓降级为减仓 25%%")
+                decision = TradingDecision(
+                    action="减仓",
+                    close_ratio=_MAX_REDUCE_RATIO,
+                    reason=(decision.reason or "MODERATE 反转，轻减仓")[:80],
+                )
+            else:
+                logger.info(
+                    "🛡️ 护栏: 拦截平仓 (bias=%s, %s, entry_ok=%s) → 持仓观望",
+                    bias, level, entry_ok,
+                )
+                return TradingDecision(
+                    action="持仓观望",
+                    reason=(
+                        decision.reason
+                        or "信号未强反转，entry_ok/NEUTRAL 不构成离场"
+                    )[:80],
+                )
+
+        if decision.action == "减仓":
+            # 仅允许：中等强度反向；同向 / NEUTRAL / 弱反向一律继续持仓
+            if not moderate_reversal:
+                logger.info(
+                    "🛡️ 护栏: 拦截减仓 (bias=%s, %s) → 持仓观望",
+                    bias, level,
+                )
+                return TradingDecision(
+                    action="持仓观望",
+                    reason="仅 MODERATE 反向才允许轻减仓，其余继续持仓",
+                )
+
+            decision = TradingDecision(
+                action="减仓",
+                close_ratio=min(max(decision.close_ratio, 0.1), _MAX_REDUCE_RATIO),
+                reason=(decision.reason or "MODERATE 反转，轻减仓 25%")[:80],
+            )
+
+            if signal_id and signal_id == self._last_partial_close_signal_id:
+                logger.info("🛡️ 护栏: 同信号已减仓，等待下次研判刷新")
+                return TradingDecision(
+                    action="持仓观望",
+                    reason="同信号已减仓，等待下次研判",
+                )
+            if signal_id:
+                self._last_partial_close_signal_id = signal_id
+            return decision
+
+        return decision
 
     def _build_prompt(
         self,
@@ -203,6 +376,8 @@ class TradingAdvisor:
         if risks:
             risks_text = "\n".join(f"  - {r}" for r in risks if r)
 
+        size_hint = signal.get("position_size_hint")
+        lev_hint = signal.get("leverage_hint")
         sig_section = (
             f"## 市场信号\n"
             f"- 方向: {bias}\n"
@@ -210,6 +385,10 @@ class TradingAdvisor:
             f"- 研判: {summary}\n"
             f"- entry_ok: {entry_ok}\n"
         )
+        if size_hint is not None:
+            sig_section += f"- 信号仓位建议: {size_hint}\n"
+        if lev_hint is not None:
+            sig_section += f"- 信号杠杆上限: {lev_hint}x\n"
         if drivers_text:
             sig_section += f"- 关键驱动:\n{drivers_text}\n"
         if risks_text:
@@ -280,10 +459,10 @@ class TradingAdvisor:
         close_ratio = 1.0
         if action == "减仓":
             try:
-                close_ratio = float(data.get("close_ratio", 0.5))
-                close_ratio = max(0.1, min(0.9, close_ratio))
+                close_ratio = float(data.get("close_ratio", _MAX_REDUCE_RATIO))
+                close_ratio = max(0.1, min(_MAX_REDUCE_RATIO, close_ratio))
             except (TypeError, ValueError):
-                close_ratio = 0.5
+                close_ratio = _MAX_REDUCE_RATIO
         elif action == "平仓":
             close_ratio = 1.0
 

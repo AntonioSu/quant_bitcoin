@@ -539,7 +539,12 @@ class MarketAnalyzer:
     def _normalize(data: Dict[str, Any]) -> Dict[str, Any]:
         """字段兜底，避免前端拿到空字段炸"""
         from multi_agent.schemas import (
-            CONFIDENCE_LEVELS, confidence_to_level, level_to_confidence,
+            CONFIDENCE_LEVELS,
+            confidence_to_level,
+            level_to_confidence,
+            normalize_action,
+            normalize_leverage_hint,
+            normalize_position_hint,
         )
 
         bias = str(data.get("bias", "NEUTRAL")).upper()
@@ -581,10 +586,12 @@ class MarketAnalyzer:
             "horizon": str(data.get("horizon", "4H~24H")),
             "trend_regime": trend,
             "volatility_regime": vol,
+            "action": normalize_action(data.get("action")),
+            "entry_ok": bool(data.get("entry_ok", False)),
+            "position_size_hint": normalize_position_hint(data.get("position_size_hint")),
+            "leverage_hint": normalize_leverage_hint(data.get("leverage_hint")),
         }
 
-        if "entry_ok" in data:
-            normalized["entry_ok"] = bool(data.get("entry_ok"))
         if "invalidations" in data:
             normalized["invalidations"] = data.get("invalidations") or []
         if "committee" in data:

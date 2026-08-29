@@ -68,6 +68,20 @@ def level_to_confidence(level: str) -> int:
     return _LEVEL_TO_CONFIDENCE.get(level.upper().strip(), 20)
 
 
+_LEVEL_TO_SIZE_HINT = {
+    "VERY_STRONG": "100%",
+    "STRONG": "75%",
+    "MODERATE": "50%",
+    "CAUTIOUS": "25%",
+    "WEAK": "0%",
+}
+
+
+def size_hint_from_confidence(confidence: int) -> str:
+    """Derive a conservative position size from confidence."""
+    return _LEVEL_TO_SIZE_HINT[confidence_to_level(confidence)]
+
+
 def _clamp_confidence(value: Any) -> int:
     """Accept an int, a numeric string, or a level label."""
     if isinstance(value, str):
@@ -404,27 +418,42 @@ class CommitteeDecision(BaseModel):
     def _enforce_trade_rules(self) -> "CommitteeDecision":
         self.confidence_level = confidence_to_level(self.confidence)
 
-        if self.confidence < CONFIDENCE_CAUTIOUS_THRESHOLD and self.action in OPEN_ACTIONS:
-            self.action = "等待入场"
+        # 过低置信度：禁止开仓
+        if self.confidence < CONFIDENCE_CAUTIOUS_THRESHOLD:
+            if self.action in OPEN_ACTIONS:
+                self.action = "等待入场"
             self.entry_ok = False
             self.position_size_hint = "0%"
 
+        # Manager 常省略仓位建议；entry_ok=true 时按置信度补全，避免默认 0% 误杀入场
+        if self.entry_ok and self.position_size_hint == "0%":
+            self.position_size_hint = size_hint_from_confidence(self.confidence)
+
+        # 中性方向不允许开仓
+        if self.bias == "NEUTRAL":
+            if self.action in OPEN_ACTIONS:
+                self.action = "持仓观望"
+            self.entry_ok = False
+            self.position_size_hint = "0%"
+
+        # entry_ok 与仓位互相约束（在补全仓位之后再判定）
+        if self.position_size_hint == "0%":
+            self.entry_ok = False
         if not self.entry_ok and self.action in OPEN_ACTIONS:
             self.action = "等待入场"
             self.position_size_hint = "0%"
 
-        if self.position_size_hint == "0%":
-            self.entry_ok = False
+        # Manager 不再输出 action 时，由 bias + entry_ok 推导
+        if self.entry_ok and self.action not in OPEN_ACTIONS:
+            if self.bias == "LONG":
+                self.action = "加多"
+            elif self.bias == "SHORT":
+                self.action = "加空"
 
         if self.action == "加多":
             self.bias = "LONG"
         elif self.action == "加空":
             self.bias = "SHORT"
-
-        if self.bias == "NEUTRAL" and self.action in OPEN_ACTIONS:
-            self.action = "持仓观望"
-            self.entry_ok = False
-            self.position_size_hint = "0%"
 
         if self.confidence < CONFIDENCE_CAUTIOUS_THRESHOLD:
             self.leverage_hint = min(self.leverage_hint, 2)
