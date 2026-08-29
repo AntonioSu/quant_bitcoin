@@ -37,8 +37,8 @@ class AppState:
 
     PRESET_NAMES = ["conservative", "standard", "aggressive"]
     MARKET_REFRESH_INTERVAL = 300  # 市场数据刷新间隔 (秒)
-    NEWS_REFRESH_INTERVAL = 1800   # 新闻分析刷新间隔 (秒)
-    AI_REFRESH_INTERVAL = 900      # AI 综合研判刷新间隔 (秒)
+    NEWS_REFRESH_INTERVAL = 7200   # 新闻分析刷新间隔 (秒) — 2 小时
+    AI_REFRESH_INTERVAL = 3600     # AI 综合研判刷新间隔 (秒) — 1 小时
 
     def __init__(self):
         self.start_time = datetime.now()
@@ -75,6 +75,8 @@ class AppState:
         # AI 综合研判: 共享锁 (定时 + 手动复用), 上次完成时间戳 (用于手动冷却)
         self.ai_refresh_lock: asyncio.Lock = asyncio.Lock()
         self.ai_last_refresh_ts: float = 0.0
+        # 由 server.api 在导入时注入, 研判完成后立刻推送仪表盘
+        self.push_dashboard = None
     
     def get_scheduler(self, preset: Optional[str] = None):
         """获取指定预设的调度器，优先返回 sim 调度器"""
@@ -105,6 +107,15 @@ class AppState:
                 await ws.send_json(message)
             except:
                 self.ws_connections.remove(ws)
+
+    async def notify_frontend(self):
+        """AI / 新闻刷新完成后立刻推送当前仪表盘快照。"""
+        if not self.push_dashboard:
+            return
+        try:
+            await self.push_dashboard()
+        except Exception as e:
+            logger.warning(f"推送前端更新失败: {e}")
     
     async def start_market_refresh(self):
         """启动市场数据定时刷新"""
@@ -120,6 +131,7 @@ class AppState:
             while True:
                 try:
                     await refresh_news_data_async()
+                    await self.notify_frontend()
                 except Exception as e:
                     logger.error(f"刷新新闻分析失败: {e}")
                 await asyncio.sleep(self.NEWS_REFRESH_INTERVAL)
@@ -133,6 +145,7 @@ class AppState:
                     async with self.ai_refresh_lock:
                         await refresh_ai_analysis_async()
                         self.ai_last_refresh_ts = time.time()
+                    await self.notify_frontend()
                 except Exception as e:
                     logger.error(f"刷新 AI 综合研判失败: {e}")
                 await asyncio.sleep(self.AI_REFRESH_INTERVAL)
