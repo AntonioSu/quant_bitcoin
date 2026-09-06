@@ -1,7 +1,6 @@
 """交易调度器基础类和共享组件"""
 
 import asyncio
-import os
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional
@@ -11,11 +10,36 @@ from core import (
     get_analysis_memory, get_strategy_summarizer,
 )
 from core.market_data import market
-from indicators import LongLevel, ShortLevel
+from indicators import PositionLevel
 from multi_agent.trading_advisor import TradingAdvisor, TradingDecision
 from binance_utils import fetch_klines, fetch_price
 from server.state_store import StateStore
 from utils import logger
+
+# 调度器主循环节拍（秒）。工厂函数与类默认值共用此常量，避免两处漂移。
+DEFAULT_CHECK_INTERVAL = 60
+
+# 日志中标识持仓方向：长矛做多 / 神盾做空
+DIRECTION_ICON = {"LONG": "🗡️", "SHORT": "🛡️"}
+
+
+def _humanize_duration_since(start) -> str:
+    """把开仓时间转成 "35分钟" / "4.2小时" / "3.1天"，供 AI 提示词使用。"""
+    if not start:
+        return "未知"
+    try:
+        start_dt = datetime.fromisoformat(start) if isinstance(start, str) else start
+        seconds = (datetime.now() - start_dt).total_seconds()
+    except (TypeError, ValueError) as e:
+        logger.debug(f"持仓时长解析失败 ({start!r}): {e}")
+        return "未知"
+
+    hours = seconds / 3600
+    if hours < 1:
+        return f"{int(seconds / 60)}分钟"
+    if hours < 24:
+        return f"{hours:.1f}小时"
+    return f"{hours / 24:.1f}天"
 
 
 class Position:
@@ -33,10 +57,20 @@ class Position:
         self.liquidation_price = 0.0 # 强平价格
         self.sl_order_id = None      # 交易所止损挂单 ID (Live)
         self.analysis_id = None      # 开仓时对应的 AI 研判记录 ID
+        self.initial_stop = 0.0      # 开仓时的原始止损，用于计算 1R
+        self.mfe_price = 0.0         # 开仓以来最有利价格 (LONG 最高 / SHORT 最低)
+        self.stop_stage = "INIT"     # INIT → BREAKEVEN → TRAILING
 
     @property
     def is_active(self) -> bool:
         return self.direction != "NONE" and self.size_btc > 0
+
+    @property
+    def risk_unit(self) -> float:
+        """1R = 入场价到初始止损的距离"""
+        if self.entry_price <= 0 or self.initial_stop <= 0:
+            return 0.0
+        return abs(self.entry_price - self.initial_stop)
 
     def to_dict(self) -> dict:
         return {
@@ -48,6 +82,9 @@ class Position:
             "liquidation_price": self.liquidation_price,
             "sl_order_id": self.sl_order_id,
             "analysis_id": self.analysis_id,
+            "initial_stop": self.initial_stop,
+            "mfe_price": self.mfe_price,
+            "stop_stage": self.stop_stage,
         }
 
 
@@ -66,7 +103,7 @@ class BaseTradingScheduler(ABC):
     def __init__(
         self,
         config: Optional[TradingConfig] = None,
-        check_interval: int = 300,
+        check_interval: int = DEFAULT_CHECK_INTERVAL,
         state_file: Optional[str] = None,
     ):
         self.config = config or TradingConfig.get_preset(ParameterSet.STANDARD)
@@ -75,8 +112,8 @@ class BaseTradingScheduler(ABC):
         self.trading_advisor = TradingAdvisor()
         from indicators import ATRCalculator
         self._atr_calc_fallback = ATRCalculator(period=14, timeframe="4h")
-        self.long_level = LongLevel(self._atr_calc_fallback)
-        self.short_level = ShortLevel(self._atr_calc_fallback)
+        self.long_level = PositionLevel(self._atr_calc_fallback, is_long=True)
+        self.short_level = PositionLevel(self._atr_calc_fallback, is_long=False)
 
         self.running = False
         self.current_mode = TradingMode.IDLE
@@ -89,7 +126,6 @@ class BaseTradingScheduler(ABC):
         self._last_klines = []
 
         self._on_update_callbacks = []
-        self._on_signal_callbacks = []
         self._on_trade_callbacks = []
         
         # 状态持久化
@@ -107,8 +143,12 @@ class BaseTradingScheduler(ABC):
         return False
 
     @property
-    def dry_run(self) -> bool:
-        return not self.is_live
+    def initial_equity(self) -> float:
+        """本轮交易开始前的权益，供绩效模块作为权益曲线起点。
+
+        实盘权益同步自交易所，因此不能假定它等于 DEFAULT_EQUITY。
+        """
+        return self.equity - self.total_pnl
 
     @property
     def mode_label(self) -> str:
@@ -126,9 +166,6 @@ class BaseTradingScheduler(ABC):
 
     def on_update(self, callback):
         self._on_update_callbacks.append(callback)
-
-    def on_signal(self, callback):
-        self._on_signal_callbacks.append(callback)
 
     def on_trade(self, callback):
         self._on_trade_callbacks.append(callback)
@@ -162,6 +199,9 @@ class BaseTradingScheduler(ABC):
             "leverage": self.position.leverage,
             "sl_order_id": self.position.sl_order_id,
             "analysis_id": self.position.analysis_id,
+            "initial_stop": self.position.initial_stop,
+            "mfe_price": self.position.mfe_price,
+            "stop_stage": self.position.stop_stage,
         }
         state.update(self.trading_advisor.get_reduce_state())
         return state
@@ -204,6 +244,10 @@ class BaseTradingScheduler(ABC):
         self.position.leverage = saved.get("leverage", 1)
         self.position.sl_order_id = saved.get("sl_order_id")
         self.position.analysis_id = saved.get("analysis_id")
+        # 旧状态文件没有这三个字段，回退到"刚开仓"的等价值
+        self.position.initial_stop = saved.get("initial_stop") or self.position.stop_loss
+        self.position.mfe_price = saved.get("mfe_price") or self.position.entry_price
+        self.position.stop_stage = saved.get("stop_stage") or "INIT"
         self.trading_advisor.restore_reduce_state(saved)
         
         if not self.position.is_active:
@@ -229,21 +273,141 @@ class BaseTradingScheduler(ABC):
         """同步仓位状态"""
 
     @abstractmethod
+    async def _execute_open(self, direction: str, notional: float,
+                            btc_price: float) -> Optional[tuple]:
+        """真正建仓（Sim 记账 / Live 下单）
+
+        Returns:
+            (成交价, 成交 BTC 数量)，失败返回 None
+        """
+
+    @abstractmethod
+    async def _execute_close(self, is_long: bool, close_ratio: float,
+                             btc_price: float) -> Optional[float]:
+        """真正平仓（Sim 记账 / Live 下单）
+
+        Returns:
+            成交价，失败返回 None
+        """
+
+    def _reject_open(self, direction: str, notional: float, leverage: int) -> Optional[str]:
+        """开仓前置检查，返回拒绝原因；None 表示放行。子类可加更多护栏。"""
+        if self.position.is_active:
+            return f"已有 {self.position.direction} 仓位"
+        return None
+
+    # ── 开平仓模板（Sim / Live 共用，差异只在上面的钩子）──────────
+
+    async def _open_position(self, direction: str, btc_price: float, klines: list,
+                             market_indicators: dict = None,
+                             decision: TradingDecision = None) -> Optional[dict]:
+        """开仓统一流程：AI 仓位 → 护栏 → 止损价位 → 建仓 → 落账"""
+        is_long = direction == "LONG"
+        notional, leverage = self._resolve_ai_sizing(decision)
+
+        reject = self._reject_open(direction, notional, leverage)
+        if reject:
+            logger.warning(f"⚠️ 拒绝开{'多' if is_long else '空'}: {reject}")
+            return None
+
+        cfg = self.config.long if is_long else self.config.short
+        level = self.long_level if is_long else self.short_level
+        sig_meta = self._get_signal_metadata()
+
+        try:
+            levels = level.calculate(
+                entry_price=btc_price,
+                klines=klines,
+                atr_multiplier=cfg.atr_multiplier,
+                leverage=leverage,
+                notional_value=notional,
+            )
+        except Exception as e:
+            logger.error(f"ATR 计算失败: {e}, 使用兜底价位")
+            levels = level.fallback(btc_price, leverage=leverage, notional_value=notional)
+
+        fill = await self._execute_open(direction, notional, btc_price)
+        if not fill:
+            return None
+        fill_price, fill_amount = fill
+
+        self.position.direction = direction
+        self.position.entry_price = fill_price
+        self.position.size_btc = fill_amount
+        self.position.stop_loss = levels["stop_loss"]
+        self.position.leverage = leverage
+        self.position.liquidation_price = levels["liquidation_price"]
+        self.position.analysis_id = sig_meta["analysis_id"]
+
+        logger.info(
+            f"{DIRECTION_ICON[direction]} {self.mode_label}开{'多' if is_long else '空'}: "
+            f"{fill_amount:.4f} BTC @ ${fill_price:,.0f} "
+            f"(${notional:,.0f}, {leverage}x), "
+            f"止损=${levels['stop_loss']:,.0f}, 强平=${levels['liquidation_price']:,.0f}"
+        )
+
+        return self._make_trade(
+            direction, direction, fill_price, fill_amount, 0,
+            market_indicators=market_indicators,
+            trigger_reason=decision.reason if decision else None,
+            signal_confidence=sig_meta["confidence"],
+            position_levels=levels,
+            analysis_id=self.position.analysis_id,
+            notional=notional, leverage=leverage,
+        )
+
     async def _open_long(self, btc_price: float, klines: list,
                          market_indicators: dict = None,
                          decision: TradingDecision = None) -> Optional[dict]:
-        """开多仓，返回交易记录"""
+        return await self._open_position("LONG", btc_price, klines, market_indicators, decision)
 
-    @abstractmethod
     async def _open_short(self, btc_price: float, klines: list,
                           market_indicators: dict = None,
                           decision: TradingDecision = None) -> Optional[dict]:
-        """开空仓，返回交易记录"""
+        return await self._open_position("SHORT", btc_price, klines, market_indicators, decision)
 
-    @abstractmethod
     async def _close_position(self, btc_price: float, reason: str = "",
                               close_ratio: float = 1.0, is_partial: bool = False) -> Optional[dict]:
-        """平仓（全部或部分），返回交易记录"""
+        """平仓统一流程（全平或减仓），返回交易记录"""
+        if not self.position.is_active:
+            return None
+
+        is_long = self.position.direction == "LONG"
+        fill_price = await self._execute_close(is_long, close_ratio, btc_price)
+        if fill_price is None:
+            return None
+
+        close_btc = self.position.size_btc * close_ratio
+        sign = 1 if is_long else -1
+        pnl = sign * (fill_price - self.position.entry_price) * close_btc
+
+        mode_str = "LONG" if is_long else "SHORT"
+        action = "REDUCE" if (is_partial and close_ratio < 1.0) else "CLOSE"
+
+        logger.info(
+            f"{DIRECTION_ICON[mode_str]} {self.mode_label}平仓: "
+            f"{close_btc:.4f} BTC @ ${fill_price:,.0f}, "
+            f"入场=${self.position.entry_price:,.0f}, "
+            f"PnL=${pnl:+,.2f} ({reason})"
+        )
+
+        trade = self._make_trade(mode_str, action, fill_price, close_btc, pnl,
+                                 entry_price=self.position.entry_price,
+                                 market_indicators=self._capture_market_indicators(),
+                                 trigger_reason=reason or None,
+                                 analysis_id=self.position.analysis_id,
+                                 notional=close_btc * fill_price,
+                                 leverage=self.position.leverage)
+
+        if close_ratio >= 1.0:
+            self.position.reset()
+        else:
+            self.position.size_btc -= close_btc
+            if self.position.size_btc < 0.0001:
+                logger.info("📌 剩余仓位过小，视为全平")
+                self.position.reset()
+
+        return trade
 
     # ── 框架方法（共享逻辑）────────────────────────────────────
 
@@ -387,10 +551,8 @@ class BaseTradingScheduler(ABC):
             if self.position.is_active:
                 self.save_position_state()
 
-        except Exception as e:
-            logger.error(f"检查执行错误: {e}")
-            import traceback
-            traceback.print_exc()
+        except Exception:
+            logger.exception("检查执行错误")
 
     def _capture_market_indicators(self) -> dict:
         """从全局 market 中提取完整的市场指标快照（开仓 / 平仓通用）"""
@@ -521,38 +683,22 @@ class BaseTradingScheduler(ABC):
             logger.error(f"捕获市场指标失败: {e}")
             return {}
 
+    def _position_open_time(self):
+        """从 AI 研判记忆里取当前仓位的开仓时间，取不到返回 None。"""
+        if not self.position.analysis_id:
+            return None
+        try:
+            memory = get_analysis_memory()
+            record = memory.get_record(self.position.analysis_id) if memory else None
+            return (record or {}).get("timestamp")
+        except Exception as e:
+            logger.debug(f"读取开仓时间失败 (analysis_id={self.position.analysis_id}): {e}")
+            return None
+
     def _update_position_context(self, btc_price: float):
         """更新全局持仓上下文，供 AI 分析时使用"""
         if self.position.is_active:
-            open_time = None
-            if self.position.analysis_id:
-                try:
-                    memory = get_analysis_memory()
-                    if memory:
-                        record = memory.get_record(self.position.analysis_id)
-                        if record and record.get("timestamp"):
-                            open_time = record["timestamp"]
-                except Exception:
-                    pass
-
-            duration = "未知"
-            if open_time:
-                try:
-                    from datetime import datetime as _dt
-                    if isinstance(open_time, str):
-                        open_dt = _dt.fromisoformat(open_time)
-                    else:
-                        open_dt = open_time
-                    delta = datetime.now() - open_dt
-                    hours = delta.total_seconds() / 3600
-                    if hours < 1:
-                        duration = f"{int(delta.total_seconds() / 60)}分钟"
-                    elif hours < 24:
-                        duration = f"{hours:.1f}小时"
-                    else:
-                        duration = f"{hours / 24:.1f}天"
-                except Exception:
-                    pass
+            duration = _humanize_duration_since(self._position_open_time())
 
             market.position_context = {
                 "is_active": True,
@@ -608,11 +754,71 @@ class BaseTradingScheduler(ABC):
             }
         return {"confidence": 0, "analysis_id": None}
 
+    def _arm_protective_stop(self):
+        """开仓后记录风险基准，供保本 / 移动止损使用"""
+        self.position.initial_stop = self.position.stop_loss
+        self.position.mfe_price = self.position.entry_price
+        self.position.stop_stage = "INIT"
+
+    async def _update_protective_stop(self, btc_price: float):
+        """保本 + 移动止损（棘轮：止损只朝有利方向移动）
+
+        R = 开仓时的止损距离。
+          浮盈 >= breakeven_trigger_r × R → 止损上移到成本价
+          峰值浮盈 >= trailing_trigger_r × R → 止损跟在峰值回撤 trailing_distance_r × R 处
+        """
+        pos = self.position
+        risk = self.config.risk
+        R = pos.risk_unit
+        if R <= 0 or btc_price <= 0:
+            return
+
+        is_long = pos.direction == "LONG"
+
+        if pos.mfe_price <= 0:
+            pos.mfe_price = pos.entry_price
+        pos.mfe_price = max(pos.mfe_price, btc_price) if is_long else min(pos.mfe_price, btc_price)
+
+        peak_profit = (pos.mfe_price - pos.entry_price) if is_long else (pos.entry_price - pos.mfe_price)
+
+        candidate = None
+        stage = pos.stop_stage
+        if peak_profit >= risk.trailing_trigger_r * R:
+            offset = risk.trailing_distance_r * R
+            candidate = (pos.mfe_price - offset) if is_long else (pos.mfe_price + offset)
+            stage = "TRAILING"
+        elif peak_profit >= risk.breakeven_trigger_r * R:
+            candidate = pos.entry_price
+            stage = "BREAKEVEN"
+
+        if candidate is None:
+            return
+
+        improved = (candidate > pos.stop_loss) if is_long else (candidate < pos.stop_loss)
+        if not improved:
+            return
+
+        old_stop = pos.stop_loss
+        pos.stop_loss = candidate
+        pos.stop_stage = stage
+        logger.info(
+            f"🔒 {'保本' if stage == 'BREAKEVEN' else '移动'}止损: "
+            f"${old_stop:,.0f} → ${candidate:,.0f} "
+            f"(峰值=${pos.mfe_price:,.0f}, 浮盈={peak_profit / R:.2f}R)"
+        )
+        await self._on_stop_loss_moved()
+        self.save_position_state()
+
+    async def _on_stop_loss_moved(self):
+        """止损价被抬高后的钩子（Live 覆盖以替换交易所止损单）"""
+
     async def _check_safety_exits(self, btc_price: float) -> list:
-        """硬安全网: 强平 + 止损（每 tick 检查，不依赖 AI）"""
+        """硬安全网: 强平 + 保本/移动止损 + 止损（每 tick 检查，不依赖 AI）"""
         trades = []
         if not self.position.is_active:
             return trades
+
+        await self._update_protective_stop(btc_price)
 
         is_long = self.position.direction == "LONG"
 
@@ -634,15 +840,68 @@ class BaseTradingScheduler(ABC):
                      (not is_long and btc_price >= self.position.stop_loss)
             if hit_sl:
                 sl_price = self.position.stop_loss
-                trade = await self._close_position(btc_price, reason="止损触发")
+                reason = {
+                    "BREAKEVEN": "保本止损触发",
+                    "TRAILING": "移动止盈触发",
+                }.get(self.position.stop_stage, "止损触发")
+                trade = await self._close_position(btc_price, reason=reason)
                 if trade:
                     trades.append(trade)
                 logger.warning(
-                    f"🛑 止损触发: 价格=${btc_price:,.0f} 触及止损价=${sl_price:,.0f}"
+                    f"🛑 {reason}: 价格=${btc_price:,.0f} 触及止损价=${sl_price:,.0f}"
                 )
                 return trades
 
         return trades
+
+    def _entry_range_position(
+        self, direction: str, btc_price: float, klines: list,
+    ) -> Optional[float]:
+        """开仓价在最近 range_lookback_hours 区间中的"顺方向位置"(%)
+
+        以已收盘 K 线构造区间（排除进行中的当前根），因此突破时可以 >100%。
+          LONG  → 0% 贴区间底部（支撑位进场），100% 贴区间顶部（追高）
+          SHORT → 数值镜像，0% 贴区间顶部（高位做空），100% 贴区间底部（杀跌）
+        K 线不足时返回 None，表示无法判断、不拦截。
+        """
+        bars = max(2, int(self.config.risk.range_lookback_hours / 4))
+        window = klines[-(bars + 1):-1] if len(klines) >= 3 else []
+        if len(window) < 2:
+            return None
+
+        high = max(k[2] for k in window)
+        low = min(k[3] for k in window)
+        if high <= low:
+            return None
+
+        pct = (btc_price - low) / (high - low) * 100
+        return pct if direction == "LONG" else 100.0 - pct
+
+    def _check_range_guard(
+        self, direction: str, btc_price: float, klines: list,
+    ) -> Optional[str]:
+        """追高护栏：拒绝在区间顺方向另一端开仓，返回拒绝原因；None 表示放行。
+
+        历史数据显示这一档（顺方向 60~100%）胜率仅 19%，是主要亏损来源。
+        """
+        risk = self.config.risk
+        pos_pct = self._entry_range_position(direction, btc_price, klines)
+        if pos_pct is None:
+            return None
+
+        if pos_pct >= risk.breakout_range_pct:
+            logger.info(
+                f"📈 突破放行: {direction} 开仓价已突破近 "
+                f"{risk.range_lookback_hours}h 区间 ({pos_pct:.0f}%)"
+            )
+            return None
+
+        if pos_pct >= risk.max_entry_range_pct:
+            return (
+                f"追高护栏: 开仓价处于近{risk.range_lookback_hours}h区间 "
+                f"{pos_pct:.0f}% (阈值{risk.max_entry_range_pct:.0f}%)"
+            )
+        return None
 
     async def _execute_trading_decision(
         self, decision: TradingDecision, btc_price: float, klines: list,
@@ -651,17 +910,24 @@ class BaseTradingScheduler(ABC):
         trades = []
 
         if decision.is_open and not self.position.is_active:
+            reject = self._check_range_guard(decision.direction, btc_price, klines)
+            if reject:
+                logger.warning(f"⚠️ 拒绝{decision.action}: {reject}")
+                return trades
+
             market_indicators = self._capture_market_indicators()
             if decision.action == "开多":
                 trade = await self._open_long(btc_price, klines, market_indicators, decision)
                 if trade:
                     trades.append(trade)
+                    self._arm_protective_stop()
                     await self._on_position_opened()
                     self.current_mode = TradingMode.LONG
             elif decision.action == "开空":
                 trade = await self._open_short(btc_price, klines, market_indicators, decision)
                 if trade:
                     trades.append(trade)
+                    self._arm_protective_stop()
                     await self._on_position_opened()
                     self.current_mode = TradingMode.SHORT
 
