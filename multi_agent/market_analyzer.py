@@ -416,11 +416,63 @@ class MarketAnalyzer:
                 "signal": raw.get("signal"),
             }
 
+        price_pos = self._build_price_position(market)
+        if price_pos:
+            snap["price_position"] = price_pos
+
         snap["last_update"] = (
             market.last_update.isoformat() if market.last_update else None
         )
 
         return snap
+
+    @staticmethod
+    def _range_position_pct(klines: list, lookback_hours: int = 48) -> Optional[float]:
+        """当前价在近 lookback_hours 已收盘区间中的位置(%)。
+
+        与 BaseTradingScheduler._entry_range_position 保持同一套算法：区间只用
+        已收盘 K 线（排除进行中的当前根），因此向上突破时可以 >100%，向下跌破 <0%。
+        这样研判层看到的位置和执行层护栏用的是同一个尺度。
+        """
+        if not klines or len(klines) < 3:
+            return None
+        bars = max(2, int(lookback_hours / 4))
+        window = klines[-(bars + 1):-1]
+        if len(window) < 2:
+            return None
+
+        high = max(float(k[2]) for k in window)
+        low = min(float(k[3]) for k in window)
+        if high <= low:
+            return None
+
+        # 当前价取进行中那根的收盘价，与各指标的 closes[-1] 口径一致
+        cur = float(klines[-1][4])
+        return (cur - low) / (high - low) * 100
+
+    def _build_price_position(self, market) -> Dict[str, Any]:
+        """价格的相对位置信息。
+
+        全部为相对量（百分比 / 强度），不含 BTC 绝对价：绝对价对判方向无用，
+        反而容易让 LLM 拿训练数据里的价位当锚。
+        """
+        pos: Dict[str, Any] = {}
+
+        pct = self._range_position_pct(market.klines_4h)
+        if pct is not None:
+            pos["range_48h_pct"] = round(pct, 1)
+            pos["_note"] = "0=区间底部, 100=区间顶部, >100=向上突破, <0=向下跌破"
+
+        sr = market.support_resistance
+        if sr:
+            if sr.nearest_resistance:
+                pos["dist_to_resistance_pct"] = sr.nearest_resistance.distance_pct
+                pos["resistance_touches"] = sr.nearest_resistance.touches
+            if sr.nearest_support:
+                pos["dist_to_support_pct"] = sr.nearest_support.distance_pct
+                pos["support_touches"] = sr.nearest_support.touches
+
+        return pos
 
     def _analyze(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
         dynamic_context = self._build_dynamic_context()

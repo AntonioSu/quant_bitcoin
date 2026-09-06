@@ -61,6 +61,7 @@
 - volatility_regime=LOW_VOL_COMPRESSION 时，confidence_level 最高 MODERATE；若趋势方向明确（UP/DOWN）且 ≥2 维度顺势共振，应给出方向 + entry_ok=true（可轻仓），不要仅因缩量就阻断。
 - volatility_regime=HIGH_VOL_EXTREME 时，confidence_level 最高 MODERATE，risks 必须包含流动性、爆仓或滑点风险。
 - bias 与 trend_regime 方向相反时，key_drivers 至少包含 2 条 high 权重反转确认（不得两条都是 RSI/MACD）；否则改为 NEUTRAL。
+- 快照里的 `price_position.range_48h_pct` 表示当前价在近 48H 已收盘区间的位置。执行层有追高护栏：顺方向落在 60~100% 会被拒绝开仓（>100% 视为突破放行）。因此当 range_48h_pct 在 60~100% 时不要给 LONG + entry_ok=true，当它在 0~40% 时不要给 SHORT + entry_ok=true——这类信号必被拦掉，写方向也是空转。此时应把该位置写进 risks，等回落/突破再入场。
 - key_drivers 3-5 条。
 - risks 1-3 条。
 - 不存在比 STRONG 更高的等级，STRONG 已是最高。

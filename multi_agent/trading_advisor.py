@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 
+from multi_agent.risk_tools import SIZE_PCT_MAP, RiskLevelTool
 from utils import logger
 from utils.common_utils import read_file_prompt
 from utils.llm_client import LLMClient
@@ -27,7 +28,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 _PROMPT_DIR = os.path.join(os.path.dirname(__file__), 'prompts')
 
 VALID_ACTIONS = {"开多", "开空", "平仓", "减仓", "持仓观望", "等待入场"}
-_SIZE_HINTS = {"0%", "25%", "50%", "75%", "100%"}
+_SIZE_HINTS = set(SIZE_PCT_MAP)
 _LEVEL_RANK = {
     "WEAK": 0,
     "CAUTIOUS": 1,
@@ -49,6 +50,9 @@ class TradingDecision:
     position_size_hint: str = "50%"
     leverage_hint: int = 5
     reason: str = ""
+    # AI 自定风控（相对量，None 表示沿用档位默认值）
+    stop_atr_mult: Optional[float] = None   # 止损距离 = ATR × 该倍数
+    tp_trigger_r: Optional[float] = None    # 部分止盈触发的 R 倍数
     _from_cache: bool = field(default=False, repr=False)
 
     @property
@@ -100,6 +104,7 @@ class TradingAdvisor:
         btc_price: float,
         equity: float,
         holding_duration: str = "未知",
+        risk_tool: Optional[RiskLevelTool] = None,
     ) -> TradingDecision:
         """做一次交易决策（有缓存，信号/仓位不变时直接返回缓存）"""
 
@@ -132,11 +137,24 @@ class TradingAdvisor:
         )
 
         try:
-            resp = self.llm.chat(
-                system_prompt=self._load_system_prompt(),
-                prompt=prompt,
-                usage_tag="[trading]",
-            )
+            # 无仓时才给风控工具：只有开仓需要定止损宽度和止盈线，
+            # 已持仓的 R 在开仓时就固定了，再让模型试算只是白烧 token。
+            if risk_tool is not None and position_direction == "NONE":
+                resp = self.llm.chat_with_tools(
+                    system_prompt=self._load_system_prompt(),
+                    prompt=prompt,
+                    tools=risk_tool.schema,
+                    dispatch=risk_tool.dispatch,
+                    max_rounds=3,
+                    usage_tag="[trading]",
+                )
+                logger.info(f"🔧 风控试算: {risk_tool.summary()}")
+            else:
+                resp = self.llm.chat(
+                    system_prompt=self._load_system_prompt(),
+                    prompt=prompt,
+                    usage_tag="[trading]",
+                )
             decision = self._parse_response(resp, position_direction)
         except Exception as e:
             logger.error(f"🤖 交易决策 LLM 调用失败: {e}")
@@ -244,10 +262,18 @@ class TradingAdvisor:
             if allow_open:
                 return decision
 
-            reason = (
-                f"护栏拦截开仓: entry_ok={entry_ok}, bias={bias}, "
-                f"{level}<{_MIN_OPEN_LEVEL}"
-            )
+            # 逐条列出真正不满足的条件：以前无论哪一项失败都打印
+            # "{level}<{_MIN_OPEN_LEVEL}"，等级明明够时也这么写，误导排查。
+            blockers = []
+            if not entry_ok:
+                blockers.append("entry_ok=false")
+            if bias not in ("LONG", "SHORT"):
+                blockers.append(f"bias={bias}")
+            if level_rank < min_open_rank:
+                blockers.append(f"{level}<{_MIN_OPEN_LEVEL}")
+            if not blockers:
+                blockers.append(f"方向不符({decision.action} vs bias={bias})")
+            reason = f"护栏拦截开仓: {', '.join(blockers)}"
             logger.info("🛡️ %s", reason)
             return TradingDecision(
                 action="等待入场",
@@ -520,12 +546,29 @@ class TradingAdvisor:
 
         reason = str(data.get("reason", "")).strip()[:80]
 
+        # 只做类型解析，不在此钳制区间：风控边界由调度器按 RiskConfig 执行，
+        # 避免上下限散落两处。非数字或非正数一律视为「未指定」，回落档位默认。
+        def _opt_positive(key: str) -> Optional[float]:
+            raw = data.get(key)
+            if raw is None or raw == "":
+                return None
+            try:
+                val = float(raw)
+            except (TypeError, ValueError):
+                logger.warning(f"🤖 Trading AI {key} 非数字，忽略: {raw!r}")
+                return None
+            if val <= 0:
+                return None
+            return val
+
         return TradingDecision(
             action=action,
             close_ratio=close_ratio,
             position_size_hint=size_hint,
             leverage_hint=leverage,
             reason=reason,
+            stop_atr_mult=_opt_positive("stop_atr_mult"),
+            tp_trigger_r=_opt_positive("tp_trigger_r"),
         )
 
     @staticmethod
