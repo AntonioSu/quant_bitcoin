@@ -338,11 +338,20 @@
 }
 
 .ai-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
     font-size: 10px;
     color: var(--text-dim);
     margin-top: 6px;
     font-family: var(--font-mono);
-    text-align: right;
+}
+
+.refresh-countdown {
+    margin-left: auto;
+    white-space: nowrap;
+    opacity: 0.85;
 }
 
 @media (max-width: 768px) {

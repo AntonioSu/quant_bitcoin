@@ -25,6 +25,7 @@ async function init() {
     syncCharts();
     initEquityChart();
     initAiRefreshButton();
+    startRefreshCountdowns();
 
     await Promise.all([
         loadKlines(),

@@ -51,3 +51,38 @@ function formatClockTime(iso) {
     }
     return dt.toLocaleTimeString('zh-CN', clockOpts);
 }
+
+// Clock-aligned refresh timers (must match server/scheduler.py)
+const AI_REFRESH_INTERVAL_SEC = 3600;
+const NEWS_REFRESH_INTERVAL_SEC = 7200;
+
+function msUntilNextBoundary(intervalSec) {
+    const intervalMs = intervalSec * 1000;
+    const now = Date.now();
+    return intervalMs - (now % intervalMs);
+}
+
+function formatCountdown(ms) {
+    const total = Math.max(0, Math.ceil(ms / 1000));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (h > 0) {
+        return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function renderRefreshCountdown(el, intervalSec) {
+    if (!el) return;
+    el.textContent = '下次 ' + formatCountdown(msUntilNextBoundary(intervalSec));
+}
+
+function startRefreshCountdowns() {
+    const tick = () => {
+        renderRefreshCountdown(document.getElementById('ai-countdown'), AI_REFRESH_INTERVAL_SEC);
+        renderRefreshCountdown(document.getElementById('news-countdown'), NEWS_REFRESH_INTERVAL_SEC);
+    };
+    tick();
+    setInterval(tick, 1000);
+}

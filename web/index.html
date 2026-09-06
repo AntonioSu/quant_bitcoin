@@ -10,8 +10,8 @@
     <link rel="stylesheet" href="/static/css/base.css?v=20260623b">
     <link rel="stylesheet" href="/static/css/header.css?v=20260623b">
     <link rel="stylesheet" href="/static/css/layout.css?v=20260623b">
-    <link rel="stylesheet" href="/static/css/ai_analysis.css?v=20260623b">
-    <link rel="stylesheet" href="/static/css/indicators.css?v=20260623b">
+    <link rel="stylesheet" href="/static/css/ai_analysis.css?v=20260831a">
+    <link rel="stylesheet" href="/static/css/indicators.css?v=20260831a">
     <link rel="stylesheet" href="/static/css/trades.css?v=20260623b">
     <link rel="stylesheet" href="/static/css/responsive.css?v=20260622b">
 </head>
@@ -113,7 +113,10 @@
                         <ul class="ai-factors-list" id="ai-risk-list"></ul>
                     </div>
                 </div>
-                <div class="ai-meta" id="ai-updated-at"></div>
+                <div class="ai-meta">
+                    <span id="ai-updated-at"></span>
+                    <span class="refresh-countdown" id="ai-countdown"></span>
+                </div>
             </div>
         </div>
 
@@ -138,7 +141,10 @@
                     </div>
                 </div>
                 <div class="news-reasoning" id="news-reasoning">等待首次分析...</div>
-                <div class="news-meta" id="news-updated-at"></div>
+                <div class="news-meta">
+                    <span id="news-updated-at"></span>
+                    <span class="refresh-countdown" id="news-countdown"></span>
+                </div>
             </div>
         </div>
 
@@ -470,7 +476,7 @@
 
     <script src="/static/js/theme.js?v=20260623b"></script>
     <script src="/static/js/config.js?v=20260622a"></script>
-    <script src="/static/js/utils.js?v=20260828b"></script>
+    <script src="/static/js/utils.js?v=20260831a"></script>
     <script src="/static/js/charts.js?v=20260522a"></script>
     <script src="/static/js/indicators.js?v=20260828a"></script>
     <script src="/static/js/ai_analysis.js?v=20260828a"></script>
@@ -478,6 +484,6 @@
     <script src="/static/js/performance.js?v=20260520a"></script>
     <script src="/static/js/trades.js?v=20260621b"></script>
     <script src="/static/js/data_loader.js?v=20260828c"></script>
-    <script src="/static/js/main.js?v=20260520a"></script>
+    <script src="/static/js/main.js?v=20260831a"></script>
 </body>
 </html>

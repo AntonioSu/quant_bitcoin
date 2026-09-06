@@ -442,6 +442,10 @@
 }
 
 .news-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
     font-size: 10px;
     color: var(--text-dim);
     margin-top: 8px;
