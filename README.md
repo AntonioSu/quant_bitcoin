@@ -159,47 +159,34 @@ quant_bitcoin/
 - 交易记录 (trades)
 - 模式状态 (aegis/spear)
 
-### API 接口
-
-```bash
-# 重置状态为初始值
-curl -X POST http://localhost:8088/api/reset
-```
-
 ## 历史数据
 
-所有指标数据自动保存到 `data/history/` 目录，服务重启后可查看历史记录。
+指标数据由 `server/history_store.py` 自动落盘到 `data/history/`，服务重启后不丢失。
 
-### 历史数据 API
-
-```bash
-# 获取 F&G 指数历史 (最近100条)
-curl http://localhost:8088/api/history/fear_greed
-
-# 获取最近7天的资金费率
-curl "http://localhost:8088/api/history/funding_rate?days=7"
-
-# 获取巨鲸流向统计
-curl http://localhost:8088/api/history/whale_netflow/stats
-
-# 获取 BTC 价格历史
-curl "http://localhost:8088/api/history/btc_price?limit=500"
-
-# 清除某类历史数据
-curl -X DELETE http://localhost:8088/api/history/fear_greed
-
-# 清除所有历史数据
-curl -X DELETE http://localhost:8088/api/history/all
-```
-
-### 支持的数据类型
+### 落盘的数据类型
 
 | 类型 | 说明 | 存储文件 |
 |------|------|---------|
 | `fear_greed` | F&G 指数 | `data/history/fear_greed.json` |
 | `funding_rate` | 资金费率 | `data/history/funding_rate.json` |
-| `whale_netflow` | 巨鲸净流向 | `data/history/whale_netflow.json` |
+| `top_trader_ratio` | 大户多空比 | `data/history/top_trader_ratio.json` |
 | `btc_price` | BTC 价格 | `data/history/btc_price.json` |
+| `etf_flow` | ETF 资金流 | `data/history/etf_flow.json` |
+| `exchange_netflow` | 交易所净流入 | `data/history/exchange_netflow.json` |
+
+### 对外暴露的历史接口
+
+按日聚合的两类历史通过独立接口提供（本地历史 + 数据源增量合并）：
+
+```bash
+# ETF 每日资金流 (limit=0 返回全部，按日期倒序)
+curl "http://localhost:8088/api/etf-flow?limit=30"
+
+# 交易所每日净流入
+curl "http://localhost:8088/api/exchange-netflow?limit=30"
+```
+
+> 其余落盘数据目前只供前端图表内部使用，未开放独立的读取/删除接口。
 
 ## 三档参数
 
@@ -229,8 +216,7 @@ curl -X DELETE http://localhost:8088/api/history/all
 |------|------|
 | 单次最大亏损 | 1.0% 权益 |
 | ATR止损倍数 | 2.0 (止损宽，不易被震出) |
-| 移动止盈倍数 | 0.5 |
-| 做空杠杆 | 2x |
+| 做空杠杆 | 5x |
 | 做多杠杆 | 10x |
 
 ---
@@ -261,8 +247,7 @@ curl -X DELETE http://localhost:8088/api/history/all
 |------|------|
 | 单次最大亏损 | 1.5% 权益 |
 | ATR止损倍数 | 1.5 |
-| 移动止盈倍数 | 0.5 |
-| 做空杠杆 | 2x |
+| 做空杠杆 | 5x |
 | 做多杠杆 | 10x |
 
 ---
@@ -291,46 +276,77 @@ curl -X DELETE http://localhost:8088/api/history/all
 
 | 参数 | 值 |
 |------|------|
-| 单次最大亏损 | 2.5% 权益 |
+| 单次最大亏损 | 5.0% 权益 |
 | ATR止损倍数 | 1.2 (止损紧，容易被震出) |
-| 移动止盈倍数 | 0.5 |
-| 做空杠杆 | 2x |
+| 做空杠杆 | 5x |
 | 做多杠杆 | 10x |
 
 ### 开仓与平仓分离
 
 - **信号决定开仓**: 三灯全绿时开仓，信号变化不会平掉现有仓位
-- **止损/止盈决定平仓**: 仓位由价格驱动的止损和止盈管理
+- **止损决定平仓**: 仓位由价格驱动的止损管理，AI 只能在信号反转时减仓/平仓
 
-### 止盈止损机制
+### 风险管理参数 (三档共用，`core/config.py` 的 `RiskConfig`)
+
+| 参数 | 默认值 | 含义 |
+|------|--------|------|
+| `breakeven_trigger_r` | 0.5 | 浮盈达 0.5R → 止损移到成本价 |
+| `trailing_trigger_r` | 1.5 | 峰值浮盈达 1.5R → 启动移动止损 |
+| `trailing_distance_r` | 1.25 | 移动止损挂在峰值回撤 1.25R 处 |
+| `range_lookback_hours` | 48 | 追高护栏的区间回看窗口 |
+| `max_entry_range_pct` | 60 | 顺方向位置 ≥ 60% 视为追高，拒绝开仓 |
+| `breakout_range_pct` | 100 | 突破区间（创新高/新低）放行 |
+
+### 保本 / 移动止损机制
+
+**R = 开仓时的止损距离 = ATR × ATR止损倍数**，是单笔风险单位。
+不设固定止盈目标（让利润奔跑），只用棘轮式止损保护已有浮盈：
 
 ```
-阶段1 (TP1前):
-  止损价 = 入场价 - ATR × ATR止损倍数
-  TP1价  = 入场价 + ATR × ATR止损倍数 (1:1 盈亏比)
+阶段1 (开仓):
+  止损价 = 入场价 - ATR × ATR止损倍数        (LONG，SHORT 反向)
 
-阶段2 (TP1后 → 移动止盈):
-  TP1 触发 → 平掉 50% 仓位，启动移动止盈
-  trailing_stop = 最高价 - ATR × 移动止盈倍数
-  止盈线只会往有利方向移动，永远不回退
-  价格跌破止盈线 → 平掉剩余 50%
+阶段2 (浮盈 ≥ 0.5R → 保本):
+  止损价 = 入场价                            风险归零
+
+阶段3 (峰值浮盈 ≥ 1.5R → 移动止损):
+  止损价 = 峰值价 - 1.25R
+  止损只朝有利方向移动，永远不回退
 ```
 
-### 示例 (Standard, ATR ≈ $980)
+### 示例 (Standard, ATR ≈ $980, ATR止损倍数 1.5 → R = $1,470)
 
 ```
 开多 @ $69,000
-  止损 = $69,000 - $1,470 = $67,530
-  TP1  = $69,000 + $1,470 = $70,470
+  初始止损 = $69,000 - $1,470 = $67,530
 
-涨到 $70,470 → TP1: 平 50%, trailing_dist = $490
-  止盈线 = $70,470 - $490 = $69,980
+涨到 $69,735 (+0.5R) → 保本: 止损上移到 $69,000
 
-继续涨到 $72,000:
-  止盈线上移 = $72,000 - $490 = $71,510
+涨到 $71,205 (+1.5R) → 启动移动止损:
+  止损 = $71,205 - $1,838 = $69,367   (已锁定 +$367)
 
-回落到 $71,510 → 移动止盈触发: 平剩余 50%
+继续涨到 $73,000 (+2.7R):
+  止损上移 = $73,000 - $1,838 = $71,162
+
+回落到 $71,162 → 移动止盈触发，全平
 ```
+
+### 追高护栏
+
+历史数据显示，开仓价落在近 48h 区间「顺方向 60~100%」区段的交易胜率仅 19%，
+是震荡行情下的主要亏损来源（追高做多 / 杀跌做空）。开仓前检查：
+
+```
+顺方向位置 = LONG:  (开仓价 - 区间低) / (区间高 - 区间低)
+             SHORT: 1 - 上式
+
+< 60%   → 放行（区间下沿做多 / 上沿做空）
+60~100% → 拒绝开仓（追高）
+> 100%  → 放行（已突破区间，属于趋势跟随而非追高）
+```
+
+区间由已收盘的 4H K 线构造（排除进行中的当前根），因此突破时位置可以 > 100%。
+K 线不足或区间退化时不拦截。
 ## 指标解释
 
 ### F&G 指数计算逻辑
