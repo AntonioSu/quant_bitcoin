@@ -198,6 +198,44 @@ def test_merge_risk_fills_missing_size_hint():
     assert merged["position_size_hint"] == "25%"
 
 
+def _kline(high, low, close):
+    """[open_ms, open, high, low, close, volume, ...] 的最小可用形态"""
+    return [0, close, high, low, close, 0]
+
+
+def test_range_position_excludes_unclosed_candle_and_detects_breakout():
+    """区间必须只用已收盘 K 线，否则突破永远算不出 >100%。"""
+    closed = [_kline(100.0, 90.0, 95.0) for _ in range(12)]
+    # 进行中的一根冲到 110：区间上沿仍是 100，位置应 >100%
+    klines = closed + [_kline(110.0, 95.0, 110.0)]
+
+    pct = MarketAnalyzer._range_position_pct(klines, lookback_hours=48)
+    assert pct is not None and pct > 100.0
+
+
+def test_range_position_matches_scheduler_guard_math():
+    """研判层展示的位置必须和执行层护栏算的一致，否则等于告诉 AI 一套、拦另一套。"""
+    from types import SimpleNamespace
+    from server.trading_scheduler.base import BaseTradingScheduler
+
+    closed = [_kline(100.0 + i, 90.0 + i, 95.0 + i) for i in range(12)]
+    klines = closed + [_kline(103.0, 97.0, 99.0)]
+
+    stub = SimpleNamespace(
+        config=SimpleNamespace(risk=SimpleNamespace(range_lookback_hours=48))
+    )
+    snapshot_pct = MarketAnalyzer._range_position_pct(klines, lookback_hours=48)
+    guard_pct = BaseTradingScheduler._entry_range_position(
+        stub, "LONG", float(klines[-1][4]), klines
+    )
+    assert abs(snapshot_pct - guard_pct) < 1e-6
+
+
+def test_range_position_returns_none_without_enough_klines():
+    assert MarketAnalyzer._range_position_pct([], lookback_hours=48) is None
+    assert MarketAnalyzer._range_position_pct([_kline(1, 1, 1)] * 2) is None
+
+
 def test_market_analyzer_normalize_keeps_action_and_size():
     normalized = MarketAnalyzer._normalize({
         "bias": "LONG",

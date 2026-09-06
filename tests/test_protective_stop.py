@@ -177,6 +177,224 @@ def test_8_breakout_passes():
     print(f"  ✅ 突破位置 {pos_pct:.0f}% 放行（多空双向）")
 
 
+def test_10_partial_tp_banks_half_at_trigger():
+    print("\n[Test 10] 浮盈 1.0R → 平掉一半仓位落袋")
+    sched = make_scheduler()
+    pos = arm(sched)
+    size_before = pos.size_btc
+
+    trade = asyncio.run(sched._check_partial_take_profit(ENTRY + 1.0 * R))
+
+    assert trade is not None, "应触发部分止盈"
+    assert trade["action"] == "REDUCE", trade["action"]
+    assert trade["pnl"] > 0, trade["pnl"]
+    assert abs(pos.size_btc - size_before * 0.5) < 1e-9, pos.size_btc
+    assert pos.tp_taken is True
+    assert pos.is_active, "剩余半仓应继续持有"
+    print(f"  ✅ 落袋 PnL=${trade['pnl']:+,.2f}, 剩余 {pos.size_btc:.4f} BTC")
+
+
+def test_11_partial_tp_below_trigger_does_nothing():
+    print("\n[Test 11] 浮盈 0.9R → 不触发止盈")
+    sched = make_scheduler()
+    pos = arm(sched)
+
+    assert asyncio.run(sched._check_partial_take_profit(ENTRY + 0.9 * R)) is None
+    assert pos.tp_taken is False
+    assert pos.size_btc == 0.05
+    print("  ✅ 未达阈值不落袋")
+
+
+def test_12_partial_tp_only_once_per_position():
+    print("\n[Test 12] 部分止盈每仓只执行一次")
+    sched = make_scheduler()
+    pos = arm(sched)
+
+    first = asyncio.run(sched._check_partial_take_profit(ENTRY + 1.0 * R))
+    second = asyncio.run(sched._check_partial_take_profit(ENTRY + 2.0 * R))
+
+    assert first is not None
+    assert second is None, "第二次不应再落袋"
+    assert abs(pos.size_btc - 0.025) < 1e-9, pos.size_btc
+    print("  ✅ 第二次调用被 tp_taken 拦下")
+
+
+def test_13_partial_tp_replaces_stop_order_even_when_unchanged():
+    """回归测试：平仓会撤掉交易所止损单，剩余仓位必须重挂，
+    否则常规路径（保本已在 0.5R 触发 → 止损价不变）下实盘会裸奔。"""
+    print("\n[Test 13] 止盈后无条件重挂止损单")
+    sched = make_scheduler()
+    pos = arm(sched)
+
+    calls = []
+
+    async def spy():
+        calls.append(pos.stop_loss)
+
+    sched._on_stop_loss_moved = spy
+
+    # 先让保本在 0.5R 触发，使 TP 时止损价已等于成本价（improved=False）
+    asyncio.run(sched._update_protective_stop(ENTRY + 0.5 * R))
+    assert pos.stop_loss == ENTRY
+    calls.clear()
+
+    asyncio.run(sched._check_partial_take_profit(ENTRY + 1.0 * R))
+
+    assert calls, "止损价未变化时也必须重挂交易所止损单"
+    assert pos.stop_loss == ENTRY
+    print(f"  ✅ 重挂被调用 {len(calls)} 次, 止损=${pos.stop_loss:,.0f}")
+
+
+def test_14_short_partial_tp_mirrors():
+    print("\n[Test 14] SHORT 部分止盈镜像")
+    sched = make_scheduler()
+    pos = arm(sched, "SHORT")
+
+    assert asyncio.run(sched._check_partial_take_profit(ENTRY - 0.9 * R)) is None
+    trade = asyncio.run(sched._check_partial_take_profit(ENTRY - 1.0 * R))
+
+    assert trade is not None and trade["pnl"] > 0, trade
+    assert abs(pos.size_btc - 0.025) < 1e-9, pos.size_btc
+    assert pos.stop_loss == ENTRY, pos.stop_loss
+    print(f"  ✅ 空单落袋 PnL=${trade['pnl']:+,.2f}, 止损=${pos.stop_loss:,.0f}")
+
+
+def test_15_tp_taken_survives_state_roundtrip():
+    print("\n[Test 15] tp_taken 落盘与恢复")
+    sched = make_scheduler()
+    pos = arm(sched)
+    asyncio.run(sched._check_partial_take_profit(ENTRY + 1.0 * R))
+    assert pos.tp_taken is True
+
+    state = sched._get_position_state()
+    assert state["tp_taken"] is True, state
+
+    fresh = make_scheduler()
+    fresh._apply_position_state(state)
+    assert fresh.position.tp_taken is True, "恢复后应保持已止盈，避免重复落袋"
+
+    # 旧状态文件没有该字段时应回退为未止盈
+    legacy = dict(state)
+    legacy.pop("tp_taken")
+    other = make_scheduler()
+    other._apply_position_state(legacy)
+    assert other.position.tp_taken is False
+    print("  ✅ 落盘/恢复正确，旧文件向后兼容")
+
+
+def test_16_safety_exits_emits_tp_then_keeps_position():
+    print("\n[Test 16] 安全网内触发止盈后仓位仍在")
+    sched = make_scheduler()
+    pos = arm(sched)
+
+    trades = asyncio.run(sched._check_safety_exits(ENTRY + 1.0 * R))
+
+    assert len(trades) == 1, trades
+    assert trades[0]["action"] == "REDUCE", trades[0]
+    assert pos.is_active and abs(pos.size_btc - 0.025) < 1e-9
+    assert pos.stop_loss == ENTRY, pos.stop_loss
+    print(f"  ✅ 落袋后剩余 {pos.size_btc:.4f} BTC, 止损=${pos.stop_loss:,.0f}")
+
+
+def test_17_ai_risk_params_clamped_to_range():
+    print("\n[Test 17] AI 风控参数超界钳制 / 缺省回落")
+    sched = make_scheduler()
+    risk = sched.config.risk
+    default_mult = sched.config.long.atr_multiplier
+
+    # 未指定 → 用档位默认
+    assert sched._clamp_ai_risk(
+        None, risk.ai_stop_atr_mult_min, risk.ai_stop_atr_mult_max,
+        "止损", default_mult) == default_mult
+
+    # 区间内 → 原样采纳
+    assert sched._clamp_ai_risk(
+        2.0, risk.ai_stop_atr_mult_min, risk.ai_stop_atr_mult_max,
+        "止损", default_mult) == 2.0
+
+    # 离谱大 / 离谱小 → 钳到边界
+    assert sched._clamp_ai_risk(
+        1e6, risk.ai_stop_atr_mult_min, risk.ai_stop_atr_mult_max,
+        "止损", default_mult) == risk.ai_stop_atr_mult_max
+    assert sched._clamp_ai_risk(
+        0.01, risk.ai_stop_atr_mult_min, risk.ai_stop_atr_mult_max,
+        "止损", default_mult) == risk.ai_stop_atr_mult_min
+    print(f"  ✅ 缺省={default_mult}, 采纳=2.0, "
+          f"钳制区间=[{risk.ai_stop_atr_mult_min}, {risk.ai_stop_atr_mult_max}]")
+
+
+def test_18_ai_tp_trigger_drives_partial_tp():
+    print("\n[Test 18] AI 自定止盈线生效（0.6R 而非默认 1.0R）")
+    sched = make_scheduler()
+    pos = arm(sched)
+    pos.tp_trigger_r = 0.6
+
+    # 0.5R 未达 0.6R → 不触发
+    assert asyncio.run(sched._check_partial_take_profit(ENTRY + 0.5 * R)) is None
+    trade = asyncio.run(sched._check_partial_take_profit(ENTRY + 0.6 * R))
+
+    assert trade is not None, "应按 AI 的 0.6R 触发"
+    assert "0.60R" in trade["trigger_reason"], trade["trigger_reason"]
+    assert abs(pos.size_btc - 0.025) < 1e-9
+    print(f"  ✅ {trade['trigger_reason']}")
+
+
+def test_19_position_tp_trigger_falls_back_to_config():
+    print("\n[Test 19] 未指定时回落配置默认止盈线")
+    sched = make_scheduler()
+    pos = arm(sched)
+    pos.tp_trigger_r = 0.0  # 旧仓位 / AI 未给
+
+    assert asyncio.run(sched._check_partial_take_profit(ENTRY + 0.9 * R)) is None
+    trade = asyncio.run(sched._check_partial_take_profit(ENTRY + 1.0 * R))
+    assert trade is not None
+    assert "1.00R" in trade["trigger_reason"], trade["trigger_reason"]
+    print(f"  ✅ {trade['trigger_reason']}")
+
+
+def test_20_ai_stop_mult_changes_r_and_stop():
+    """止损倍数变了，R 也跟着变，保本/止盈/移动止损全部按新 R 缩放。"""
+    print("\n[Test 20] AI 放宽止损 → R 放大，各档位同步缩放")
+    sched = make_scheduler()
+    pos = sched.position
+    pos.direction = "LONG"
+    pos.entry_price = ENTRY
+    pos.size_btc = 0.05
+    pos.leverage = 5
+    pos.stop_loss = ENTRY - 2000.0   # AI 给了更宽的止损 → R = 2000
+    pos.liquidation_price = 0.0
+    sched._arm_protective_stop()
+
+    assert pos.risk_unit == 2000.0, pos.risk_unit
+    # 原来 0.5R=500 点就保本，现在需要 1000 点
+    asyncio.run(sched._update_protective_stop(ENTRY + 500.0))
+    assert pos.stop_stage == "INIT", "500 点已不足 0.5R"
+    asyncio.run(sched._update_protective_stop(ENTRY + 1000.0))
+    assert pos.stop_stage == "BREAKEVEN", pos.stop_stage
+    print(f"  ✅ R={pos.risk_unit:,.0f}, 保本线随之抬到 +1,000 点")
+
+
+def test_21_ai_risk_survives_state_roundtrip():
+    print("\n[Test 21] tp_trigger_r 落盘与恢复")
+    sched = make_scheduler()
+    pos = arm(sched)
+    pos.tp_trigger_r = 2.5
+
+    state = sched._get_position_state()
+    assert state["tp_trigger_r"] == 2.5, state
+
+    fresh = make_scheduler()
+    fresh._apply_position_state(state)
+    assert fresh.position.tp_trigger_r == 2.5
+
+    legacy = dict(state)
+    legacy.pop("tp_trigger_r")
+    other = make_scheduler()
+    other._apply_position_state(legacy)
+    assert other.position.tp_trigger_r == 0.0, "旧文件应回落为 0（用配置默认）"
+    print("  ✅ 落盘/恢复正确，旧文件向后兼容")
+
+
 def test_9_insufficient_klines_does_not_block():
     print("\n[Test 9] K 线不足 → 不拦截")
     sched = make_scheduler()

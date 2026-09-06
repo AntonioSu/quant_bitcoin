@@ -41,6 +41,49 @@ def test_allow_open_on_moderate():
     assert out.action == "开空"
 
 
+def _block_reason(signal, action="开多") -> str:
+    adv = _advisor()
+    adv._last_partial_close_signal_id = None
+    return adv._apply_policy(
+        TradingDecision(action=action, position_size_hint="50%", reason="x"),
+        signal=signal,
+        position_direction="NONE",
+        position_entry=0,
+        position_size_btc=0,
+        btc_price=64000,
+        signal_id="s-reason",
+    ).reason
+
+
+def test_block_reason_names_the_failing_condition():
+    """拦截原因必须指出真正没通过的那一项。
+
+    以前无论哪项失败都拼 "{level}<MODERATE"，等级明明够用时也这么写，
+    照着日志排查会被带到完全错误的方向。
+    """
+    # 等级够、bias 不是 LONG/SHORT → 不能诬告等级
+    r = _block_reason({"bias": "NEUTRAL", "confidence_level": "STRONG", "entry_ok": True})
+    assert "bias=NEUTRAL" in r, r
+    assert "STRONG<" not in r, r
+
+    # 等级够、entry_ok=false → 只报 entry_ok
+    r = _block_reason({"bias": "LONG", "confidence_level": "STRONG", "entry_ok": False})
+    assert "entry_ok=false" in r and "STRONG<" not in r, r
+
+    # 等级确实不够 → 要报等级
+    r = _block_reason({"bias": "LONG", "confidence_level": "CAUTIOUS", "entry_ok": True})
+    assert "CAUTIOUS<MODERATE" in r, r
+
+    # 多项同时失败 → 全部列出
+    r = _block_reason({"bias": "NEUTRAL", "confidence_level": "WEAK", "entry_ok": False})
+    assert "entry_ok=false" in r and "bias=NEUTRAL" in r and "WEAK<MODERATE" in r, r
+
+    # 各项都过、只是方向与 bias 相反 → 不能报成空原因
+    r = _block_reason({"bias": "SHORT", "confidence_level": "STRONG", "entry_ok": True},
+                      action="开多")
+    assert r and "护栏拦截开仓:" in r and r.rstrip().endswith(")"), r
+
+
 def test_entry_ok_false_does_not_force_close_when_holding():
     adv = _advisor()
     adv._last_partial_close_signal_id = None
