@@ -306,23 +306,6 @@ class VolumeCalculator:
             elapsed_min=elapsed_min,
         )
 
-    def is_bullish(self, klines: List[List]) -> bool:
-        """是否出现看涨成交量信号"""
-        result = self.calculate(klines)
-        return result.signal_type in (
-            VolumeSignalType.SURGE_UP,
-            VolumeSignalType.DIV_BOTTOM,
-        )
-
-    def is_bearish(self, klines: List[List]) -> bool:
-        """是否出现看跌成交量信号"""
-        result = self.calculate(klines)
-        return result.signal_type in (
-            VolumeSignalType.SURGE_DOWN,
-            VolumeSignalType.DIV_TOP,
-        )
-
-
 def main():
     """测试"""
     import random

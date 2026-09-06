@@ -58,6 +58,12 @@ class AnalysisMemory:
             "summary": analysis.get("summary"),
             "key_drivers": analysis.get("key_drivers", []),
             "risks": analysis.get("risks", []),
+            # 市场状态：复盘时按 regime 分组统计胜率的依据
+            "trend_regime": analysis.get("trend_regime"),
+            "volatility_regime": analysis.get("volatility_regime"),
+            "entry_ok": analysis.get("entry_ok"),
+            "entry_gate": analysis.get("entry_gate"),
+            "position_size_hint": analysis.get("position_size_hint"),
             "snapshot_digest": snapshot_digest,
             "trade_result": None,
             "reflection": None,
