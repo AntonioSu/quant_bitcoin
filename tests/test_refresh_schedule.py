@@ -1,9 +1,6 @@
 """Clock-aligned AI / news refresh timers."""
 
-import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from datetime import datetime, timezone
 
@@ -51,11 +48,3 @@ def test_news_gap_from_even_hour_is_two_hours():
     assert nxt.hour == 18
     assert nxt.minute == 0
     assert abs(delay - 7199.9) < 0.01
-
-
-if __name__ == "__main__":
-    test_hourly_boundary_is_on_the_hour()
-    test_hourly_gap_is_one_hour_from_the_hour()
-    test_news_boundary_is_two_hours()
-    test_news_gap_from_even_hour_is_two_hours()
-    print("all tests passed")

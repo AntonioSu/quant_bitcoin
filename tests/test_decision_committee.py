@@ -2,10 +2,8 @@
 """Tests for decision committee schemas and entry gate integration."""
 
 import os
-import sys
 from datetime import datetime
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data_sources.base import DataPoint
 from multi_agent.decision_committee import DecisionCommittee
@@ -65,12 +63,32 @@ def test_risk_review_zero_position_blocks_entry():
     review = RiskReview.model_validate({
         "entry_ok": True,
         "risk_level": "medium",
-        "allowed_actions": ["加多", "持仓观望"],
         "position_size_hint": "0%",
     })
 
     assert review.entry_ok is False
-    assert "加多" not in review.allowed_actions
+
+
+def test_risk_review_extreme_level_blocks_entry():
+    review = RiskReview.model_validate({
+        "entry_ok": True,
+        "risk_level": "extreme",
+        "position_size_hint": "50%",
+    })
+
+    assert review.entry_ok is False
+
+
+def test_risk_review_high_level_can_still_allow_entry():
+    """risk_level 只表达烈度，high 不等于阻断——这是 entry_ok 独立存在的意义。"""
+    review = RiskReview.model_validate({
+        "entry_ok": True,
+        "risk_level": "high",
+        "position_size_hint": "25%",
+    })
+
+    assert review.entry_ok is True
+    assert review.position_size_hint == "25%"
 
 
 def test_merge_risk_veto_overrides_manager_entry_ok():
@@ -85,6 +103,86 @@ def test_merge_risk_veto_overrides_manager_entry_ok():
     )
     assert merged["entry_ok"] is False
     assert merged["position_size_hint"] == "0%"
+    assert merged["entry_gate"] == "RISK_VETO"
+
+
+def test_entry_gate_attributes_manager_block():
+    """Manager 自己不开：不该记到审查员账上。"""
+    merged = DecisionCommittee._merge_risk_into_manager_payload(
+        {"bias": "LONG", "entry_ok": False},
+        RiskReview.model_validate({
+            "entry_ok": False,
+            "risk_level": "high",
+            "position_size_hint": "0%",
+        }),
+    )
+    assert merged["entry_gate"] == "MANAGER_BLOCK"
+
+
+def test_entry_gate_attributes_risk_default_when_manager_omits():
+    """Manager 省略 entry_ok，采用审查员的否决结论。"""
+    merged = DecisionCommittee._merge_risk_into_manager_payload(
+        {"bias": "LONG"},
+        RiskReview.model_validate({
+            "entry_ok": False,
+            "risk_level": "high",
+            "position_size_hint": "0%",
+        }),
+    )
+    assert merged["entry_ok"] is False
+    assert merged["entry_gate"] == "RISK_DEFAULT"
+
+
+def test_entry_gate_open_when_both_agree():
+    merged = DecisionCommittee._merge_risk_into_manager_payload(
+        {"bias": "LONG", "entry_ok": True, "position_size_hint": "50%"},
+        RiskReview.model_validate({
+            "entry_ok": True,
+            "risk_level": "medium",
+            "position_size_hint": "50%",
+        }),
+    )
+    assert merged["entry_gate"] == "OPEN"
+
+
+def test_entry_gate_attributes_schema_level_blocks():
+    """schema 三条硬规则各自认领自己挡下的入场。"""
+    low_conf = CommitteeDecision.model_validate({
+        "bias": "LONG", "confidence": 20, "entry_ok": True,
+        "position_size_hint": "50%", "entry_gate": "OPEN",
+    })
+    assert low_conf.entry_ok is False
+    assert low_conf.entry_gate == "LOW_CONFIDENCE"
+
+    neutral = CommitteeDecision.model_validate({
+        "bias": "NEUTRAL", "confidence": 70, "entry_ok": True,
+        "position_size_hint": "50%", "entry_gate": "OPEN",
+    })
+    assert neutral.entry_ok is False
+    assert neutral.entry_gate == "NEUTRAL_BIAS"
+
+    # RISK_VETO 发生在 schema 之前，不该被后续规则改写归因
+    vetoed = CommitteeDecision.model_validate({
+        "bias": "LONG", "confidence": 70, "entry_ok": False,
+        "position_size_hint": "0%", "entry_gate": "RISK_VETO",
+    })
+    assert vetoed.entry_gate == "RISK_VETO"
+
+
+def test_entry_gate_is_open_whenever_entry_allowed():
+    decision = CommitteeDecision.model_validate({
+        "bias": "LONG", "confidence": 75, "action": "加多",
+        "entry_ok": True, "position_size_hint": "50%",
+    })
+    assert decision.entry_ok is True
+    assert decision.entry_gate == "OPEN"
+    assert decision.to_analysis_dict()["entry_gate"] == "OPEN"
+
+
+def test_fallback_decision_is_attributed_to_committee_failure():
+    decision = CommitteeDecision.fallback("timeout")
+    assert decision.entry_ok is False
+    assert decision.entry_gate == "COMMITTEE_FAILED"
 
 
 def test_merge_risk_fills_missing_size_hint():
@@ -159,10 +257,8 @@ def test_decision_committee_runs_roles_with_fake_llm():
                 {
                   "entry_ok": false,
                   "risk_level": "high",
-                  "allowed_actions": ["持仓观望", "等待入场"],
                   "position_size_hint": "0%",
-                  "blockers": ["多空分歧较大，等待确认"],
-                  "risk_controls": ["突破后再评估"]
+                  "blockers": ["多空分歧较大，等待确认"]
                 }
                 """
             return """
@@ -240,9 +336,7 @@ def test_decision_committee_allows_entry_when_manager_omits_size():
                   "entry_ok": true,
                   "risk_level": "medium",
                   "position_size_hint": "25%",
-                  "max_leverage": 5,
-                  "blockers": [],
-                  "risk_controls": ["跌破均线离场"]
+                  "blockers": []
                 }
                 """
             # Manager 省略 action / position_size_hint（线上真实形态）
