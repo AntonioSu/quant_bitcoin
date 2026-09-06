@@ -118,6 +118,24 @@ class PositionLevel:
         )
         return result
 
+    def preview(
+        self,
+        entry_price: float,
+        atr_value: float,
+        atr_multiplier: float,
+        leverage: int,
+        notional_value: float,
+    ) -> dict:
+        """用已知 ATR 试算价位，不写日志
+
+        供 Trading AI 的风控工具反复试算：ATR 由调用方算一次后复用，
+        且试算不是真实开仓，穿透强平价时不该刷 warning 日志。
+        """
+        return self._build(
+            entry_price, atr_value * atr_multiplier, atr_value,
+            leverage, notional_value, warn=False,
+        )
+
     def fallback(self, entry_price: float, leverage: int, notional_value: float) -> dict:
         """ATR 不可用时按入场价固定百分比兜底"""
         dist = entry_price * _FALLBACK_STOP_PCT
