@@ -45,6 +45,22 @@ def datetime_to_timestamp(dt: datetime) -> int:
     return int(dt.timestamp() * 1000)
 
 
+def seconds_until_next_boundary(interval_seconds: int, now: Optional[float] = None) -> float:
+    """Seconds until the next clock-aligned boundary (hour, 2-hour, ...).
+
+    Boundaries are Unix-epoch aligned, so a 3600s interval wakes at :00,
+    and 7200s wakes on even hours. China (UTC+8) has no DST, so this matches
+    local wall-clock hours.
+    """
+    if interval_seconds <= 0:
+        return 0.0
+    now_ts = time.time() if now is None else now
+    delay = interval_seconds - (now_ts % interval_seconds)
+    if delay >= interval_seconds:
+        return float(interval_seconds)
+    return float(delay)
+
+
 def read_file_prompt(path: str) -> str:
     """读取prompt文件"""
     with open(path, 'r', encoding='utf-8') as file:
