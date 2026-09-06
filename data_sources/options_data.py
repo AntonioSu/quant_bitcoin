@@ -16,8 +16,8 @@ https://docs.deribit.com/
 """
 
 import requests
-from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Tuple
+from datetime import datetime
+from typing import Dict, List, Tuple
 
 from data_sources.base import DataSourceBase, DataPoint
 from utils import logger, retry_request

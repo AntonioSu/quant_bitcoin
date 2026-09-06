@@ -15,9 +15,7 @@
 | [open_interest.py](#open_interestpy) | 合约未平仓量 | Binance | 否 |
 | [liquidation.py](#liquidationpy) | 爆仓数据 | Binance WebSocket | 否 |
 | [crypto_news.py](#crypto_newspy) | 加密新闻 | CryptoPanic / RSS | 可选 |
-| [whale_alert.py](#whale_alertpy) | 巨鲸链上净流 | CryptoQuant / Bitquery | 是 |
 | [btc_taker_kline.py](#btc_taker_klinepy) | Taker 买卖量 | Binance K线 | 否 |
-| [btc_whale_realtime.py](#btc_whale_realtimepy) | 实时大额交易 | Binance WebSocket | 否 |
 
 ---
 
@@ -420,60 +418,6 @@ wss://fstream.binance.com/ws/!forceOrder@arr         (有代理时)
 
 ---
 
-## whale_alert.py
-
-**类名:** `WhaleAlert` / **缓存:** 1800s
-
-> ⚠️ 当前仅在 `tests/` 中使用，未接入主数据刷新流程。
-
-### API
-
-| Provider | URL | 方法 |
-|----------|-----|------|
-| CryptoQuant | `https://api.cryptoquant.com/v1/btc/exchange-flows/netflow` | GET |
-| Bitquery | `https://streaming.bitquery.io/graphql` | POST (GraphQL) |
-
-### CryptoQuant 请求
-
-```
-GET https://api.cryptoquant.com/v1/btc/exchange-flows/netflow
-  ?exchange=all_exchange&window=day&limit=1
-
-Headers:
-  Authorization: Bearer <CRYPTOQUANT_API_KEY>
-```
-
-### Bitquery 请求
-
-```
-POST https://streaming.bitquery.io/graphql
-
-Headers:
-  Authorization: Bearer <BITQUERY_API_KEY>
-  Content-Type: application/json
-
-Body: GraphQL 查询 (EVM.Transfers, 监控 Binance 钱包地址,
-      BTCB 合约 0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c)
-```
-
-### 输出 (DataPoint)
-
-| 字段 | 说明 |
-|------|------|
-| `value` | 交易所净流入 (BTC) |
-| `raw.inflow` | 流入量 |
-| `raw.outflow` | 流出量 |
-| `raw.netflow` | 净流入 (正=卖压, 负=囤币) |
-
-### 环境变量
-
-| 变量 | 必需 | 说明 |
-|------|:----:|------|
-| `CRYPTOQUANT_API_KEY` | CryptoQuant 必需 | |
-| `BITQUERY_API_KEY` | Bitquery 必需 | |
-
----
-
 ## btc_taker_kline.py
 
 **类名:** `TakerAnalyzer` / **无缓存** (从 K线数据计算)
@@ -505,41 +449,6 @@ Body: GraphQL 查询 (EVM.Transfers, 监控 Binance 钱包地址,
 
 ---
 
-## btc_whale_realtime.py
-
-**独立监控脚本** (不继承 DataSourceBase, 未接入主流程)
-
-### WebSocket
-
-```
-wss://stream.binance.com:9443/ws/btcusdt@aggTrade   (直连)
-wss://stream.binance.com/ws/btcusdt@aggTrade         (有代理时)
-```
-
-### 配置常量
-
-| 常量 | 值 | 说明 |
-|------|-----|------|
-| `WHALE_THRESHOLD` | 10.0 BTC | 大于此值视为大单 |
-| `MAX_RECORDS` | 100 | 最近大单记录数 |
-
-### 消息字段
-
-| 字段 | 说明 |
-|------|------|
-| `q` | 成交量 (BTC) |
-| `p` | 成交价 |
-| `T` | 时间戳 (ms) |
-| `m` | `true`=主动卖出, `false`=主动买入 |
-
-### 环境变量
-
-| 变量 | 必需 | 说明 |
-|------|:----:|------|
-| `HTTPS_PROXY` | 可选 | 代理地址 |
-
----
-
 ## 环境变量汇总
 
 ```bash
@@ -548,10 +457,6 @@ SOSOVALUE_API_KEY=SOSO-xxx          # 可选
 
 # 新闻 (CryptoPanic)
 CRYPTOPANIC_API_KEY=xxx             # 可选, 无则用 RSS
-
-# 巨鲸链上 (未接入主流程)
-CRYPTOQUANT_API_KEY=xxx             # whale_alert CryptoQuant
-BITQUERY_API_KEY=xxx                # whale_alert Bitquery
 
 # 代理
 HTTPS_PROXY=http://proxy:port       # 多个模块使用

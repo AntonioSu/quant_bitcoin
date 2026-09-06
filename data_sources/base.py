@@ -1,7 +1,7 @@
 """数据源基类"""
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Optional
 from dataclasses import dataclass
 from datetime import datetime
 

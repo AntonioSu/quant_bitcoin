@@ -25,7 +25,7 @@ import threading
 import time
 from collections import deque
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import aiohttp
 
@@ -361,8 +361,8 @@ def main():
 
     liq = Liquidation(symbol="BTCUSDT", lookback_minutes=60)
 
-    print(f"\n⏳ WebSocket 采集器已启动，等待爆仓数据...")
-    print(f"   (市场平静时可能需要等待数分钟才有数据)\n")
+    print("\n⏳ WebSocket 采集器已启动，等待爆仓数据...")
+    print("   (市场平静时可能需要等待数分钟才有数据)\n")
 
     stop_event = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop_event.set())
@@ -396,7 +396,7 @@ def main():
             f"{stats['count']}笔"
         )
 
-    print(f"\n👋 测试结束")
+    print("\n👋 测试结束")
 
 
 if __name__ == "__main__":
