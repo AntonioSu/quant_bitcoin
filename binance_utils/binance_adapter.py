@@ -274,43 +274,6 @@ class BinanceFuturesExecutorAdapter:
         logger.error(f"挂止损单失败 (已重试{max_retries}次): {last_err}")
         return {"success": False, "order": None, "order_id": None, "message": str(last_err)}
 
-    def place_take_profit(self, symbol: str, direction: str,
-                          amount: float, trigger_price: float,
-                          max_retries: int = 3, retry_delay: float = 1.0) -> Dict:
-        """挂止盈单 (TAKE_PROFIT_MARKET)，交易所侧监控触发
-
-        Args:
-            direction: 持仓方向 LONG / SHORT
-            amount: 平仓数量 (BTC)
-            trigger_price: 触发价
-            max_retries: 最大重试次数
-            retry_delay: 重试间隔（秒），每次翻倍
-        """
-        close_side = "sell" if direction == "LONG" else "buy"
-        amount = self.client.exchange.amount_to_precision(symbol, amount)
-        last_err = None
-        for attempt in range(1, max_retries + 1):
-            try:
-                order = self.client.exchange.create_order(
-                    symbol, "TAKE_PROFIT_MARKET", close_side, amount, None,
-                    params={"stopPrice": trigger_price, "reduceOnly": True},
-                )
-                order_id = order.get("id", "")
-                logger.info(
-                    f"📌 挂止盈单: {close_side} {amount} @ trigger ${trigger_price:,.0f}, "
-                    f"order_id={order_id}"
-                )
-                return {"success": True, "order": order, "order_id": order_id}
-            except Exception as e:
-                last_err = e
-                if not self._is_retryable(e) or attempt >= max_retries:
-                    break
-                delay = retry_delay * (2 ** (attempt - 1))
-                logger.warning(f"挂止盈单失败 (第{attempt}次), {delay:.0f}s 后重试: {e}")
-                time.sleep(delay)
-        logger.error(f"挂止盈单失败 (已重试{max_retries}次): {last_err}")
-        return {"success": False, "order": None, "order_id": None, "message": str(last_err)}
-
     def cancel_order(self, symbol: str, order_id: str) -> bool:
         """取消指定挂单"""
         try:
