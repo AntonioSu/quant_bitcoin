@@ -74,16 +74,6 @@ class Reflector:
 
         return reflection
 
-    def reflect_all_pending(self) -> int:
-        """复盘所有有交易结果但未复盘的记录"""
-        pending = self.memory.get_unreflected(limit=5)
-        count = 0
-        for rec in pending:
-            result = self.reflect_on_trade(rec["id"])
-            if result:
-                count += 1
-        return count
-
     @staticmethod
     def _build_prompt(record: Dict, trade_result: Dict) -> str:
         analysis_part = json.dumps({

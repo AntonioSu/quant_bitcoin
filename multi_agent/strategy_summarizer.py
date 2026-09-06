@@ -135,10 +135,6 @@ class StrategySummarizer:
 
         return "\n\n".join(parts) if parts else None
 
-    def get_full_memo(self) -> Optional[Dict]:
-        """获取完整备忘录"""
-        return self._memo_cache
-
     @staticmethod
     def _build_prompt(reflections: List[Dict],
                       performance: Optional[Dict]) -> str:

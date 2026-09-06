@@ -25,6 +25,19 @@ SOURCES = {
 POSITION_HINTS = {"0%", "25%", "50%", "75%", "100%"}
 LEVERAGE_HINTS = {1, 2, 3, 5, 10, 20}
 RISK_LEVELS = {"low", "medium", "high", "extreme"}
+
+# entry_ok 的归因：记录是谁挡下了这次入场，用于事后统计各闸门的实际作用
+ENTRY_GATES = {
+    "OPEN",             # 允许入场
+    "RISK_VETO",        # Manager 判可入场，Risk Reviewer 行使否决权
+    "RISK_DEFAULT",     # Manager 未给 entry_ok，采用 Risk Reviewer 结论（不可入场）
+    "MANAGER_BLOCK",    # Manager 自己判不可入场
+    "LOW_CONFIDENCE",   # schema 规则：置信度低于 CAUTIOUS 阈值
+    "NEUTRAL_BIAS",     # schema 规则：方向中性
+    "ZERO_SIZE",        # schema 规则：仓位建议为 0%
+    "COMMITTEE_FAILED", # 委员会输出不可用，按中性兜底
+}
+
 TREND_REGIMES = {"UP_TREND", "DOWN_TREND", "RANGE", "UNCLEAR"}
 VOL_REGIMES = {
     "LOW_VOL_COMPRESSION",
@@ -238,11 +251,8 @@ class RiskReview(BaseModel):
 
     entry_ok: bool = False
     risk_level: Literal["low", "medium", "high", "extreme"] = "high"
-    allowed_actions: List[str] = Field(default_factory=lambda: ["持仓观望"])
     position_size_hint: str = "0%"
-    max_leverage: int = 5
     blockers: List[str] = Field(default_factory=list)
-    risk_controls: List[str] = Field(default_factory=list)
 
     @field_validator("risk_level", mode="before")
     @classmethod
@@ -250,29 +260,12 @@ class RiskReview(BaseModel):
         level = str(value or "high").strip().lower()
         return level if level in RISK_LEVELS else "high"
 
-    @field_validator("allowed_actions", mode="before")
-    @classmethod
-    def _normalize_allowed_actions(cls, value: Any) -> List[str]:
-        if not isinstance(value, list):
-            return ["持仓观望"]
-        actions = [normalize_action(item) for item in value]
-        return list(dict.fromkeys(actions)) or ["持仓观望"]
-
     @field_validator("position_size_hint", mode="before")
     @classmethod
     def _normalize_position_size_hint(cls, value: Any) -> str:
         return normalize_position_hint(value)
 
-    @field_validator("max_leverage", mode="before")
-    @classmethod
-    def _normalize_max_leverage(cls, value: Any) -> int:
-        try:
-            lev = int(value)
-        except (TypeError, ValueError):
-            return 5
-        return max(1, min(20, lev))
-
-    @field_validator("blockers", "risk_controls", mode="before")
+    @field_validator("blockers", mode="before")
     @classmethod
     def _normalize_text_list(cls, value: Any) -> List[str]:
         if not isinstance(value, list):
@@ -283,14 +276,6 @@ class RiskReview(BaseModel):
     def _enforce_entry_rules(self) -> "RiskReview":
         if self.risk_level == "extreme" or self.position_size_hint == "0%":
             self.entry_ok = False
-        if not self.entry_ok:
-            self.allowed_actions = [
-                action for action in self.allowed_actions if action not in OPEN_ACTIONS
-            ] or ["持仓观望"]
-        if self.risk_level == "extreme":
-            self.max_leverage = min(self.max_leverage, 2)
-        elif self.risk_level == "high":
-            self.max_leverage = min(self.max_leverage, 5)
         return self
 
     @classmethod
@@ -298,10 +283,8 @@ class RiskReview(BaseModel):
         return cls(
             entry_ok=False,
             risk_level="high",
-            allowed_actions=["持仓观望", "等待入场"],
             position_size_hint="0%",
             blockers=[f"风险审查失败，默认阻断开仓: {reason}"[:220]],
-            risk_controls=[],
         )
 
 
@@ -328,6 +311,7 @@ class CommitteeDecision(BaseModel):
     summary: str = ""
     action: str = "持仓观望"
     entry_ok: bool = False
+    entry_gate: str = "OPEN"
     position_size_hint: str = "0%"
     leverage_hint: int = 5
     key_drivers: List[Driver] = Field(default_factory=list)
@@ -365,6 +349,12 @@ class CommitteeDecision(BaseModel):
     def _normalize_volatility(cls, value: Any) -> str:
         vol = str(value or "NORMAL_VOL").strip().upper()
         return vol if vol in VOL_REGIMES else "NORMAL_VOL"
+
+    @field_validator("entry_gate", mode="before")
+    @classmethod
+    def _normalize_entry_gate(cls, value: Any) -> str:
+        gate = str(value or "OPEN").strip().upper()
+        return gate if gate in ENTRY_GATES else "OPEN"
 
     @field_validator("bias", mode="before")
     @classmethod
@@ -422,6 +412,8 @@ class CommitteeDecision(BaseModel):
         if self.confidence < CONFIDENCE_CAUTIOUS_THRESHOLD:
             if self.action in OPEN_ACTIONS:
                 self.action = "等待入场"
+            if self.entry_ok:
+                self.entry_gate = "LOW_CONFIDENCE"
             self.entry_ok = False
             self.position_size_hint = "0%"
 
@@ -433,11 +425,15 @@ class CommitteeDecision(BaseModel):
         if self.bias == "NEUTRAL":
             if self.action in OPEN_ACTIONS:
                 self.action = "持仓观望"
+            if self.entry_ok:
+                self.entry_gate = "NEUTRAL_BIAS"
             self.entry_ok = False
             self.position_size_hint = "0%"
 
         # entry_ok 与仓位互相约束（在补全仓位之后再判定）
         if self.position_size_hint == "0%":
+            if self.entry_ok:
+                self.entry_gate = "ZERO_SIZE"
             self.entry_ok = False
         if not self.entry_ok and self.action in OPEN_ACTIONS:
             self.action = "等待入场"
@@ -467,6 +463,12 @@ class CommitteeDecision(BaseModel):
         if self.volatility_regime == "HIGH_VOL_EXTREME":
             self.leverage_hint = min(self.leverage_hint, 3)
 
+        # 归因兜底：放行必然是 OPEN；被挡但无人认领时归给 Manager
+        if self.entry_ok:
+            self.entry_gate = "OPEN"
+        elif self.entry_gate == "OPEN":
+            self.entry_gate = "MANAGER_BLOCK"
+
         return self
 
     def to_analysis_dict(self) -> Dict[str, Any]:
@@ -480,6 +482,7 @@ class CommitteeDecision(BaseModel):
             summary=f"委员会研判失败: {reason}"[:80],
             action="持仓观望",
             entry_ok=False,
+            entry_gate="COMMITTEE_FAILED",
             position_size_hint="0%",
             key_drivers=[],
             risks=[f"委员会输出异常，已按中性处理: {reason}"[:220]],

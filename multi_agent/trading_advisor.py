@@ -60,10 +60,6 @@ class TradingDecision:
         return self.action in ("平仓", "减仓")
 
     @property
-    def is_hold(self) -> bool:
-        return self.action in ("持仓观望", "等待入场")
-
-    @property
     def direction(self) -> str:
         if self.action == "开多":
             return "LONG"
@@ -169,19 +165,11 @@ class TradingAdvisor:
         )
         return decision
 
-    def get_cached_or_none(self) -> TradingDecision | None:
-        """返回缓存的决策（不调用 LLM），用于状态显示"""
-        return self._cached_decision
-
     def invalidate_cache(self):
         """强制下次 decide() 重新调用 LLM（例如仓位被外部修改后）"""
         self._last_signal_id = None
         self._last_position_hash = None
         self._cached_decision = None
-
-    def reload_prompt(self):
-        """重新加载系统提示词（热更新）"""
-        self._system_prompt = None
 
     def _load_system_prompt(self) -> str:
         if self._system_prompt is None:

@@ -443,6 +443,7 @@ class MarketAnalyzer:
                 "trend_regime": "UNCLEAR",
                 "volatility_regime": "NORMAL_VOL",
                 "entry_ok": False,
+                "entry_gate": "COMMITTEE_FAILED",
             }
 
     def _get_committee(self) -> DecisionCommittee:
@@ -588,6 +589,7 @@ class MarketAnalyzer:
             "volatility_regime": vol,
             "action": normalize_action(data.get("action")),
             "entry_ok": bool(data.get("entry_ok", False)),
+            "entry_gate": str(data.get("entry_gate") or "OPEN"),
             "position_size_hint": normalize_position_hint(data.get("position_size_hint")),
             "leverage_hint": normalize_leverage_hint(data.get("leverage_hint")),
         }

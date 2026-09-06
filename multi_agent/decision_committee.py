@@ -69,11 +69,12 @@ class DecisionCommittee:
 
         result = decision.to_analysis_dict()
         logger.info(
-            "🤖 决策委员会: %s %s (%s%%), entry_ok=%s",
+            "🤖 决策委员会: %s %s (%s%%), entry_ok=%s, gate=%s",
             result.get("bias"),
             result.get("confidence_level"),
             result.get("confidence"),
             result.get("entry_ok"),
+            result.get("entry_gate"),
         )
         return result
 
@@ -243,11 +244,22 @@ class DecisionCommittee:
         """补全 Manager 省略字段，并落实 Risk Reviewer 的否决权。"""
         payload = dict(data or {})
 
-        if "entry_ok" not in payload:
+        # manager_entry 为 None 表示 Manager 省略了该字段
+        manager_entry = payload.get("entry_ok") if "entry_ok" in payload else None
+
+        if manager_entry is None:
             payload["entry_ok"] = risk.entry_ok
-        elif not risk.entry_ok:
+            payload["entry_gate"] = "OPEN" if risk.entry_ok else "RISK_DEFAULT"
+        elif bool(manager_entry) and not risk.entry_ok:
             # 风险审查否决优先：不允许 Manager 覆盖为可入场
             payload["entry_ok"] = False
+            payload["entry_gate"] = "RISK_VETO"
+            logger.warning(
+                "🛡️ 风险审查员行使否决权: manager entry_ok=true → false | "
+                f"风险等级={risk.risk_level} | 阻断项={'；'.join(risk.blockers[:2]) or '未列明'}"
+            )
+        else:
+            payload["entry_gate"] = "OPEN" if bool(manager_entry) else "MANAGER_BLOCK"
 
         size = str(payload.get("position_size_hint") or "").strip()
         if payload.get("entry_ok") and (not size or size == "0%"):

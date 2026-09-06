@@ -25,26 +25,28 @@
   "entry_ok": true,
   "risk_level": "low | medium | high | extreme",
   "position_size_hint": "0% | 25% | 50% | 75% | 100%",
-  "max_leverage": 10,
   "blockers": [
     "阻止开仓的风险（如有），必须包含具体指标或状态"
-  ],
-  "risk_controls": [
-    "入场后的风控条件"
   ]
 }
 
 # entry_ok 判定规则
 
-## entry_ok = true 的情况（任一满足即可）：
+**按第 1 → 2 → 3 步顺序判定，命中即停，不再往下看。**
+
+## 第 1 步 · 硬阻断（命中任一 → entry_ok = false）
+- risk_level = extreme（爆仓风险或极端波动）
+- volatility_regime = HIGH_VOL_EXTREME 且爆仓数据异常
+- 多空双方证据都极弱：各自 ≤1 条证据，且全为 low/medium 权重
+
+## 第 2 步 · 放行（未命中第 1 步，且满足任一 → entry_ok = true）
 - 占优势一方有 ≥2 条 high 权重证据
 - 趋势明确（UP_TREND 或 DOWN_TREND）且有均线排列确认
 - risk_level 为 low 或 medium
 
-## entry_ok = false 的情况（必须同时满足）：
-- risk_level = extreme（爆仓风险、极端波动）
-- 或者：多空双方证据都非常弱（各自 ≤1 条证据且都是 low/medium 权重）
-- 或者：波动状态是 HIGH_VOL_EXTREME 且爆仓数据异常
+## 第 3 步 · 兜底（前两步都不命中）
+典型情况是 risk_level = high 但不构成硬阻断。此时按"默认倾向 true"处理：
+entry_ok = true，但 position_size_hint 压到 25%，并在 blockers 里写明具体担忧点。
 
 ## 绝对不应该阻断的情况：
 - 不要仅因为"双方 confidence_level 相近"就阻断
@@ -56,7 +58,4 @@
 - risk_level=extreme 时 entry_ok 必须为 false。
 - position_size_hint=0% 时 entry_ok 必须为 false。
 - 如果波动状态是 HIGH_VOL_EXTREME，blockers 必须提到流动性、爆仓或滑点风险。
-- max_leverage 是风控上限: 交易系统选择的杠杆不得超过此值。
-- volatility_regime=HIGH_VOL_EXTREME → max_leverage ≤ 3。
-- risk_level=high → max_leverage ≤ 5。
-- risk_level=extreme → max_leverage ≤ 2。
+- risk_level 只表达风险烈度，不代表结论；high 也可以放行（见第 3 步）。杠杆由交易系统按置信度和波动状态决定，不在你的职责内。

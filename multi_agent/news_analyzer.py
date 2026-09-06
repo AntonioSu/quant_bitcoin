@@ -16,10 +16,9 @@
   - reasoning:        分析理由
 """
 
-import json
 import os
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict
 
 from data_sources.base import DataSourceBase, DataPoint
 from data_sources.crypto_news import CryptoNewsSentiment
