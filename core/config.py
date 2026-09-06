@@ -6,7 +6,7 @@
 - Aggressive (激进): 低门槛，高风险
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict
 
@@ -49,11 +49,30 @@ class LongConfig:
 
 
 @dataclass
+class RiskConfig:
+    """持仓风险管理配置（三档共用）
+
+    R = 开仓时的初始止损距离 |入场价 - 初始止损|，是单笔风险单位。
+    止损只朝有利方向移动，永不回退。
+    """
+    # 保本 / 移动止损
+    breakeven_trigger_r: float = 0.5    # 浮盈达到 0.5R → 止损移到成本价
+    trailing_trigger_r: float = 1.5     # 峰值浮盈达到 1.5R → 启动移动止损
+    trailing_distance_r: float = 1.25   # 移动止损挂在峰值回撤 1.25R 处
+
+    # 追高护栏：开仓价在回看区间中的顺方向位置
+    range_lookback_hours: int = 48      # 区间回看窗口
+    max_entry_range_pct: float = 60.0   # 顺方向位置 >= 此值视为追高，拒绝开仓
+    breakout_range_pct: float = 100.0   # 突破区间（创新高/新低）放行
+
+
+@dataclass
 class TradingConfig:
     """交易系统完整配置"""
     short: ShortConfig
     long: LongConfig
     preset: ParameterSet = ParameterSet.STANDARD
+    risk: RiskConfig = field(default_factory=RiskConfig)
     
     @classmethod
     def get_preset(cls, preset: ParameterSet) -> "TradingConfig":
@@ -84,7 +103,7 @@ class TradingConfig:
                 short=ShortConfig(
                     fear_greed_threshold=75,
                     funding_rate_threshold=0.003, # 资金费率阈值大于0.003%时，跟随做空
-                    top_trader_ratio_threshold=0.6,  # 聪明钱多空比 < 0.75 (过度看空，跟随做空)
+                    top_trader_ratio_threshold=0.6,  # 聪明钱多空比 < 0.6 (过度看空，跟随做空)
                     max_loss_pct=1.5,
                     atr_multiplier=1.5,
                 ),
@@ -103,15 +122,15 @@ class TradingConfig:
                 short=ShortConfig(
                     fear_greed_threshold=70,
                     funding_rate_threshold=0.001, # 资金费率阈值大于0.001%时，跟随做空
-                    top_trader_ratio_threshold=0.8,  # 聪明钱多空比 < 0.75 (偏空，跟随做空)
+                    top_trader_ratio_threshold=0.8,  # 聪明钱多空比 < 0.8 (偏空，跟随做空)
                     max_loss_pct=5.0,
                     atr_multiplier=1.2,
                 ),
                 # 做多模式，跟随大户看多时做多
                 long=LongConfig(
                     fear_greed_threshold=32,
-                    top_trader_ratio_threshold=1.2,  # 聪明钱多空比 > 1.5 (偏多，跟随做多)
-                    max_loss_pct=5,
+                    top_trader_ratio_threshold=1.2,  # 聪明钱多空比 > 1.2 (偏多，跟随做多)
+                    max_loss_pct=5.0,
                     atr_multiplier=1.2,
                 ),
                 preset=ParameterSet.AGGRESSIVE,
@@ -136,5 +155,13 @@ class TradingConfig:
                 "max_loss_pct": self.long.max_loss_pct,
                 "atr_multiplier": self.long.atr_multiplier,
                 "leverage": self.long.leverage,
+            },
+            "risk": {
+                "breakeven_trigger_r": self.risk.breakeven_trigger_r,
+                "trailing_trigger_r": self.risk.trailing_trigger_r,
+                "trailing_distance_r": self.risk.trailing_distance_r,
+                "range_lookback_hours": self.risk.range_lookback_hours,
+                "max_entry_range_pct": self.risk.max_entry_range_pct,
+                "breakout_range_pct": self.risk.breakout_range_pct,
             },
         }

@@ -109,10 +109,10 @@ def _has_directional_no_entry_keyword(raw: Dict, target: str) -> bool:
 
 
 class TradingMode(Enum):
-    """交易模式"""
-    IDLE = "idle"          # 空闲
-    SHORT = "short"        # 开仓模式 (做空收租)
-    LONG = "long"        # 平仓模式 (抄底做多)
+    """当前持仓方向（IDLE = 空仓）"""
+    IDLE = "idle"
+    SHORT = "short"        # 持空仓 (神盾: 做空收租)
+    LONG = "long"          # 持多仓 (长矛: 抄底做多)
 
 
 @dataclass
