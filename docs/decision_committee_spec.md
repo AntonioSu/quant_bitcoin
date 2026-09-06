@@ -113,13 +113,9 @@ Bull 和 Bear 都输出同一种结构，区别在 `side`。
 {
   "entry_ok": false,
   "risk_level": "low | medium | high | extreme",
-  "allowed_actions": ["加多", "加空", "持仓观望", "等待入场", "减仓", "离场"],
   "position_size_hint": "0% | 25% | 50% | 75% | 100%",
   "blockers": [
     "阻止开仓的风险，如高波动、清算风险、距离止损过近"
-  ],
-  "risk_controls": [
-    "若交易需要满足的控制条件"
   ]
 }
 ```
@@ -128,8 +124,10 @@ Bull 和 Bear 都输出同一种结构，区别在 `side`。
 
 - `risk_level=extreme` 时 `entry_ok=false`。
 - `position_size_hint=0%` 时 `entry_ok=false`。
+- `risk_level` 只表达风险烈度，不代表结论：`high` 仍可放行（按 25% 轻仓）。
 - 如果 `volatility_regime=HIGH_VOL_EXTREME`，必须至少一个 blocker 提到流动性、爆仓或滑点。
 - 如果 confidence_level 为 WEAK 的方向性观点进入 risk review，默认不得允许开仓。
+- 杠杆不由本角色决定：由 `CommitteeDecision.leverage_hint` 按置信度与波动状态收敛。
 
 ### 6.3 CommitteeDecision
 
