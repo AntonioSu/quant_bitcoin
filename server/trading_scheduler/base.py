@@ -152,7 +152,7 @@ class BaseTradingScheduler(ABC):
     
     def _get_position_state(self) -> dict:
         """获取需要持久化的仓位状态（子类可覆盖扩展）"""
-        return {
+        state = {
             "current_mode": self.current_mode.value,
             "position_direction": self.position.direction,
             "position_size": self.position.size_btc,
@@ -163,6 +163,8 @@ class BaseTradingScheduler(ABC):
             "sl_order_id": self.position.sl_order_id,
             "analysis_id": self.position.analysis_id,
         }
+        state.update(self.trading_advisor.get_reduce_state())
+        return state
     
     def restore_position_state(self) -> bool:
         """从文件恢复仓位状态，返回是否成功恢复"""
@@ -202,6 +204,7 @@ class BaseTradingScheduler(ABC):
         self.position.leverage = saved.get("leverage", 1)
         self.position.sl_order_id = saved.get("sl_order_id")
         self.position.analysis_id = saved.get("analysis_id")
+        self.trading_advisor.restore_reduce_state(saved)
         
         if not self.position.is_active:
             self.current_mode = TradingMode.IDLE

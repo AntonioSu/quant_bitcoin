@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from core import TradingConfig, ParameterSet, TradingMode, refresh_market_data_async, refresh_news_data_async, refresh_ai_analysis_async
 from utils import logger
+from utils.common_utils import seconds_until_next_boundary
 
 from server.trading_scheduler import SimTradingScheduler, LiveTradingScheduler
 
@@ -128,19 +129,37 @@ class AppState:
                 await asyncio.sleep(self.MARKET_REFRESH_INTERVAL)
         
         async def news_loop():
+            last_ts = 0.0
+            min_gap = 600  # 启动立即拉取后, 靠近整点时跳过一次, 避免 10 分钟内连打两次
             while True:
+                delay = seconds_until_next_boundary(self.NEWS_REFRESH_INTERVAL)
+                if last_ts <= 0 and delay > 60:
+                    logger.info("📰 启动后立即拉取新闻，随后对齐 2 小时整点")
+                else:
+                    next_at = datetime.fromtimestamp(time.time() + delay).strftime("%H:%M:%S")
+                    logger.info(f"📰 新闻分析等待 {delay:.0f}s 至整点 {next_at}")
+                    await asyncio.sleep(delay)
+                    if last_ts and (time.time() - last_ts) < min_gap:
+                        continue
                 try:
                     await refresh_news_data_async()
+                    last_ts = time.time()
                     await self.notify_frontend()
                 except Exception as e:
                     logger.error(f"刷新新闻分析失败: {e}")
-                await asyncio.sleep(self.NEWS_REFRESH_INTERVAL)
 
         async def ai_loop():
-            # 启动后等市场数据先跑一轮再做 AI 分析
-            await asyncio.sleep(30)
             while True:
+                delay = seconds_until_next_boundary(self.AI_REFRESH_INTERVAL)
+                next_at = datetime.fromtimestamp(time.time() + delay).strftime("%H:%M:%S")
+                logger.info(f"🤖 AI 综合研判等待 {delay:.0f}s 至整点 {next_at}")
+                await asyncio.sleep(delay)
                 try:
+                    # 整点刚启动时市场数据可能还没第一轮, 最多再等 30s
+                    from core.market_data import market
+                    if not market.is_ready():
+                        logger.info("🤖 整点到达但市场数据未就绪, 30s 后重试")
+                        await asyncio.sleep(30)
                     # 与手动刷新共享同一把锁, 避免并发 LLM 调用
                     async with self.ai_refresh_lock:
                         await refresh_ai_analysis_async()
@@ -148,14 +167,17 @@ class AppState:
                     await self.notify_frontend()
                 except Exception as e:
                     logger.error(f"刷新 AI 综合研判失败: {e}")
-                await asyncio.sleep(self.AI_REFRESH_INTERVAL)
 
         self._market_refresh_task = asyncio.create_task(refresh_loop())
         self._news_refresh_task = asyncio.create_task(news_loop())
         self._ai_refresh_task = asyncio.create_task(ai_loop())
         logger.info(f"📊 市场数据定时刷新已启动 (间隔 {self.MARKET_REFRESH_INTERVAL}s)")
-        logger.info(f"📰 新闻分析定时刷新已启动 (间隔 {self.NEWS_REFRESH_INTERVAL}s)")
-        logger.info(f"🤖 AI 综合研判定时刷新已启动 (间隔 {self.AI_REFRESH_INTERVAL}s)")
+        logger.info(
+            f"📰 新闻分析定时刷新已启动 (整点对齐, 间隔 {self.NEWS_REFRESH_INTERVAL}s)"
+        )
+        logger.info(
+            f"🤖 AI 综合研判定时刷新已启动 (整点对齐, 间隔 {self.AI_REFRESH_INTERVAL}s)"
+        )
     
     def stop_market_refresh(self):
         """停止市场数据定时刷新"""
