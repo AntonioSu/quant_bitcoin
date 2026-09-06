@@ -2,7 +2,6 @@
 
 import json
 import time
-from datetime import datetime
 from functools import wraps
 from typing import Any, Callable, Dict, Optional
 
@@ -33,16 +32,6 @@ def retry_request(max_retries: int = 3, delay: float = 1.0):
             raise last_error
         return wrapper
     return decorator
-
-
-def timestamp_to_datetime(ts: int) -> datetime:
-    """毫秒时间戳转 datetime"""
-    return datetime.fromtimestamp(ts / 1000)
-
-
-def datetime_to_timestamp(dt: datetime) -> int:
-    """datetime 转毫秒时间戳"""
-    return int(dt.timestamp() * 1000)
 
 
 def seconds_until_next_boundary(interval_seconds: int, now: Optional[float] = None) -> float:
