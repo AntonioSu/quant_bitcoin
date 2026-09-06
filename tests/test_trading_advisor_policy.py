@@ -4,7 +4,10 @@ from multi_agent.trading_advisor import TradingAdvisor, TradingDecision
 
 
 def _advisor() -> TradingAdvisor:
-    return TradingAdvisor.__new__(TradingAdvisor)
+    adv = TradingAdvisor.__new__(TradingAdvisor)
+    adv._reduce_count = 0
+    adv._initial_position_size = 0.0
+    return adv
 
 
 def test_block_open_on_cautious():
@@ -113,3 +116,44 @@ def test_same_signal_reduce_only_once():
     assert first.action == "减仓"
     assert first.close_ratio == 0.25
     assert second.action == "持仓观望"
+
+
+def test_reduce_exhausted_escalates_to_close():
+    """累计减仓达到上限后，信号仍反向时升级为全平"""
+    adv = _advisor()
+    adv._last_partial_close_signal_id = None
+    adv._reduce_count = 2
+    adv._initial_position_size = 0.01
+
+    out = adv._apply_policy(
+        TradingDecision(action="减仓", close_ratio=0.25, reason="继续减仓"),
+        signal={"bias": "LONG", "confidence_level": "MODERATE", "entry_ok": True},
+        position_direction="SHORT",
+        position_entry=64000,
+        position_size_btc=0.005,
+        btc_price=64100,
+        signal_id="s6",
+    )
+    assert out.action == "平仓"
+    assert out.close_ratio == 1.0
+    assert "已减仓" in out.reason
+
+
+def test_position_too_small_escalates_to_close():
+    """仓位低于初始 50% 且信号仍反向时升级为全平"""
+    adv = _advisor()
+    adv._last_partial_close_signal_id = None
+    adv._reduce_count = 1
+    adv._initial_position_size = 0.01
+
+    out = adv._apply_policy(
+        TradingDecision(action="减仓", close_ratio=0.25, reason="再减仓"),
+        signal={"bias": "LONG", "confidence_level": "MODERATE", "entry_ok": True},
+        position_direction="SHORT",
+        position_entry=64000,
+        position_size_btc=0.004,
+        btc_price=64100,
+        signal_id="s7",
+    )
+    assert out.action == "平仓"
+    assert out.close_ratio == 1.0
