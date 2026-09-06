@@ -37,6 +37,8 @@ _LEVEL_RANK = {
 }
 _MIN_OPEN_LEVEL = "MODERATE"
 _MAX_REDUCE_RATIO = 0.25
+_MAX_REDUCE_COUNT = 2
+_MIN_POSITION_RATIO = 0.50
 
 
 @dataclass
@@ -87,6 +89,8 @@ class TradingAdvisor:
         self._last_position_hash: Optional[str] = None
         self._cached_decision: Optional[TradingDecision] = None
         self._last_partial_close_signal_id: Optional[str] = None
+        self._reduce_count: int = 0
+        self._initial_position_size: float = 0.0
 
     def decide(
         self,
@@ -105,6 +109,9 @@ class TradingAdvisor:
 
         signal_id = str(signal.get("_memory_id", ""))
         position_hash = f"{position_direction}:{position_size_btc:.6f}"
+
+        if position_direction == "NONE" and self._initial_position_size > 0:
+            self._reset_reduce_state()
 
         if (
             signal_id
@@ -261,6 +268,9 @@ class TradingAdvisor:
             )
 
         # ── 有持仓 ──
+        if self._initial_position_size <= 0:
+            self._initial_position_size = position_size_btc
+
         opposite = "SHORT" if position_direction == "LONG" else "LONG"
         pnl_pct = self._unrealized_pct(
             position_direction, position_entry, position_size_btc, btc_price
@@ -269,12 +279,33 @@ class TradingAdvisor:
         strong_reversal = bias == opposite and level_rank >= _LEVEL_RANK["STRONG"]
         moderate_reversal = bias == opposite and level == "MODERATE"
 
+        position_ratio = (
+            position_size_btc / self._initial_position_size
+            if self._initial_position_size > 0 else 1.0
+        )
+        reduce_exhausted = self._reduce_count >= _MAX_REDUCE_COUNT
+        position_too_small = position_ratio < _MIN_POSITION_RATIO
+
+        if reduce_exhausted or position_too_small:
+            if moderate_reversal or strong_reversal or hard_loss_exit:
+                reason = (
+                    f"已减仓{self._reduce_count}次(剩余{position_ratio:.0%})，"
+                    f"信号仍反向，全平离场"
+                )
+                logger.info("🛡️ 护栏: %s", reason)
+                self._reset_reduce_state()
+                return TradingDecision(
+                    action="平仓",
+                    close_ratio=1.0,
+                    reason=reason[:80],
+                )
+
         if hard_loss_exit or strong_reversal:
             reason = decision.reason or (
                 "未实现亏损>5%，止损离场" if hard_loss_exit
                 else f"{level} 反向，果断平仓"
             )
-            self._last_partial_close_signal_id = None
+            self._reset_reduce_state()
             return TradingDecision(
                 action="平仓",
                 close_ratio=1.0,
@@ -303,7 +334,6 @@ class TradingAdvisor:
                 )
 
         if decision.action == "减仓":
-            # 仅允许：中等强度反向；同向 / NEUTRAL / 弱反向一律继续持仓
             if not moderate_reversal:
                 logger.info(
                     "🛡️ 护栏: 拦截减仓 (bias=%s, %s) → 持仓观望",
@@ -328,9 +358,32 @@ class TradingAdvisor:
                 )
             if signal_id:
                 self._last_partial_close_signal_id = signal_id
+            self._reduce_count += 1
+            logger.info(
+                "📉 减仓计数: %d/%d (仓位比例: %.0f%%)",
+                self._reduce_count, _MAX_REDUCE_COUNT, position_ratio * 100,
+            )
             return decision
 
         return decision
+
+    def _reset_reduce_state(self):
+        """全平或新仓位时重置减仓追踪状态"""
+        self._reduce_count = 0
+        self._initial_position_size = 0.0
+        self._last_partial_close_signal_id = None
+
+    def get_reduce_state(self) -> dict:
+        """导出减仓追踪状态（用于持久化）"""
+        return {
+            "reduce_count": self._reduce_count,
+            "initial_position_size": self._initial_position_size,
+        }
+
+    def restore_reduce_state(self, state: dict):
+        """从持久化数据恢复减仓追踪状态"""
+        self._reduce_count = state.get("reduce_count", 0)
+        self._initial_position_size = state.get("initial_position_size", 0.0)
 
     def _build_prompt(
         self,
