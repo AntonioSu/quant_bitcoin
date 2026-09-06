@@ -11,6 +11,7 @@ from core import (
 )
 from core.market_data import market
 from indicators import PositionLevel
+from multi_agent.risk_tools import SIZE_PCT_MAP, RiskLevelTool
 from multi_agent.trading_advisor import TradingAdvisor, TradingDecision
 from binance_utils import fetch_klines, fetch_price
 from server.state_store import StateStore
@@ -60,6 +61,8 @@ class Position:
         self.initial_stop = 0.0      # 开仓时的原始止损，用于计算 1R
         self.mfe_price = 0.0         # 开仓以来最有利价格 (LONG 最高 / SHORT 最低)
         self.stop_stage = "INIT"     # INIT → BREAKEVEN → TRAILING
+        self.tp_taken = False        # 部分止盈是否已落袋（每仓只执行一次）
+        self.tp_trigger_r = 0.0      # 本仓的止盈触发 R 倍数（0 = 用配置默认值）
 
     @property
     def is_active(self) -> bool:
@@ -85,6 +88,8 @@ class Position:
             "initial_stop": self.initial_stop,
             "mfe_price": self.mfe_price,
             "stop_stage": self.stop_stage,
+            "tp_taken": self.tp_taken,
+            "tp_trigger_r": self.tp_trigger_r,
         }
 
 
@@ -202,6 +207,8 @@ class BaseTradingScheduler(ABC):
             "initial_stop": self.position.initial_stop,
             "mfe_price": self.position.mfe_price,
             "stop_stage": self.position.stop_stage,
+            "tp_taken": self.position.tp_taken,
+            "tp_trigger_r": self.position.tp_trigger_r,
         }
         state.update(self.trading_advisor.get_reduce_state())
         return state
@@ -244,10 +251,12 @@ class BaseTradingScheduler(ABC):
         self.position.leverage = saved.get("leverage", 1)
         self.position.sl_order_id = saved.get("sl_order_id")
         self.position.analysis_id = saved.get("analysis_id")
-        # 旧状态文件没有这三个字段，回退到"刚开仓"的等价值
+        # 旧状态文件没有这几个字段，回退到"刚开仓"的等价值
         self.position.initial_stop = saved.get("initial_stop") or self.position.stop_loss
         self.position.mfe_price = saved.get("mfe_price") or self.position.entry_price
         self.position.stop_stage = saved.get("stop_stage") or "INIT"
+        self.position.tp_taken = bool(saved.get("tp_taken"))
+        self.position.tp_trigger_r = float(saved.get("tp_trigger_r") or 0.0)
         self.trading_advisor.restore_reduce_state(saved)
         
         if not self.position.is_active:
@@ -290,6 +299,25 @@ class BaseTradingScheduler(ABC):
             成交价，失败返回 None
         """
 
+    def _clamp_ai_risk(self, value: Optional[float], lo: float, hi: float,
+                       label: str, default: float) -> float:
+        """把 AI 给的风控参数钳制到允许区间；未指定则用档位默认值。
+
+        LLM 只输出相对量（ATR 倍数 / R 倍数），所以即便判断失误也不会越过强平价；
+        这里再加一道区间钳制，防止 1e6 之类的离谱值。
+        """
+        if value is None:
+            return default
+        clamped = max(lo, min(hi, value))
+        if abs(clamped - value) > 1e-9:
+            logger.warning(
+                f"🛡️ AI {label} {value:.2f} 超出允许区间 [{lo:.2f}, {hi:.2f}]，"
+                f"钳制为 {clamped:.2f}"
+            )
+        else:
+            logger.info(f"🤖 AI 自定 {label}: {clamped:.2f} (默认 {default:.2f})")
+        return clamped
+
     def _reject_open(self, direction: str, notional: float, leverage: int) -> Optional[str]:
         """开仓前置检查，返回拒绝原因；None 表示放行。子类可加更多护栏。"""
         if self.position.is_active:
@@ -314,11 +342,23 @@ class BaseTradingScheduler(ABC):
         level = self.long_level if is_long else self.short_level
         sig_meta = self._get_signal_metadata()
 
+        risk = self.config.risk
+        atr_mult = self._clamp_ai_risk(
+            decision.stop_atr_mult if decision else None,
+            risk.ai_stop_atr_mult_min, risk.ai_stop_atr_mult_max,
+            "止损 ATR 倍数", cfg.atr_multiplier,
+        )
+        tp_trigger = self._clamp_ai_risk(
+            decision.tp_trigger_r if decision else None,
+            risk.ai_tp_trigger_r_min, risk.ai_tp_trigger_r_max,
+            "止盈 R 倍数", risk.tp_trigger_r,
+        )
+
         try:
             levels = level.calculate(
                 entry_price=btc_price,
                 klines=klines,
-                atr_multiplier=cfg.atr_multiplier,
+                atr_multiplier=atr_mult,
                 leverage=leverage,
                 notional_value=notional,
             )
@@ -338,12 +378,14 @@ class BaseTradingScheduler(ABC):
         self.position.leverage = leverage
         self.position.liquidation_price = levels["liquidation_price"]
         self.position.analysis_id = sig_meta["analysis_id"]
+        self.position.tp_trigger_r = tp_trigger
 
         logger.info(
             f"{DIRECTION_ICON[direction]} {self.mode_label}开{'多' if is_long else '空'}: "
             f"{fill_amount:.4f} BTC @ ${fill_price:,.0f} "
             f"(${notional:,.0f}, {leverage}x), "
-            f"止损=${levels['stop_loss']:,.0f}, 强平=${levels['liquidation_price']:,.0f}"
+            f"止损=${levels['stop_loss']:,.0f}, 强平=${levels['liquidation_price']:,.0f}, "
+            f"ATR倍数={atr_mult:.2f}, 止盈线={tp_trigger:.2f}R"
         )
 
         return self._make_trade(
@@ -519,6 +561,7 @@ class BaseTradingScheduler(ABC):
                 btc_price=btc_price,
                 equity=self.equity,
                 holding_duration=pos_ctx.get("holding_duration", "未知"),
+                risk_tool=self._build_risk_tool(btc_price, klines),
             )
 
             # ── 3. 执行交易决策 ──
@@ -713,6 +756,24 @@ class BaseTradingScheduler(ABC):
         else:
             market.position_context = {"is_active": False}
 
+    def _build_risk_tool(self, btc_price: float, klines: list) -> Optional[RiskLevelTool]:
+        """构造给 Trading AI 试算止损/止盈的工具
+
+        只在空仓时构造：持仓中的 R 在开仓时已固定，工具算出来的数字用不上，
+        构造它还要多跑一次 ATR。
+        """
+        if self.position.is_active or not klines:
+            return None
+        return RiskLevelTool(
+            entry_price=btc_price,
+            klines=klines,
+            equity=self.equity,
+            long_level=self.long_level,
+            short_level=self.short_level,
+            risk_cfg=self.config.risk,
+            min_notional=self.MIN_NOTIONAL,
+        )
+
     def _resolve_ai_sizing(self, decision: TradingDecision) -> tuple:
         """从 Trading AI 决策中解析仓位大小和杠杆。
 
@@ -723,8 +784,7 @@ class BaseTradingScheduler(ABC):
             (notional: float, leverage: int)
         """
         size_hint = decision.position_size_hint if decision else "50%"
-        pct_map = {"0%": 0.0, "25%": 0.25, "50%": 0.50, "75%": 0.75, "100%": 1.0}
-        size_pct = pct_map.get(size_hint, 0.50)
+        size_pct = SIZE_PCT_MAP.get(size_hint, 0.50)
 
         leverage = decision.leverage_hint if decision else 5
         try:
@@ -759,6 +819,7 @@ class BaseTradingScheduler(ABC):
         self.position.initial_stop = self.position.stop_loss
         self.position.mfe_price = self.position.entry_price
         self.position.stop_stage = "INIT"
+        self.position.tp_taken = False
 
     async def _update_protective_stop(self, btc_price: float):
         """保本 + 移动止损（棘轮：止损只朝有利方向移动）
@@ -812,6 +873,63 @@ class BaseTradingScheduler(ABC):
     async def _on_stop_loss_moved(self):
         """止损价被抬高后的钩子（Live 覆盖以替换交易所止损单）"""
 
+    async def _check_partial_take_profit(self, btc_price: float) -> Optional[dict]:
+        """部分止盈：浮盈达到 tp_trigger_r × R 时落袋 tp_fraction 仓位。
+
+        填补 0.5R(保本) 与 1.5R(移动止损) 之间的空档——历史上约三成交易的峰值
+        浮盈落在这一段，两端机制都不落袋，最终只能拿到 0。
+        剩余仓位继续由保本/移动止损管理，因此仍保留上涨参与度。
+        每仓只执行一次。
+        """
+        pos = self.position
+        risk = self.config.risk
+        R = pos.risk_unit
+
+        if pos.tp_taken or R <= 0 or btc_price <= 0:
+            return None
+        # 优先用开仓时定下的触发线（可能来自 AI），否则回落配置默认值
+        trigger_r = pos.tp_trigger_r or risk.tp_trigger_r
+        if risk.tp_fraction <= 0 or trigger_r <= 0:
+            return None
+
+        is_long = pos.direction == "LONG"
+        profit = (btc_price - pos.entry_price) if is_long else (pos.entry_price - btc_price)
+        if profit < trigger_r * R:
+            return None
+
+        # 先置位再平仓：_close_position 可能触发 reset()，届时 tp_taken 归位为 False，
+        # 但那时仓位已清空，不影响后续逻辑；若平仓失败则回滚，避免永久跳过止盈。
+        pos.tp_taken = True
+        trade = await self._close_position(
+            btc_price,
+            reason=f"部分止盈 {trigger_r:.2f}R",
+            close_ratio=risk.tp_fraction,
+            is_partial=True,
+        )
+        if trade is None:
+            pos.tp_taken = False
+            return None
+
+        logger.info(
+            f"💰 部分止盈: 平掉 {risk.tp_fraction:.0%} 仓位 @ ${btc_price:,.0f} "
+            f"(浮盈={profit / R:.2f}R)"
+        )
+
+        # 落袋后把剩余仓位的止损推到成本价，确保这一仓不再可能亏钱
+        if pos.is_active:
+            improved = (pos.entry_price > pos.stop_loss) if is_long \
+                else (pos.entry_price < pos.stop_loss)
+            if improved:
+                pos.stop_loss = pos.entry_price
+                pos.stop_stage = "BREAKEVEN"
+            # 必须无条件重挂：平仓流程已撤掉交易所止损单，且剩余数量已减半。
+            # 常规路径下保本止损在 0.5R 就已触发，此处 improved 为 False，
+            # 若依赖它来重挂，实盘剩余仓位会失去交易所侧保护。
+            await self._on_stop_loss_moved()
+            self.save_position_state()
+
+        return trade
+
     async def _check_safety_exits(self, btc_price: float) -> list:
         """硬安全网: 强平 + 保本/移动止损 + 止损（每 tick 检查，不依赖 AI）"""
         trades = []
@@ -819,6 +937,12 @@ class BaseTradingScheduler(ABC):
             return trades
 
         await self._update_protective_stop(btc_price)
+
+        tp_trade = await self._check_partial_take_profit(btc_price)
+        if tp_trade:
+            trades.append(tp_trade)
+            if not self.position.is_active:
+                return trades
 
         is_long = self.position.direction == "LONG"
 
