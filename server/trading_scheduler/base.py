@@ -11,7 +11,12 @@ from core import (
 )
 from core.market_data import market
 from indicators import PositionLevel
-from multi_agent.risk_tools import SIZE_PCT_MAP, RiskLevelTool
+from multi_agent.risk_tools import (
+    SIZE_PCT_MAP,
+    LadderTool,
+    RiskLevelTool,
+    resolve_ladder_stop,
+)
 from multi_agent.trading_advisor import TradingAdvisor, TradingDecision
 from binance_utils import fetch_klines, fetch_price
 from server.state_store import StateStore
@@ -62,7 +67,29 @@ class Position:
         self.mfe_price = 0.0         # 开仓以来最有利价格 (LONG 最高 / SHORT 最低)
         self.stop_stage = "INIT"     # INIT → BREAKEVEN → TRAILING
         self.tp_taken = False        # 部分止盈是否已落袋（每仓只执行一次）
-        self.tp_trigger_r = 0.0      # 本仓的止盈触发 R 倍数（0 = 用配置默认值）
+        self.stop_atr_mult = 0.0     # 开仓时定 R 用的 ATR 倍数（仅留档，R 已冻结）
+        self.atr_at_open = 0.0       # 开仓时的 ATR，供 AI 判断波动是否已重标定
+
+        # ── 阶梯参数：AI 每小时可整组覆盖，None 表示沿用 RiskConfig 默认 ──
+        # 单独存在仓位上而不是改全局配置，是因为它们只对「这一仓」有效：
+        # 平仓后必须回到默认值，否则上一仓的临时判断会污染下一仓。
+        # 哨兵用 None 而非 0，因为 tp_fraction=0 是有意义的取值（本仓不落袋）。
+        self.tp_trigger_r = None
+        self.tp_fraction = None
+        self.breakeven_trigger_r = None
+        self.trailing_trigger_r = None
+        self.trailing_distance_r = None
+
+    # 阶梯字段名 → RiskConfig 上的同名默认值
+    LADDER_FIELDS = (
+        "tp_trigger_r",
+        "tp_fraction",
+        "breakeven_trigger_r",
+        "trailing_trigger_r",
+        "trailing_distance_r",
+    )
+    # 这些字段的 0 是有意义的取值；其余字段的触发线为 0 无意义，等同未设置
+    ZERO_IS_MEANINGFUL = ("tp_fraction",)
 
     @property
     def is_active(self) -> bool:
@@ -75,8 +102,25 @@ class Position:
             return 0.0
         return abs(self.entry_price - self.initial_stop)
 
+    def ladder(self, risk_cfg) -> dict:
+        """本仓实际生效的阶梯参数：仓位上的覆盖值优先，否则用配置默认。
+
+        「什么算未设置」只在这里判定一次：除 tp_fraction 外，触发线为 0 或负数
+        都没有意义（浮盈达到 0R 就落袋是自相矛盾的），一律视为未设置。这样无论
+        字段是被 AI 写的、从旧状态文件恢复的还是测试直接赋的，语义都一致。
+        """
+        out = {}
+        for name in self.LADDER_FIELDS:
+            override = getattr(self, name, None)
+            floor = 0.0 if name in self.ZERO_IS_MEANINGFUL else None
+            valid = override is not None and (
+                override >= floor if floor is not None else override > 0
+            )
+            out[name] = float(override) if valid else getattr(risk_cfg, name)
+        return out
+
     def to_dict(self) -> dict:
-        return {
+        data = {
             "direction": self.direction,
             "entry_price": self.entry_price,
             "size_btc": self.size_btc,
@@ -89,8 +133,12 @@ class Position:
             "mfe_price": self.mfe_price,
             "stop_stage": self.stop_stage,
             "tp_taken": self.tp_taken,
-            "tp_trigger_r": self.tp_trigger_r,
+            "stop_atr_mult": self.stop_atr_mult,
+            "atr_at_open": self.atr_at_open,
         }
+        for name in self.LADDER_FIELDS:
+            data[name] = getattr(self, name)
+        return data
 
 
 class BaseTradingScheduler(ABC):
@@ -208,8 +256,11 @@ class BaseTradingScheduler(ABC):
             "mfe_price": self.position.mfe_price,
             "stop_stage": self.position.stop_stage,
             "tp_taken": self.position.tp_taken,
-            "tp_trigger_r": self.position.tp_trigger_r,
+            "stop_atr_mult": self.position.stop_atr_mult,
+            "atr_at_open": self.position.atr_at_open,
         }
+        for name in Position.LADDER_FIELDS:
+            state[name] = getattr(self.position, name)
         state.update(self.trading_advisor.get_reduce_state())
         return state
     
@@ -256,7 +307,16 @@ class BaseTradingScheduler(ABC):
         self.position.mfe_price = saved.get("mfe_price") or self.position.entry_price
         self.position.stop_stage = saved.get("stop_stage") or "INIT"
         self.position.tp_taken = bool(saved.get("tp_taken"))
-        self.position.tp_trigger_r = float(saved.get("tp_trigger_r") or 0.0)
+        self.position.stop_atr_mult = float(saved.get("stop_atr_mult") or 0.0)
+        self.position.atr_at_open = float(saved.get("atr_at_open") or 0.0)
+        # 旧状态文件里 tp_trigger_r 是 0（当时的「未设置」哨兵）。这里只做类型
+        # 还原，0 该不该算未设置由 Position.ladder() 统一判定。
+        for name in Position.LADDER_FIELDS:
+            raw = saved.get(name)
+            try:
+                setattr(self.position, name, None if raw is None else float(raw))
+            except (TypeError, ValueError):
+                setattr(self.position, name, None)
         self.trading_advisor.restore_reduce_state(saved)
         
         if not self.position.is_active:
@@ -379,6 +439,10 @@ class BaseTradingScheduler(ABC):
         self.position.liquidation_price = levels["liquidation_price"]
         self.position.analysis_id = sig_meta["analysis_id"]
         self.position.tp_trigger_r = tp_trigger
+        self.position.stop_atr_mult = atr_mult
+        # 留档开仓时的 ATR：R 是用它定的，之后 AI 要靠 ATR 现值/开仓值的比例
+        # 判断这把尺子是否还准（波动翻倍时同样的 R 已经不是同样的风险）。
+        self.position.atr_at_open = float(levels.get("atr") or 0.0)
 
         logger.info(
             f"{DIRECTION_ICON[direction]} {self.mode_label}开{'多' if is_long else '空'}: "
@@ -562,7 +626,14 @@ class BaseTradingScheduler(ABC):
                 equity=self.equity,
                 holding_duration=pos_ctx.get("holding_duration", "未知"),
                 risk_tool=self._build_risk_tool(btc_price, klines),
+                ladder_tool=self._build_ladder_tool(btc_price),
+                position_risk=self._build_position_risk(btc_price, klines),
             )
+
+            # AI 每小时随新研判重调一次阶梯参数；执行仍留在 60 秒的纯计算里，
+            # 所以这里只改数字，下一 tick 的安全网就会按新参数推进。
+            if self._apply_ai_ladder(decision):
+                self.save_position_state()
 
             # ── 3. 执行交易决策 ──
             if not just_closed:
@@ -756,6 +827,144 @@ class BaseTradingScheduler(ABC):
         else:
             market.position_context = {"is_active": False}
 
+    def _atr_now(self, klines: list) -> float:
+        """当前 4H ATR，算不出返回 0（调用方自行降级）"""
+        try:
+            return float(self._atr_calc_fallback.calculate(klines).value)
+        except Exception as e:
+            logger.debug(f"ATR 计算失败: {e}")
+            return 0.0
+
+    def _build_position_risk(self, btc_price: float, klines: list) -> Optional[dict]:
+        """把持仓的 R 坐标系打包给 Trading AI
+
+        每小时重新拍定阶梯参数的前提是模型能在 R 空间里推理，而它此前只拿到
+        美元和绝对价格，连 1R 是多少都算不出来。
+        """
+        pos = self.position
+        R = pos.risk_unit
+        if not pos.is_active or R <= 0 or btc_price <= 0:
+            return None
+
+        is_long = pos.direction == "LONG"
+        sign = 1 if is_long else -1
+        mfe = pos.mfe_price or pos.entry_price
+        peak_profit = sign * (mfe - pos.entry_price)
+        profit = sign * (btc_price - pos.entry_price)
+
+        # 路径用已在手的 4H K 线，不额外发请求。粒度粗，但「是否冲高回落」
+        # 这个关键形状由 peak_r + drawdown_from_peak_r 已经精确表达，
+        # 路径只是补充。
+        path_r = []
+        open_ts = self._position_open_ms()
+        if open_ts and klines:
+            for k in klines:
+                try:
+                    if int(k[0]) >= open_ts:
+                        path_r.append(round(sign * (float(k[4]) - pos.entry_price) / R, 3))
+                except (TypeError, ValueError, IndexError):
+                    continue
+            path_r = path_r[-12:]
+
+        dist_to_liq = (
+            abs(btc_price - pos.liquidation_price) / R
+            if pos.liquidation_price > 0 else 0.0
+        )
+
+        return {
+            "r_unit_usd": R,
+            "r_unit_pct": R / pos.entry_price * 100 if pos.entry_price else 0.0,
+            "initial_stop": pos.initial_stop,
+            "profit_r": profit / R,
+            "peak_r": peak_profit / R,
+            "mfe_price": mfe,
+            "drawdown_from_peak_r": max(0.0, (peak_profit - profit) / R),
+            "stop_r": sign * (pos.stop_loss - pos.entry_price) / R,
+            "stop_stage": pos.stop_stage,
+            "dist_to_liq_r": dist_to_liq,
+            "tp_taken": pos.tp_taken,
+            "ladder": pos.ladder(self.config.risk),
+            "atr_now": self._atr_now(klines) if klines else 0.0,
+            "atr_at_open": pos.atr_at_open,
+            "path_r": path_r,
+            "entry_signal": self._entry_signal_baseline(),
+        }
+
+    def _position_open_ms(self) -> Optional[int]:
+        """开仓时间的毫秒时间戳，用于截取开仓以来的 K 线"""
+        ts = self._position_open_time()
+        if not ts:
+            return None
+        try:
+            if isinstance(ts, str):
+                return int(datetime.fromisoformat(ts).timestamp() * 1000)
+            if isinstance(ts, datetime):
+                return int(ts.timestamp() * 1000)
+            return int(float(ts) * 1000)
+        except (TypeError, ValueError):
+            return None
+
+    def _entry_signal_baseline(self) -> dict:
+        """开仓那次研判的方向/置信度，供 AI 对比论点是否被削弱"""
+        if not self.position.analysis_id:
+            return {}
+        try:
+            memory = get_analysis_memory()
+            record = memory.get_record(self.position.analysis_id) if memory else None
+        except Exception as e:
+            logger.debug(f"读取开仓研判失败: {e}")
+            return {}
+        analysis = (record or {}).get("analysis") or record or {}
+        return {
+            "bias": analysis.get("bias"),
+            "confidence": analysis.get("confidence"),
+            "trend_regime": analysis.get("trend_regime"),
+        }
+
+    def _build_ladder_tool(self, btc_price: float) -> Optional[LadderTool]:
+        """持仓期间给 AI 试算阶梯的工具（R 已冻结，只能移动触发线）"""
+        pos = self.position
+        if not pos.is_active or pos.risk_unit <= 0 or btc_price <= 0:
+            return None
+        return LadderTool(
+            direction=pos.direction,
+            entry_price=pos.entry_price,
+            size_btc=pos.size_btc,
+            current_stop=pos.stop_loss,
+            liquidation_price=pos.liquidation_price,
+            r_unit=pos.risk_unit,
+            mfe_price=pos.mfe_price,
+            btc_price=btc_price,
+            tp_taken=pos.tp_taken,
+            defaults=pos.ladder(self.config.risk),
+        )
+
+    def _apply_ai_ladder(self, decision: TradingDecision) -> bool:
+        """把 AI 本次下发的阶梯参数写到仓位上（全权授权，不做区间钳制）
+
+        返回是否有改动。只在真正调过 LLM 的那一次生效（缓存命中不重复写）。
+        """
+        pos = self.position
+        if not pos.is_active or decision is None or decision._from_cache:
+            return False
+
+        overrides = decision.ladder_overrides()
+        if not overrides:
+            return False
+
+        before = pos.ladder(self.config.risk)
+        changed = []
+        for name, value in overrides.items():
+            if abs(before[name] - value) > 1e-9:
+                setattr(pos, name, value)
+                changed.append(f"{name} {before[name]:g}→{value:g}")
+
+        if not changed:
+            return False
+
+        logger.info("🎚️ AI 重调阶梯: %s", ", ".join(changed))
+        return True
+
     def _build_risk_tool(self, btc_price: float, klines: list) -> Optional[RiskLevelTool]:
         """构造给 Trading AI 试算止损/止盈的工具
 
@@ -829,7 +1038,7 @@ class BaseTradingScheduler(ABC):
           峰值浮盈 >= trailing_trigger_r × R → 止损跟在峰值回撤 trailing_distance_r × R 处
         """
         pos = self.position
-        risk = self.config.risk
+        lad = pos.ladder(self.config.risk)
         R = pos.risk_unit
         if R <= 0 or btc_price <= 0:
             return
@@ -840,24 +1049,18 @@ class BaseTradingScheduler(ABC):
             pos.mfe_price = pos.entry_price
         pos.mfe_price = max(pos.mfe_price, btc_price) if is_long else min(pos.mfe_price, btc_price)
 
-        peak_profit = (pos.mfe_price - pos.entry_price) if is_long else (pos.entry_price - pos.mfe_price)
-
-        candidate = None
-        stage = pos.stop_stage
-        if peak_profit >= risk.trailing_trigger_r * R:
-            offset = risk.trailing_distance_r * R
-            candidate = (pos.mfe_price - offset) if is_long else (pos.mfe_price + offset)
-            stage = "TRAILING"
-        elif peak_profit >= risk.breakeven_trigger_r * R:
-            candidate = pos.entry_price
-            stage = "BREAKEVEN"
-
-        if candidate is None:
+        # 与 AI 试算工具共用同一实现，避免模型看到的价位和真正执行的不一致
+        res = resolve_ladder_stop(
+            is_long, pos.entry_price, pos.mfe_price, pos.stop_loss, R,
+            lad["breakeven_trigger_r"], lad["trailing_trigger_r"],
+            lad["trailing_distance_r"],
+        )
+        if res["candidate"] is None or not res["improved"]:
             return
 
-        improved = (candidate > pos.stop_loss) if is_long else (candidate < pos.stop_loss)
-        if not improved:
-            return
+        candidate = res["candidate"]
+        stage = res["stage"]
+        peak_profit = res["peak_profit"]
 
         old_stop = pos.stop_loss
         pos.stop_loss = candidate
@@ -882,14 +1085,14 @@ class BaseTradingScheduler(ABC):
         每仓只执行一次。
         """
         pos = self.position
-        risk = self.config.risk
+        lad = pos.ladder(self.config.risk)
         R = pos.risk_unit
 
         if pos.tp_taken or R <= 0 or btc_price <= 0:
             return None
-        # 优先用开仓时定下的触发线（可能来自 AI），否则回落配置默认值
-        trigger_r = pos.tp_trigger_r or risk.tp_trigger_r
-        if risk.tp_fraction <= 0 or trigger_r <= 0:
+        trigger_r = lad["tp_trigger_r"]
+        tp_fraction = lad["tp_fraction"]
+        if tp_fraction <= 0 or trigger_r <= 0:
             return None
 
         is_long = pos.direction == "LONG"
@@ -903,7 +1106,7 @@ class BaseTradingScheduler(ABC):
         trade = await self._close_position(
             btc_price,
             reason=f"部分止盈 {trigger_r:.2f}R",
-            close_ratio=risk.tp_fraction,
+            close_ratio=tp_fraction,
             is_partial=True,
         )
         if trade is None:
@@ -911,7 +1114,7 @@ class BaseTradingScheduler(ABC):
             return None
 
         logger.info(
-            f"💰 部分止盈: 平掉 {risk.tp_fraction:.0%} 仓位 @ ${btc_price:,.0f} "
+            f"💰 部分止盈: 平掉 {tp_fraction:.0%} 仓位 @ ${btc_price:,.0f} "
             f"(浮盈={profit / R:.2f}R)"
         )
 

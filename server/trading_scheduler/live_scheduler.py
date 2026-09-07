@@ -217,11 +217,13 @@ class LiveTradingScheduler(BaseTradingScheduler):
             is_long = direction == "LONG"
             cfg = self.config.long if is_long else self.config.short
             level = self.long_level if is_long else self.short_level
+            # 开仓倍数已持久化，优先用它重建，否则 R 会和开仓时的意图不一致
+            atr_mult = self.position.stop_atr_mult or cfg.atr_multiplier
             try:
                 levels = level.calculate(
                     entry_price=entry_price,
                     klines=klines,
-                    atr_multiplier=cfg.atr_multiplier,
+                    atr_multiplier=atr_mult,
                     leverage=leverage,
                     notional_value=self.OPEN_NOTIONAL,
                 )
@@ -237,10 +239,14 @@ class LiveTradingScheduler(BaseTradingScheduler):
             self.position.initial_stop = levels["stop_loss"]
             self.position.mfe_price = entry_price
             self.position.stop_stage = "INIT"
+            # R 是用这里的 ATR 重新定的，留档必须跟着更新，否则 AI 拿到的
+            # 「开仓 ATR → 当前 ATR」比值对应的是另一个 R，判断会反向。
+            self.position.stop_atr_mult = atr_mult
+            self.position.atr_at_open = float(levels.get("atr") or 0.0)
 
             logger.info(
                 f"📂 重新计算止损: {direction} @ ${entry_price:,.0f}, "
-                f"止损=${levels['stop_loss']:,.0f}"
+                f"止损=${levels['stop_loss']:,.0f} (ATR×{atr_mult:.2f})"
             )
         except Exception as e:
             logger.error(f"重新计算止损失败: {e}")
