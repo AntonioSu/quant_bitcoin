@@ -174,6 +174,8 @@ class TradingConfig:
                 "breakeven_trigger_r": self.risk.breakeven_trigger_r,
                 "trailing_trigger_r": self.risk.trailing_trigger_r,
                 "trailing_distance_r": self.risk.trailing_distance_r,
+                "tp_trigger_r": self.risk.tp_trigger_r,
+                "tp_fraction": self.risk.tp_fraction,
                 "range_lookback_hours": self.risk.range_lookback_hours,
                 "max_entry_range_pct": self.risk.max_entry_range_pct,
                 "breakout_range_pct": self.risk.breakout_range_pct,
