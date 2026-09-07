@@ -343,7 +343,7 @@ def test_19_position_tp_trigger_falls_back_to_config():
     print("\n[Test 19] 未指定时回落配置默认止盈线")
     sched = make_scheduler()
     pos = arm(sched)
-    pos.tp_trigger_r = 0.0  # 旧仓位 / AI 未给
+    pos.tp_trigger_r = None  # AI 未给
 
     assert asyncio.run(sched._check_partial_take_profit(ENTRY + 0.9 * R)) is None
     trade = asyncio.run(sched._check_partial_take_profit(ENTRY + 1.0 * R))
@@ -391,8 +391,18 @@ def test_21_ai_risk_survives_state_roundtrip():
     legacy.pop("tp_trigger_r")
     other = make_scheduler()
     other._apply_position_state(legacy)
-    assert other.position.tp_trigger_r == 0.0, "旧文件应回落为 0（用配置默认）"
-    print("  ✅ 落盘/恢复正确，旧文件向后兼容")
+    assert other.position.tp_trigger_r is None, "缺字段的旧文件应还原为未设置"
+    assert other.position.ladder(other.config.risk)["tp_trigger_r"] == \
+        other.config.risk.tp_trigger_r, "未设置应回落配置默认"
+
+    # 旧文件里 0 是当时的「未设置」哨兵，不能被当成「AI 要求 0R 止盈」
+    zero_legacy = dict(state)
+    zero_legacy["tp_trigger_r"] = 0.0
+    third = make_scheduler()
+    third._apply_position_state(zero_legacy)
+    assert third.position.ladder(third.config.risk)["tp_trigger_r"] == \
+        third.config.risk.tp_trigger_r, "旧哨兵 0 应回落配置默认"
+    print("  ✅ 落盘/恢复正确，旧文件（缺字段 / 0 哨兵）都向后兼容")
 
 
 def test_9_insufficient_klines_does_not_block():
