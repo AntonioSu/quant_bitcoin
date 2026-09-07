@@ -16,9 +16,80 @@ from indicators.profit_loss_level import PositionLevel
 from utils import logger
 
 TOOL_NAME = "compute_risk_levels"
+LADDER_TOOL_NAME = "compute_ladder_levels"
 
 # 名义本金 = 权益 × 该比例 × 杠杆
 SIZE_PCT_MAP = {"0%": 0.0, "25%": 0.25, "50%": 0.50, "75%": 0.75, "100%": 1.0}
+
+
+def _args_key(args: Dict[str, Any]) -> str:
+    """归一化工具入参，用于识别重复试算"""
+    try:
+        return json.dumps(args, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return repr(sorted(args.items())) if isinstance(args, dict) else repr(args)
+
+
+def _repeat_guard(call_log: List[Dict[str, Any]], args: Dict[str, Any]):
+    """同一组参数重复试算时，直接回上次结果并要求收敛。
+
+    实测模型会用一模一样的参数反复调用直到耗尽轮数 —— 它从重复调用里得不到
+    任何新信息，只是没有停止条件。光靠提示词约束不可靠，这里做硬兜底。
+    """
+    key = _args_key(args)
+    for call in call_log:
+        if call.get("_key") == key:
+            repeated = dict(call["result"])
+            repeated["note"] = (
+                "这组参数你已经试算过，结果完全相同。不要再重复调用："
+                "若可接受就立即输出最终 JSON，否则换一组不同的参数。"
+            )
+            return repeated
+    return None
+
+
+def resolve_ladder_stop(
+    is_long: bool,
+    entry_price: float,
+    mfe_price: float,
+    current_stop: float,
+    r_unit: float,
+    breakeven_trigger_r: float,
+    trailing_trigger_r: float,
+    trailing_distance_r: float,
+) -> Dict[str, Any]:
+    """由阶梯参数推导止损应该在哪 —— 调度器和 AI 试算工具共用的唯一实现。
+
+    两边必须走同一份代码：AI 每小时按工具返回的价位做判断，一旦工具的算法和
+    真正执行的算法漂移，模型看到的就是假数字，它的决策也就失去意义。
+
+    棘轮性质在此处结构性保证：只返回比现有止损更靠有利方向的候选值，
+    所以即使 AI 把 trailing_distance_r 调宽，已经推进的止损也不会退回去。
+    """
+    peak_profit = (mfe_price - entry_price) if is_long else (entry_price - mfe_price)
+
+    candidate = None
+    stage = None
+    if r_unit > 0 and peak_profit >= trailing_trigger_r * r_unit:
+        offset = trailing_distance_r * r_unit
+        candidate = (mfe_price - offset) if is_long else (mfe_price + offset)
+        stage = "TRAILING"
+    elif r_unit > 0 and peak_profit >= breakeven_trigger_r * r_unit:
+        candidate = entry_price
+        stage = "BREAKEVEN"
+
+    improved = False
+    if candidate is not None:
+        improved = (candidate > current_stop) if is_long else (candidate < current_stop)
+
+    return {
+        "peak_profit": peak_profit,
+        "peak_r": (peak_profit / r_unit) if r_unit > 0 else 0.0,
+        "candidate": candidate,
+        "stage": stage,
+        "improved": improved,
+        "resulting_stop": candidate if improved else current_stop,
+    }
 
 
 def build_tool_schema(
@@ -76,6 +147,218 @@ def build_tool_schema(
     }]
 
 
+def build_ladder_tool_schema() -> List[Dict[str, Any]]:
+    """持仓期间重调阶梯参数的工具定义"""
+    return [{
+        "type": "function",
+        "function": {
+            "name": LADDER_TOOL_NAME,
+            "description": (
+                "把持仓阶梯的 R 倍数换算成这一仓的真实价位和真实金额。"
+                "R 在开仓时已冻结，无法再改，你只能改各级触发线。"
+                "调整任何一项之前必须调用，用返回的 resulting_stop_price / "
+                "exits_immediately / tp_fires_immediately 确认后果。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "breakeven_trigger_r": {
+                        "type": "number",
+                        "description": "峰值浮盈达到该 R 倍数时，止损抬到成本价",
+                    },
+                    "trailing_trigger_r": {
+                        "type": "number",
+                        "description": "峰值浮盈达到该 R 倍数时，启动移动止损",
+                    },
+                    "trailing_distance_r": {
+                        "type": "number",
+                        "description": "移动止损挂在峰值回撤该 R 倍数处",
+                    },
+                    "tp_trigger_r": {
+                        "type": "number",
+                        "description": "浮盈达到该 R 倍数时落袋一部分（本仓已落袋则无效）",
+                    },
+                    "tp_fraction": {
+                        "type": "number",
+                        "description": "落袋的仓位比例 0~1；填 0 表示本仓不落袋、全靠移动止损",
+                    },
+                },
+                "required": [
+                    "breakeven_trigger_r", "trailing_trigger_r",
+                    "trailing_distance_r", "tp_trigger_r", "tp_fraction",
+                ],
+            },
+        },
+    }]
+
+
+class LadderTool:
+    """持仓期间的阶梯试算器
+
+    与 RiskLevelTool 的区别：开仓那个要定 R（止损宽度、仓位、杠杆都还没定），
+    这个的 R 已经冻结，只能移动各级触发线，所以入参和返回值完全不同。
+    """
+
+    def __init__(
+        self,
+        direction: str,
+        entry_price: float,
+        size_btc: float,
+        current_stop: float,
+        liquidation_price: float,
+        r_unit: float,
+        mfe_price: float,
+        btc_price: float,
+        tp_taken: bool,
+        defaults: Dict[str, float],
+    ):
+        self.is_long = str(direction).upper() == "LONG"
+        self.entry_price = float(entry_price)
+        self.size_btc = float(size_btc)
+        self.current_stop = float(current_stop)
+        self.liquidation_price = float(liquidation_price)
+        self.r_unit = float(r_unit)
+        self.mfe_price = float(mfe_price) or self.entry_price
+        self.btc_price = float(btc_price)
+        self.tp_taken = bool(tp_taken)
+        self.defaults = dict(defaults)
+        self.call_log: List[Dict[str, Any]] = []
+
+    @property
+    def schema(self) -> List[Dict[str, Any]]:
+        return build_ladder_tool_schema()
+
+    def dispatch(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        if name != LADDER_TOOL_NAME:
+            return {"error": f"未知工具 {name}，可用工具: {LADDER_TOOL_NAME}"}
+        if not isinstance(args, dict):
+            return {"error": "参数格式错误"}
+        repeated = _repeat_guard(self.call_log, args)
+        if repeated is not None:
+            return repeated
+        result = self.compute(**args)
+        self.call_log.append({"args": args, "result": result, "_key": _args_key(args)})
+        return result
+
+    def _num(self, name: str, value, warnings: List[str], allow_zero=False):
+        """只做类型与结构校验，不做区间钳制 —— 区间由 AI 全权决定。"""
+        default = self.defaults.get(name, 0.0)
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            warnings.append(f"{name} 不是数值（收到 {value!r}），已回退当前生效值 {default}")
+            return default
+        if v != v or v in (float("inf"), float("-inf")):
+            warnings.append(f"{name} 不是有限数值，已回退当前生效值 {default}")
+            return default
+        if v < 0 or (v == 0 and not allow_zero):
+            warnings.append(f"{name} 必须为正数（收到 {v}），已回退当前生效值 {default}")
+            return default
+        return v
+
+    def compute(
+        self,
+        breakeven_trigger_r=None,
+        trailing_trigger_r=None,
+        trailing_distance_r=None,
+        tp_trigger_r=None,
+        tp_fraction=None,
+        **_ignored,
+    ) -> Dict[str, Any]:
+        if self.r_unit <= 0:
+            return {"error": "本仓 R 未知（缺少初始止损），无法试算阶梯"}
+
+        warnings: List[str] = []
+        be_r = self._num("breakeven_trigger_r", breakeven_trigger_r, warnings)
+        tr_r = self._num("trailing_trigger_r", trailing_trigger_r, warnings)
+        td_r = self._num("trailing_distance_r", trailing_distance_r, warnings)
+        tp_r = self._num("tp_trigger_r", tp_trigger_r, warnings)
+        tp_f = self._num("tp_fraction", tp_fraction, warnings, allow_zero=True)
+        if tp_f > 1:
+            warnings.append(f"tp_fraction {tp_f} 超过 1（整仓），已按 1 处理")
+            tp_f = 1.0
+
+        sign = 1 if self.is_long else -1
+        R = self.r_unit
+        profit = sign * (self.btc_price - self.entry_price)
+
+        ladder = resolve_ladder_stop(
+            self.is_long, self.entry_price, self.mfe_price, self.current_stop,
+            R, be_r, tr_r, td_r,
+        )
+        new_stop = ladder["resulting_stop"]
+
+        # 立即离场判断：止损落到现价的不利侧，下一 tick 就会平仓
+        exits_now = (new_stop >= self.btc_price) if self.is_long \
+            else (new_stop <= self.btc_price)
+        if exits_now:
+            warnings.append(
+                f"这组参数会把止损推到 ${new_stop:,.0f}，已越过现价 "
+                f"${self.btc_price:,.0f}，下一次检查就会平仓离场"
+            )
+
+        tp_price = self.entry_price + sign * R * tp_r
+        tp_fires_now = (not self.tp_taken) and tp_f > 0 and profit >= tp_r * R
+        remaining = self.size_btc * (1 - tp_f) if tp_fires_now else self.size_btc
+
+        if td_r >= tr_r and tr_r > 0:
+            warnings.append(
+                f"trailing_distance_r ({td_r}) >= trailing_trigger_r ({tr_r})："
+                "移动止损启动时就会落在成本价下方，等于放弃保本"
+            )
+        if not self.tp_taken and tp_f > 0 and tp_r >= tr_r > 0:
+            warnings.append(
+                f"tp_trigger_r ({tp_r}) >= trailing_trigger_r ({tr_r})："
+                "移动止损会先于止盈生效，这笔部分止盈可能永远不触发"
+            )
+
+        return {
+            "direction": "LONG" if self.is_long else "SHORT",
+            "entry_price": round(self.entry_price, 2),
+            "current_price": round(self.btc_price, 2),
+            "r_unit_usd": round(R, 2),
+            "r_unit_pct": round(R / self.entry_price * 100, 3) if self.entry_price else 0,
+            "profit_now_r": round(profit / R, 3),
+            "peak_r": round(ladder["peak_r"], 3),
+            "current_stop_price": round(self.current_stop, 2),
+            "breakeven_trigger_r": be_r,
+            "trailing_trigger_r": tr_r,
+            "trailing_distance_r": td_r,
+            "resulting_stop_price": round(new_stop, 2),
+            "resulting_stop_r": round(sign * (new_stop - self.entry_price) / R, 3),
+            "resulting_stop_stage": ladder["stage"] or "INIT",
+            "stop_moved": ladder["improved"],
+            "exits_immediately": exits_now,
+            "tp_trigger_r": tp_r,
+            "tp_fraction": tp_f,
+            "tp_price": round(tp_price, 2),
+            "tp_taken_already": self.tp_taken,
+            "tp_fires_immediately": tp_fires_now,
+            "profit_at_tp_usd": round(self.size_btc * R * tp_r * tp_f, 2),
+            "size_btc_after_tp": round(remaining, 6),
+            "liquidation_price": round(self.liquidation_price, 2),
+            "warnings": warnings,
+        }
+
+    def summary(self) -> str:
+        if not self.call_log:
+            return "无工具调用"
+        parts = []
+        for c in self.call_log:
+            a, res = c["args"], c["result"]
+            if "error" in res:
+                parts.append(f"{json.dumps(a, ensure_ascii=False)}→{res['error']}")
+                continue
+            parts.append(
+                f"be={res['breakeven_trigger_r']}R tr={res['trailing_trigger_r']}R"
+                f"/{res['trailing_distance_r']}R tp={res['tp_trigger_r']}R"
+                f"×{res['tp_fraction']:.0%} → 止损=${res['resulting_stop_price']:,.0f}"
+                f"({res['resulting_stop_r']:+.2f}R)"
+                + ("  ⚠️立即离场" if res["exits_immediately"] else "")
+            )
+        return " | ".join(parts)
+
+
 class RiskLevelTool:
     """有状态的工具执行器：捕获本轮的现价 / ATR / 权益，供模型反复试算"""
 
@@ -119,8 +402,13 @@ class RiskLevelTool:
         """LLMClient.chat_with_tools 的 dispatch 回调"""
         if name != TOOL_NAME:
             return {"error": f"未知工具 {name}，可用工具: {TOOL_NAME}"}
-        result = self.compute(**args) if isinstance(args, dict) else {"error": "参数格式错误"}
-        self.call_log.append({"args": args, "result": result})
+        if not isinstance(args, dict):
+            return {"error": "参数格式错误"}
+        repeated = _repeat_guard(self.call_log, args)
+        if repeated is not None:
+            return repeated
+        result = self.compute(**args)
+        self.call_log.append({"args": args, "result": result, "_key": _args_key(args)})
         return result
 
     @staticmethod

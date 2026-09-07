@@ -18,7 +18,7 @@ from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 
-from multi_agent.risk_tools import SIZE_PCT_MAP, RiskLevelTool
+from multi_agent.risk_tools import SIZE_PCT_MAP, LadderTool, RiskLevelTool
 from utils import logger
 from utils.common_utils import read_file_prompt
 from utils.llm_client import LLMClient
@@ -50,10 +50,32 @@ class TradingDecision:
     position_size_hint: str = "50%"
     leverage_hint: int = 5
     reason: str = ""
-    # AI 自定风控（相对量，None 表示沿用档位默认值）
-    stop_atr_mult: Optional[float] = None   # 止损距离 = ATR × 该倍数
+    # AI 自定风控（相对量，None 表示沿用当前生效值）
+    stop_atr_mult: Optional[float] = None   # 止损距离 = ATR × 该倍数（仅开仓时有效）
     tp_trigger_r: Optional[float] = None    # 部分止盈触发的 R 倍数
+    # 持仓期间可整组重调的阶梯参数（每小时随新研判刷新一次）
+    tp_fraction: Optional[float] = None         # 落袋比例，0 = 本仓不落袋
+    breakeven_trigger_r: Optional[float] = None # 保本触发线
+    trailing_trigger_r: Optional[float] = None  # 移动止损启动线
+    trailing_distance_r: Optional[float] = None # 移动止损回撤距离
     _from_cache: bool = field(default=False, repr=False)
+
+    # 可在持仓期间下发的阶梯字段（与 Position.LADDER_FIELDS 对应）
+    LADDER_KEYS = (
+        "tp_trigger_r",
+        "tp_fraction",
+        "breakeven_trigger_r",
+        "trailing_trigger_r",
+        "trailing_distance_r",
+    )
+
+    def ladder_overrides(self) -> Dict[str, float]:
+        """AI 本次真正给了值的阶梯参数"""
+        return {
+            k: getattr(self, k)
+            for k in self.LADDER_KEYS
+            if getattr(self, k) is not None
+        }
 
     @property
     def is_open(self) -> bool:
@@ -105,6 +127,8 @@ class TradingAdvisor:
         equity: float,
         holding_duration: str = "未知",
         risk_tool: Optional[RiskLevelTool] = None,
+        ladder_tool: Optional[LadderTool] = None,
+        position_risk: Optional[Dict[str, Any]] = None,
     ) -> TradingDecision:
         """做一次交易决策（有缓存，信号/仓位不变时直接返回缓存）"""
 
@@ -134,21 +158,28 @@ class TradingAdvisor:
             btc_price=btc_price,
             equity=equity,
             holding_duration=holding_duration,
+            position_risk=position_risk,
         )
 
+        # 空仓要定 R（止损宽度/仓位/杠杆），持仓的 R 已冻结、只能移动各级触发线，
+        # 两种场景的入参完全不同，所以挂两个不同的工具。
+        is_flat = position_direction == "NONE"
+        tool = risk_tool if is_flat else ladder_tool
         try:
-            # 无仓时才给风控工具：只有开仓需要定止损宽度和止盈线，
-            # 已持仓的 R 在开仓时就固定了，再让模型试算只是白烧 token。
-            if risk_tool is not None and position_direction == "NONE":
+            if tool is not None:
                 resp = self.llm.chat_with_tools(
                     system_prompt=self._load_system_prompt(),
                     prompt=prompt,
-                    tools=risk_tool.schema,
-                    dispatch=risk_tool.dispatch,
+                    tools=tool.schema,
+                    dispatch=tool.dispatch,
                     max_rounds=3,
                     usage_tag="[trading]",
                 )
-                logger.info(f"🔧 风控试算: {risk_tool.summary()}")
+                logger.info(
+                    "🔧 %s试算: %s",
+                    "风控" if is_flat else "阶梯",
+                    tool.summary(),
+                )
             else:
                 resp = self.llm.chat(
                     system_prompt=self._load_system_prompt(),
@@ -160,6 +191,10 @@ class TradingAdvisor:
             logger.error(f"🤖 交易决策 LLM 调用失败: {e}")
             decision = self._safe_default(position_direction)
 
+        # 护栏会重新构造 TradingDecision，途中会丢掉阶梯字段。护栏管的是动作
+        # （开/平/减），不该连带否掉 AI 对阶梯的调整，所以事后补回来。
+        ladder_overrides = decision.ladder_overrides()
+
         decision = self._apply_policy(
             decision,
             signal=signal,
@@ -169,6 +204,10 @@ class TradingAdvisor:
             btc_price=btc_price,
             signal_id=signal_id,
         )
+
+        for key, value in ladder_overrides.items():
+            if getattr(decision, key) is None:
+                setattr(decision, key, value)
 
         self._last_signal_id = signal_id
         self._last_position_hash = position_hash
@@ -411,6 +450,7 @@ class TradingAdvisor:
         btc_price: float,
         equity: float,
         holding_duration: str,
+        position_risk: Optional[Dict[str, Any]] = None,
     ) -> str:
         parts: list[str] = []
 
@@ -452,6 +492,13 @@ class TradingAdvisor:
             f"- 研判: {summary}\n"
             f"- entry_ok: {entry_ok}\n"
         )
+        # 趋势/波动状态是决定阶梯松紧的核心依据，信号里一直有，之前没传给这一层
+        for key, label in (
+            ("trend_regime", "趋势状态"),
+            ("volatility_regime", "波动状态"),
+        ):
+            if signal.get(key):
+                sig_section += f"- {label}: {signal[key]}\n"
         if size_hint is not None:
             sig_section += f"- 信号仓位建议: {size_hint}\n"
         if lev_hint is not None:
@@ -482,6 +529,8 @@ class TradingAdvisor:
                 f"- 强平价: ${position_liquidation:,.0f}\n"
                 f"- 持仓时长: {holding_duration}"
             )
+            if position_risk:
+                parts.append(self._format_position_risk(position_risk))
         else:
             parts.append("## 当前持仓\n- 无持仓（空仓）")
 
@@ -493,6 +542,85 @@ class TradingAdvisor:
 
         parts.append("请根据以上信息输出交易决策 JSON。")
         return "\n\n".join(parts)
+
+    @staticmethod
+    def _format_position_risk(pr: Dict[str, Any]) -> str:
+        """把持仓的 R 坐标系摊给模型。
+
+        阶梯的每一级都是用 R 定义的，而模型此前只拿到美元和绝对价格 ——
+        它根本算不出 R 是多少，也就无法用系统自己的单位表达判断。
+        另外峰值（peak_r）必须给：整个棘轮是峰值驱动的，只看当前浮盈的话，
+        「冲到 1.4R 又跌回 0.3R」和「一路磨到 0.3R」看起来完全一样，
+        而这两种情况需要相反的处理。
+        """
+        lines = [
+            "## 本仓风险坐标（R 单位）",
+            f"- 1R = ${pr['r_unit_usd']:,.0f}（占入场价 {pr['r_unit_pct']:.2f}%）"
+            "，开仓时已冻结，无法再改",
+            f"- 初始止损: ${pr['initial_stop']:,.0f}",
+            f"- 当前浮盈: {pr['profit_r']:+.2f}R",
+            f"- 峰值浮盈: {pr['peak_r']:+.2f}R"
+            f"（最有利价 ${pr['mfe_price']:,.0f}）",
+            f"- 自峰值回撤: {pr['drawdown_from_peak_r']:.2f}R",
+            f"- 当前止损位置: {pr['stop_r']:+.2f}R"
+            f"（0 = 成本价），阶段 {pr['stop_stage']}",
+            f"- 距强平: {pr['dist_to_liq_r']:.2f}R",
+            f"- 部分止盈已落袋: {'是' if pr['tp_taken'] else '否'}",
+        ]
+
+        lad = pr.get("ladder") or {}
+        if lad:
+            lines += [
+                "",
+                "### 当前生效的阶梯参数",
+                f"- breakeven_trigger_r = {lad['breakeven_trigger_r']}",
+                f"- trailing_trigger_r  = {lad['trailing_trigger_r']}",
+                f"- trailing_distance_r = {lad['trailing_distance_r']}",
+                f"- tp_trigger_r        = {lad['tp_trigger_r']}",
+                f"- tp_fraction         = {lad['tp_fraction']}",
+            ]
+
+        atr_now = pr.get("atr_now") or 0
+        atr_open = pr.get("atr_at_open") or 0
+        if atr_now > 0 and atr_open > 0:
+            ratio = atr_now / atr_open
+            lines += [
+                "",
+                "### 波动是否已重标定",
+                f"- 开仓时 ATR ${atr_open:,.0f} → 现在 ${atr_now:,.0f}"
+                f"（{ratio:.2f}×）",
+            ]
+            if ratio >= 1.3:
+                lines.append(
+                    f"- 波动已放大 {(ratio - 1) * 100:.0f}%，同样的 R 现在"
+                    "更容易被噪声扫到，可考虑放宽 trailing_distance_r"
+                )
+            elif ratio <= 0.75:
+                lines.append(
+                    f"- 波动已收缩 {(1 - ratio) * 100:.0f}%，可考虑收紧"
+                    " trailing_distance_r 锁定更多利润"
+                )
+
+        path = pr.get("path_r") or []
+        if len(path) >= 2:
+            lines += [
+                "",
+                "### 开仓以来的路径（4H 收盘，R 单位）",
+                "- " + " → ".join(f"{v:+.2f}" for v in path),
+            ]
+
+        entry_sig = pr.get("entry_signal") or {}
+        if entry_sig.get("bias"):
+            lines += [
+                "",
+                "### 开仓时的研判基准（用于对比论点是否被削弱）",
+                f"- 当时: {entry_sig.get('bias')} "
+                f"{entry_sig.get('confidence', '?')}%"
+                + (f" / {entry_sig['trend_regime']}"
+                   if entry_sig.get("trend_regime") else ""),
+            ]
+
+        return "\n".join(lines)
 
     def _parse_response(self, text: str, position_direction: str) -> TradingDecision:
         raw = str(text or "").strip()
@@ -546,9 +674,9 @@ class TradingAdvisor:
 
         reason = str(data.get("reason", "")).strip()[:80]
 
-        # 只做类型解析，不在此钳制区间：风控边界由调度器按 RiskConfig 执行，
-        # 避免上下限散落两处。非数字或非正数一律视为「未指定」，回落档位默认。
-        def _opt_positive(key: str) -> Optional[float]:
+        # 只做类型解析，不做区间钳制：阶梯参数由 AI 全权决定。非数字或非法值
+        # 一律视为「未指定」，回落当前生效值 —— 解析层不替模型做判断。
+        def _opt_positive(key: str, allow_zero: bool = False) -> Optional[float]:
             raw = data.get(key)
             if raw is None or raw == "":
                 return None
@@ -557,7 +685,11 @@ class TradingAdvisor:
             except (TypeError, ValueError):
                 logger.warning(f"🤖 Trading AI {key} 非数字，忽略: {raw!r}")
                 return None
-            if val <= 0:
+            if val != val or val in (float("inf"), float("-inf")):
+                logger.warning(f"🤖 Trading AI {key} 非有限数值，忽略: {raw!r}")
+                return None
+            if val < 0 or (val == 0 and not allow_zero):
+                logger.warning(f"🤖 Trading AI {key} 非正数，忽略: {val}")
                 return None
             return val
 
@@ -569,6 +701,11 @@ class TradingAdvisor:
             reason=reason,
             stop_atr_mult=_opt_positive("stop_atr_mult"),
             tp_trigger_r=_opt_positive("tp_trigger_r"),
+            # tp_fraction=0 是合法意图：本仓不落袋，全交给移动止损
+            tp_fraction=_opt_positive("tp_fraction", allow_zero=True),
+            breakeven_trigger_r=_opt_positive("breakeven_trigger_r"),
+            trailing_trigger_r=_opt_positive("trailing_trigger_r"),
+            trailing_distance_r=_opt_positive("trailing_distance_r"),
         )
 
     @staticmethod
