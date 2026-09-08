@@ -2,23 +2,25 @@
 
 职责分离：
   Signal AI (MarketAnalyzer)  → 纯市场方向判断 (bias + confidence)
-  Trading AI (TradingAdvisor) → 仓位管理决策 (开仓/平仓/持仓)
+  Trading AI (TradingAdvisor) → 仓位管理决策 (开仓/平仓/减仓/持仓/推进止损)
 
-TradingAdvisor 在以下时机被调用（事件驱动，节省 token）：
-  1. 市场信号更新（新的 AI 研判 _memory_id）
-  2. 仓位状态变化（开仓/平仓/减仓）
+TradingAdvisor 由调度器每个 tick（默认 5 分钟）调用一次。决策缓存只在
+「同一研判 + 同一仓位 + 未超过 decision_ttl_sec」时命中，因此正常情况下
+每个 tick 都会真正问一次 LLM。持仓期间的保本 / 移动止损 / 落袋不再由代码
+自动执行，而是由这一层用 action（平仓 / 减仓）和 stop_r（推进硬止损）表达。
 """
 
 from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 
-from multi_agent.risk_tools import SIZE_PCT_MAP, LadderTool, RiskLevelTool
+from multi_agent.risk_tools import SIZE_PCT_MAP, RiskLevelTool
 from utils import logger
 from utils.common_utils import read_file_prompt
 from utils.llm_client import LLMClient
@@ -37,9 +39,14 @@ _LEVEL_RANK = {
     "VERY_STRONG": 4,
 }
 _MIN_OPEN_LEVEL = "MODERATE"
-_MAX_REDUCE_RATIO = 0.25
-_MAX_REDUCE_COUNT = 2
-_MIN_POSITION_RATIO = 0.50
+
+# ── 防抖护栏（不替 AI 做方向判断，只防止它在 5 分钟节拍下来回折腾）──
+_MIN_REDUCE_RATIO = 0.10        # 减仓比例下限：低于此值没有意义
+_MAX_REDUCE_RATIO = 0.90        # 减仓比例上限：再多就该直接平仓
+_MAX_REDUCE_COUNT = 2           # 每仓最多减仓次数，第三次减仓按平仓执行
+_MIN_REMAIN_RATIO = 0.20        # 减仓后剩余不足初始仓位的 20% → 直接平仓
+REENTRY_COOLDOWN_SEC = 15 * 60  # 平仓后同方向重开的最短间隔
+DEFAULT_DECISION_TTL_SEC = 300  # 决策缓存有效期（与调度器节拍对齐）
 
 
 @dataclass
@@ -50,32 +57,10 @@ class TradingDecision:
     position_size_hint: str = "50%"
     leverage_hint: int = 5
     reason: str = ""
-    # AI 自定风控（相对量，None 表示沿用当前生效值）
+    # AI 自定风控（相对量，None 表示不改）
     stop_atr_mult: Optional[float] = None   # 止损距离 = ATR × 该倍数（仅开仓时有效）
-    tp_trigger_r: Optional[float] = None    # 部分止盈触发的 R 倍数
-    # 持仓期间可整组重调的阶梯参数（每小时随新研判刷新一次）
-    tp_fraction: Optional[float] = None         # 落袋比例，0 = 本仓不落袋
-    breakeven_trigger_r: Optional[float] = None # 保本触发线
-    trailing_trigger_r: Optional[float] = None  # 移动止损启动线
-    trailing_distance_r: Optional[float] = None # 移动止损回撤距离
+    stop_r: Optional[float] = None          # 持仓中：把硬止损推进到入场价 + stop_r × R
     _from_cache: bool = field(default=False, repr=False)
-
-    # 可在持仓期间下发的阶梯字段（与 Position.LADDER_FIELDS 对应）
-    LADDER_KEYS = (
-        "tp_trigger_r",
-        "tp_fraction",
-        "breakeven_trigger_r",
-        "trailing_trigger_r",
-        "trailing_distance_r",
-    )
-
-    def ladder_overrides(self) -> Dict[str, float]:
-        """AI 本次真正给了值的阶梯参数"""
-        return {
-            k: getattr(self, k)
-            for k in self.LADDER_KEYS
-            if getattr(self, k) is not None
-        }
 
     @property
     def is_open(self) -> bool:
@@ -97,7 +82,11 @@ class TradingDecision:
 class TradingAdvisor:
     """AI 交易决策层 — 根据信号 + 仓位 + 资金决定交易动作"""
 
-    def __init__(self, model_name: Optional[str] = None):
+    def __init__(
+        self,
+        model_name: Optional[str] = None,
+        decision_ttl_sec: float = DEFAULT_DECISION_TTL_SEC,
+    ):
         self.llm = LLMClient(
             model_name=model_name or os.getenv("LLM_MODEL_NAME"),
             key=os.getenv("LLM_API_KEY"),
@@ -107,12 +96,28 @@ class TradingAdvisor:
             extra_body={"thinking": {"type": "disabled"}},
         )
         self._system_prompt: Optional[str] = None
+        self._decision_ttl_sec = float(decision_ttl_sec)
         self._last_signal_id: Optional[str] = None
         self._last_position_hash: Optional[str] = None
+        self._last_decision_ts: float = 0.0
         self._cached_decision: Optional[TradingDecision] = None
-        self._last_partial_close_signal_id: Optional[str] = None
         self._reduce_count: int = 0
         self._initial_position_size: float = 0.0
+        # 最近一次全平：方向 / 当时的研判 ID / 时间，用于拦截同研判下立刻重开
+        self._last_close: Optional[Dict[str, Any]] = None
+
+    def _cache_valid(self, signal_id: str, position_hash: str) -> bool:
+        """缓存只在「同研判 + 同仓位 + 未过期」时命中。
+
+        ttl <= 0 表示不做时间缓存：每次 decide() 都问 LLM。
+        """
+        if self._cached_decision is None or not signal_id:
+            return False
+        if signal_id != self._last_signal_id or position_hash != self._last_position_hash:
+            return False
+        if self._decision_ttl_sec <= 0:
+            return False
+        return (time.monotonic() - self._last_decision_ts) < self._decision_ttl_sec
 
     def decide(
         self,
@@ -127,10 +132,9 @@ class TradingAdvisor:
         equity: float,
         holding_duration: str = "未知",
         risk_tool: Optional[RiskLevelTool] = None,
-        ladder_tool: Optional[LadderTool] = None,
         position_risk: Optional[Dict[str, Any]] = None,
     ) -> TradingDecision:
-        """做一次交易决策（有缓存，信号/仓位不变时直接返回缓存）"""
+        """做一次交易决策（缓存有效期内、且信号/仓位不变时直接返回缓存）"""
 
         signal_id = str(signal.get("_memory_id", ""))
         position_hash = f"{position_direction}:{position_size_btc:.6f}"
@@ -138,12 +142,7 @@ class TradingAdvisor:
         if position_direction == "NONE" and self._initial_position_size > 0:
             self._reset_reduce_state()
 
-        if (
-            signal_id
-            and signal_id == self._last_signal_id
-            and position_hash == self._last_position_hash
-            and self._cached_decision is not None
-        ):
+        if self._cache_valid(signal_id, position_hash):
             self._cached_decision._from_cache = True
             return self._cached_decision
 
@@ -161,10 +160,10 @@ class TradingAdvisor:
             position_risk=position_risk,
         )
 
-        # 空仓要定 R（止损宽度/仓位/杠杆），持仓的 R 已冻结、只能移动各级触发线，
-        # 两种场景的入参完全不同，所以挂两个不同的工具。
+        # 只有空仓要定 R（止损宽度/仓位/杠杆）才需要试算工具；持仓中 R 已冻结，
+        # AI 直接在 R 坐标里输出 stop_r / 平仓 / 减仓 即可，不需要工具。
         is_flat = position_direction == "NONE"
-        tool = risk_tool if is_flat else ladder_tool
+        tool = risk_tool if is_flat else None
         try:
             if tool is not None:
                 resp = self.llm.chat_with_tools(
@@ -175,11 +174,7 @@ class TradingAdvisor:
                     max_rounds=3,
                     usage_tag="[trading]",
                 )
-                logger.info(
-                    "🔧 %s试算: %s",
-                    "风控" if is_flat else "阶梯",
-                    tool.summary(),
-                )
+                logger.info("🔧 风控试算: %s", tool.summary())
             else:
                 resp = self.llm.chat(
                     system_prompt=self._load_system_prompt(),
@@ -191,9 +186,9 @@ class TradingAdvisor:
             logger.error(f"🤖 交易决策 LLM 调用失败: {e}")
             decision = self._safe_default(position_direction)
 
-        # 护栏会重新构造 TradingDecision，途中会丢掉阶梯字段。护栏管的是动作
-        # （开/平/减），不该连带否掉 AI 对阶梯的调整，所以事后补回来。
-        ladder_overrides = decision.ladder_overrides()
+        # 护栏会重新构造 TradingDecision，途中会丢掉 stop_r。护栏管的是动作
+        # （开/平/减），不该连带否掉 AI 对止损的推进，所以事后补回来。
+        stop_r = decision.stop_r
 
         decision = self._apply_policy(
             decision,
@@ -205,12 +200,12 @@ class TradingAdvisor:
             signal_id=signal_id,
         )
 
-        for key, value in ladder_overrides.items():
-            if getattr(decision, key) is None:
-                setattr(decision, key, value)
+        if decision.stop_r is None and not decision.is_open:
+            decision.stop_r = stop_r
 
         self._last_signal_id = signal_id
         self._last_position_hash = position_hash
+        self._last_decision_ts = time.monotonic()
         self._cached_decision = decision
         decision._from_cache = False
 
@@ -227,6 +222,34 @@ class TradingAdvisor:
         self._last_signal_id = None
         self._last_position_hash = None
         self._cached_decision = None
+
+    def note_position_closed(self, direction: str, signal_id: str):
+        """调度器在全平后调用（无论是 AI 平仓还是硬止损 / 强平）。
+
+        记录方向和当时的研判 ID：同一份研判下不允许立刻同方向重开，
+        且至少间隔 REENTRY_COOLDOWN_SEC —— 否则「止损出局 → 2 分钟后原样开回」
+        这种抖动会反复发生。
+        """
+        if direction not in ("LONG", "SHORT"):
+            return
+        self._last_close = {
+            "direction": direction,
+            "signal_id": str(signal_id or ""),
+            "ts": time.monotonic(),
+        }
+        self._reset_reduce_state()
+
+    def _reentry_block_reason(self, direction: str, signal_id: str) -> Optional[str]:
+        """同方向重开是否应被拦下；返回原因，None 表示放行"""
+        last = self._last_close
+        if not last or last["direction"] != direction:
+            return None
+        elapsed = time.monotonic() - last["ts"]
+        if elapsed < REENTRY_COOLDOWN_SEC:
+            return f"刚平掉 {direction} 仅 {elapsed / 60:.0f} 分钟，冷却中"
+        if signal_id and last["signal_id"] and signal_id == last["signal_id"]:
+            return f"平掉 {direction} 后研判未更新，不在同一研判下重开"
+        return None
 
     def _load_system_prompt(self) -> str:
         if self._system_prompt is None:
@@ -248,20 +271,6 @@ class TradingAdvisor:
             conf = 0
         return confidence_to_level(conf)
 
-    @staticmethod
-    def _unrealized_pct(
-        position_direction: str,
-        position_entry: float,
-        position_size_btc: float,
-        btc_price: float,
-    ) -> float:
-        if position_direction == "NONE" or position_size_btc <= 0 or position_entry <= 0:
-            return 0.0
-        sign = 1 if position_direction == "LONG" else -1
-        unrealized = sign * (btc_price - position_entry) * position_size_btc
-        notional = position_entry * position_size_btc
-        return (unrealized / notional * 100) if notional > 0 else 0.0
-
     def _apply_policy(
         self,
         decision: TradingDecision,
@@ -272,7 +281,9 @@ class TradingAdvisor:
         btc_price: float,
         signal_id: str,
     ) -> TradingDecision:
-        """硬性护栏：防止小赚就跑 / CAUTIOUS 滥开 / entry_ok 误平仓。"""
+        """护栏只管两件事：开仓门槛（entry_ok / 等级 / 方向一致 / 重开冷却）
+        和减仓防抖（比例区间 / 次数 / 残仓）。持仓中怎么出、什么时候出，
+        全部由 AI 决定，这里不再拦平仓、也不再替 AI 强制平仓。"""
         bias = str(signal.get("bias", "NEUTRAL") or "NEUTRAL").strip().upper()
         level = self._signal_level(signal)
         entry_ok = signal.get("entry_ok", True)
@@ -288,6 +299,16 @@ class TradingAdvisor:
         if not has_position:
             if not decision.is_open:
                 return decision
+
+            reentry_block = self._reentry_block_reason(decision.direction, signal_id)
+            if reentry_block:
+                reason = f"护栏拦截重开: {reentry_block}"
+                logger.info("🛡️ %s", reason)
+                return TradingDecision(
+                    action="等待入场",
+                    position_size_hint="0%",
+                    reason=reason[:80],
+                )
 
             allow_open = (
                 bool(entry_ok)
@@ -320,103 +341,48 @@ class TradingAdvisor:
                 reason=reason[:80],
             )
 
-        # ── 有持仓 ──
+        # ── 有持仓：平仓照单执行；减仓只做防抖 ──
         if self._initial_position_size <= 0:
             self._initial_position_size = position_size_btc
 
-        opposite = "SHORT" if position_direction == "LONG" else "LONG"
-        pnl_pct = self._unrealized_pct(
-            position_direction, position_entry, position_size_btc, btc_price
-        )
-        hard_loss_exit = pnl_pct < -5.0
-        strong_reversal = bias == opposite and level_rank >= _LEVEL_RANK["STRONG"]
-        moderate_reversal = bias == opposite and level == "MODERATE"
+        if decision.action == "平仓":
+            self._reset_reduce_state()
+            return decision
 
-        position_ratio = (
-            position_size_btc / self._initial_position_size
-            if self._initial_position_size > 0 else 1.0
-        )
-        reduce_exhausted = self._reduce_count >= _MAX_REDUCE_COUNT
-        position_too_small = position_ratio < _MIN_POSITION_RATIO
+        if decision.action == "减仓":
+            position_ratio = (
+                position_size_btc / self._initial_position_size
+                if self._initial_position_size > 0 else 1.0
+            )
+            ratio = min(max(decision.close_ratio, _MIN_REDUCE_RATIO), _MAX_REDUCE_RATIO)
+            remain_ratio = position_ratio * (1 - ratio)
 
-        if reduce_exhausted or position_too_small:
-            if moderate_reversal or strong_reversal or hard_loss_exit:
-                reason = (
-                    f"已减仓{self._reduce_count}次(剩余{position_ratio:.0%})，"
-                    f"信号仍反向，全平离场"
-                )
-                logger.info("🛡️ 护栏: %s", reason)
+            escalate = None
+            if self._reduce_count >= _MAX_REDUCE_COUNT:
+                escalate = f"已减仓{self._reduce_count}次，第{self._reduce_count + 1}次按全平执行"
+            elif remain_ratio < _MIN_REMAIN_RATIO:
+                escalate = f"减仓后仅剩初始仓位 {remain_ratio:.0%}，残仓无意义，按全平执行"
+
+            if escalate:
+                logger.info("🛡️ 护栏: %s", escalate)
                 self._reset_reduce_state()
                 return TradingDecision(
                     action="平仓",
                     close_ratio=1.0,
-                    reason=reason[:80],
+                    reason=(decision.reason or escalate)[:80],
                 )
 
-        if hard_loss_exit or strong_reversal:
-            reason = decision.reason or (
-                "未实现亏损>5%，止损离场" if hard_loss_exit
-                else f"{level} 反向，果断平仓"
-            )
-            self._reset_reduce_state()
-            return TradingDecision(
-                action="平仓",
-                close_ratio=1.0,
-                reason=reason[:80],
-            )
-
-        if decision.action == "平仓":
-            if moderate_reversal:
-                logger.info("🛡️ 护栏: 仅 MODERATE 反转，平仓降级为减仓 25%%")
-                decision = TradingDecision(
-                    action="减仓",
-                    close_ratio=_MAX_REDUCE_RATIO,
-                    reason=(decision.reason or "MODERATE 反转，轻减仓")[:80],
-                )
-            else:
-                logger.info(
-                    "🛡️ 护栏: 拦截平仓 (bias=%s, %s, entry_ok=%s) → 持仓观望",
-                    bias, level, entry_ok,
-                )
-                return TradingDecision(
-                    action="持仓观望",
-                    reason=(
-                        decision.reason
-                        or "信号未强反转，entry_ok/NEUTRAL 不构成离场"
-                    )[:80],
-                )
-
-        if decision.action == "减仓":
-            if not moderate_reversal:
-                logger.info(
-                    "🛡️ 护栏: 拦截减仓 (bias=%s, %s) → 持仓观望",
-                    bias, level,
-                )
-                return TradingDecision(
-                    action="持仓观望",
-                    reason="仅 MODERATE 反向才允许轻减仓，其余继续持仓",
-                )
-
-            decision = TradingDecision(
-                action="减仓",
-                close_ratio=min(max(decision.close_ratio, 0.1), _MAX_REDUCE_RATIO),
-                reason=(decision.reason or "MODERATE 反转，轻减仓 25%")[:80],
-            )
-
-            if signal_id and signal_id == self._last_partial_close_signal_id:
-                logger.info("🛡️ 护栏: 同信号已减仓，等待下次研判刷新")
-                return TradingDecision(
-                    action="持仓观望",
-                    reason="同信号已减仓，等待下次研判",
-                )
-            if signal_id:
-                self._last_partial_close_signal_id = signal_id
             self._reduce_count += 1
             logger.info(
-                "📉 减仓计数: %d/%d (仓位比例: %.0f%%)",
-                self._reduce_count, _MAX_REDUCE_COUNT, position_ratio * 100,
+                "📉 减仓 %.0f%% (第 %d/%d 次, 减前仓位比例 %.0f%%)",
+                ratio * 100, self._reduce_count, _MAX_REDUCE_COUNT, position_ratio * 100,
             )
-            return decision
+            return TradingDecision(
+                action="减仓",
+                close_ratio=ratio,
+                reason=decision.reason[:80],
+                stop_r=decision.stop_r,
+            )
 
         return decision
 
@@ -424,7 +390,6 @@ class TradingAdvisor:
         """全平或新仓位时重置减仓追踪状态"""
         self._reduce_count = 0
         self._initial_position_size = 0.0
-        self._last_partial_close_signal_id = None
 
     def get_reduce_state(self) -> dict:
         """导出减仓追踪状态（用于持久化）"""
@@ -547,38 +512,26 @@ class TradingAdvisor:
     def _format_position_risk(pr: Dict[str, Any]) -> str:
         """把持仓的 R 坐标系摊给模型。
 
-        阶梯的每一级都是用 R 定义的，而模型此前只拿到美元和绝对价格 ——
-        它根本算不出 R 是多少，也就无法用系统自己的单位表达判断。
-        另外峰值（peak_r）必须给：整个棘轮是峰值驱动的，只看当前浮盈的话，
-        「冲到 1.4R 又跌回 0.3R」和「一路磨到 0.3R」看起来完全一样，
-        而这两种情况需要相反的处理。
+        模型要自己决定何时保本 / 移动止损 / 落袋，就必须能在 R 空间里推理，
+        而不是只拿到美元和绝对价格。峰值（peak_r）必须给：
+        「冲到 1.4R 又跌回 0.3R」和「一路磨到 0.3R」当前浮盈完全一样，
+        但前者是突破失败该收紧、后者是缓慢推进该给空间。
         """
         lines = [
             "## 本仓风险坐标（R 单位）",
             f"- 1R = ${pr['r_unit_usd']:,.0f}（占入场价 {pr['r_unit_pct']:.2f}%）"
             "，开仓时已冻结，无法再改",
-            f"- 初始止损: ${pr['initial_stop']:,.0f}",
+            f"- 初始止损: ${pr['initial_stop']:,.0f}（-1.00R，硬止损兜底）",
             f"- 当前浮盈: {pr['profit_r']:+.2f}R",
             f"- 峰值浮盈: {pr['peak_r']:+.2f}R"
             f"（最有利价 ${pr['mfe_price']:,.0f}）",
             f"- 自峰值回撤: {pr['drawdown_from_peak_r']:.2f}R",
-            f"- 当前止损位置: {pr['stop_r']:+.2f}R"
-            f"（0 = 成本价），阶段 {pr['stop_stage']}",
+            f"- 当前硬止损: ${pr['stop_price']:,.0f} = {pr['stop_r']:+.2f}R"
+            f"（0 = 成本价）"
+            + ("，已由你推进过" if pr.get("stop_moved_by_ai") else "，仍在开仓位置"),
             f"- 距强平: {pr['dist_to_liq_r']:.2f}R",
-            f"- 部分止盈已落袋: {'是' if pr['tp_taken'] else '否'}",
+            "- 要推进止损就输出 stop_r（只能比当前值更靠有利方向，且不能越过现价）",
         ]
-
-        lad = pr.get("ladder") or {}
-        if lad:
-            lines += [
-                "",
-                "### 当前生效的阶梯参数",
-                f"- breakeven_trigger_r = {lad['breakeven_trigger_r']}",
-                f"- trailing_trigger_r  = {lad['trailing_trigger_r']}",
-                f"- trailing_distance_r = {lad['trailing_distance_r']}",
-                f"- tp_trigger_r        = {lad['tp_trigger_r']}",
-                f"- tp_fraction         = {lad['tp_fraction']}",
-            ]
 
         atr_now = pr.get("atr_now") or 0
         atr_open = pr.get("atr_at_open") or 0
@@ -593,12 +546,12 @@ class TradingAdvisor:
             if ratio >= 1.3:
                 lines.append(
                     f"- 波动已放大 {(ratio - 1) * 100:.0f}%，同样的 R 现在"
-                    "更容易被噪声扫到，可考虑放宽 trailing_distance_r"
+                    "更容易被噪声扫到，止损不要贴得太近"
                 )
             elif ratio <= 0.75:
                 lines.append(
-                    f"- 波动已收缩 {(1 - ratio) * 100:.0f}%，可考虑收紧"
-                    " trailing_distance_r 锁定更多利润"
+                    f"- 波动已收缩 {(1 - ratio) * 100:.0f}%，可考虑把止损"
+                    "推得更近以锁定利润"
                 )
 
         path = pr.get("path_r") or []
@@ -654,10 +607,10 @@ class TradingAdvisor:
         close_ratio = 1.0
         if action == "减仓":
             try:
-                close_ratio = float(data.get("close_ratio", _MAX_REDUCE_RATIO))
-                close_ratio = max(0.1, min(_MAX_REDUCE_RATIO, close_ratio))
+                close_ratio = float(data.get("close_ratio", 0.5))
+                close_ratio = max(_MIN_REDUCE_RATIO, min(_MAX_REDUCE_RATIO, close_ratio))
             except (TypeError, ValueError):
-                close_ratio = _MAX_REDUCE_RATIO
+                close_ratio = 0.5
         elif action == "平仓":
             close_ratio = 1.0
 
@@ -674,9 +627,8 @@ class TradingAdvisor:
 
         reason = str(data.get("reason", "")).strip()[:80]
 
-        # 只做类型解析，不做区间钳制：阶梯参数由 AI 全权决定。非数字或非法值
-        # 一律视为「未指定」，回落当前生效值 —— 解析层不替模型做判断。
-        def _opt_positive(key: str, allow_zero: bool = False) -> Optional[float]:
+        # 只做类型解析：非数字 / 非有限值一律视为「未指定」—— 解析层不替模型做判断。
+        def _opt_number(key: str, positive_only: bool) -> Optional[float]:
             raw = data.get(key)
             if raw is None or raw == "":
                 return None
@@ -688,10 +640,14 @@ class TradingAdvisor:
             if val != val or val in (float("inf"), float("-inf")):
                 logger.warning(f"🤖 Trading AI {key} 非有限数值，忽略: {raw!r}")
                 return None
-            if val < 0 or (val == 0 and not allow_zero):
+            if positive_only and val <= 0:
                 logger.warning(f"🤖 Trading AI {key} 非正数，忽略: {val}")
                 return None
             return val
+
+        # stop_r 只在持仓中有意义；0 = 保本、正 = 锁定利润、负 = 仍在亏损侧
+        # （负值只要比当前止损更靠有利方向也算推进，由调度器判断棘轮）
+        stop_r = _opt_number("stop_r", positive_only=False) if has_position else None
 
         return TradingDecision(
             action=action,
@@ -699,13 +655,8 @@ class TradingAdvisor:
             position_size_hint=size_hint,
             leverage_hint=leverage,
             reason=reason,
-            stop_atr_mult=_opt_positive("stop_atr_mult"),
-            tp_trigger_r=_opt_positive("tp_trigger_r"),
-            # tp_fraction=0 是合法意图：本仓不落袋，全交给移动止损
-            tp_fraction=_opt_positive("tp_fraction", allow_zero=True),
-            breakeven_trigger_r=_opt_positive("breakeven_trigger_r"),
-            trailing_trigger_r=_opt_positive("trailing_trigger_r"),
-            trailing_distance_r=_opt_positive("trailing_distance_r"),
+            stop_atr_mult=_opt_number("stop_atr_mult", positive_only=True),
+            stop_r=stop_r,
         )
 
     @staticmethod
