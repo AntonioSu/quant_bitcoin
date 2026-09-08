@@ -32,7 +32,7 @@ from binance_utils import fetch_price_sync, fetch_klines_sync
 from core import TradingMode
 from utils import logger
 from server.history_store import history_store, HistoryStore
-from server.scheduler import app_state, DEFAULT_INITIAL_USDT
+from server.scheduler import app_state, DEFAULT_INITIAL_USDT, DATA_DIR
 
 
 AI_MANUAL_COOLDOWN_SEC = 30
@@ -565,7 +565,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="BTC 神盾-长矛监控系统 (多策略实验)",
+    title="BTC 监控分析系统 (多策略实验)",
     version="2.0.0",
     lifespan=lifespan,
 )
@@ -673,9 +673,10 @@ async def get_performance(preset: Optional[str] = None):
     scheduler = app_state.get_scheduler(preset)
     from core.performance import PerformanceTracker
     tracker = PerformanceTracker()
-    if scheduler:
-        return tracker.calculate(scheduler.trades, DEFAULT_INITIAL_USDT)
-    return tracker.calculate([], DEFAULT_INITIAL_USDT)
+    if not scheduler:
+        return tracker.calculate([], DEFAULT_INITIAL_USDT)
+    # 权益曲线要从本轮交易开始前的权益起算；实盘权益取自交易所，不能用固定初始值
+    return tracker.calculate(scheduler.trades, scheduler.initial_equity)
 
 
 @app.get("/api/klines")
@@ -720,69 +721,102 @@ async def get_klines(
         logger.error(f"获取K线失败: {e}")
         return []
 
-@app.get("/api/etf-flow")
-async def get_etf_flow(limit: int = Query(default=0, le=9999)):
-    """获取 BTC ETF 历史资金流数据 (本地历史 + API 增量合并)
+async def _daily_history(
+    filename: str,
+    label: str,
+    fetch,
+    to_record,
+    project,
+    upsert: bool = False,
+    limit: int = 0,
+) -> list:
+    """本地按日历史 + 数据源增量合并的通用流程
 
-    limit=0 返回全部历史, 否则返回最近 N 天 (newest first)
+    ETF 与交易所净流入的取数逻辑完全一致，只有文件名、抓取函数和字段映射不同。
+
+    Args:
+        filename: data/ 下的历史文件名
+        label: 日志中显示的数据名
+        fetch: 无参函数，返回数据源的最近若干天原始记录（阻塞，放线程池执行）
+        to_record: 原始记录 → 落盘记录
+        project: 落盘记录 → 接口返回记录
+        upsert: True 时用新数据覆盖同一天的旧记录；False 时只补缺失的日期
+        limit: >0 时只返回最近 N 天
+
+    Returns:
+        按日期倒序 (newest first) 的记录列表
     """
     import json as _json
-    from data_sources.etf_flow import ETFFlow
 
-    local_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "data", "etf_flow_history.json",
-    )
+    local_path = os.path.join(DATA_DIR, filename)
 
-    # 1) 读本地历史
     local_data: list = []
     try:
         if os.path.exists(local_path):
             with open(local_path, "r", encoding="utf-8") as f:
                 local_data = _json.load(f)
     except Exception as e:
-        logger.warning(f"读取 ETF 本地历史失败: {e}")
+        logger.warning(f"读取 {label} 本地历史失败: {e}")
 
-    # 2) 从 SoSoValue 拉最近数据做增量合并
     try:
-        etf = ETFFlow()
-        api_data = await asyncio.to_thread(etf.fetch_history, 60)
-        if api_data:
-            existing_dates = {d["date"] for d in local_data}
-            new_records = []
-            for item in api_data:
-                if item["date"] not in existing_dates:
-                    new_records.append({
-                        "date": item["date"],
-                        "daily_flow": item["daily_flow"],
-                        "daily_flow_m": round(item["daily_flow"] / 1e6, 1),
-                        "cum_flow": item.get("cum_flow", 0),
-                        "etf_flows": {},
-                    })
-            if new_records:
-                local_data.extend(new_records)
-                local_data.sort(key=lambda x: x["date"])
-                # 回写本地文件
-                try:
-                    with open(local_path, "w", encoding="utf-8") as f:
-                        _json.dump(local_data, f, ensure_ascii=False)
-                    logger.info(f"ETF 本地历史新增 {len(new_records)} 天")
-                except Exception as e:
-                    logger.warning(f"回写 ETF 本地历史失败: {e}")
+        api_data = await asyncio.to_thread(fetch)
+        by_date = {d["date"]: d for d in local_data if d.get("date")}
+        added = 0
+
+        for item in api_data or []:
+            record = to_record(item)
+            date = record.get("date")
+            if not date:
+                continue
+            # 非 upsert 模式下已有的日期不动，避免覆盖本地补录的明细字段
+            if not upsert and date in by_date:
+                continue
+            if by_date.get(date) != record:
+                by_date[date] = record
+                added += 1
+
+        if added:
+            local_data = sorted(by_date.values(), key=lambda x: x["date"])
+            try:
+                with open(local_path, "w", encoding="utf-8") as f:
+                    _json.dump(local_data, f, ensure_ascii=False)
+                logger.info(f"{label} 本地历史更新 {added} 天")
+            except Exception as e:
+                logger.warning(f"回写 {label} 本地历史失败: {e}")
     except Exception as e:
-        logger.warning(f"ETF API 增量更新失败: {e}")
+        logger.warning(f"{label} API 增量更新失败: {e}")
 
-    # 3) 格式化返回 (newest first, 与前端兼容)
-    result = [
-        {"date": d["date"], "daily_flow": d["daily_flow"], "cum_flow": d.get("cum_flow", 0)}
-        for d in local_data
-    ]
+    result = [project(d) for d in local_data if d.get("date")]
     result.sort(key=lambda x: x["date"], reverse=True)
+    return result[:limit] if limit > 0 else result
 
-    if limit > 0:
-        result = result[:limit]
 
-    return result
+@app.get("/api/etf-flow")
+async def get_etf_flow(limit: int = Query(default=0, le=9999)):
+    """获取 BTC ETF 历史资金流数据 (本地历史 + SoSoValue 增量合并)
+
+    limit=0 返回全部历史, 否则返回最近 N 天 (newest first)
+    """
+    from data_sources.etf_flow import ETFFlow
+
+    return await _daily_history(
+        filename="etf_flow_history.json",
+        label="ETF",
+        fetch=lambda: ETFFlow().fetch_history(60),
+        to_record=lambda item: {
+            "date": item["date"],
+            "daily_flow": item["daily_flow"],
+            "daily_flow_m": round(item["daily_flow"] / 1e6, 1),
+            "cum_flow": item.get("cum_flow", 0),
+            "etf_flows": {},
+        },
+        project=lambda d: {
+            "date": d["date"],
+            "daily_flow": d["daily_flow"],
+            "cum_flow": d.get("cum_flow", 0),
+        },
+        limit=limit,
+    )
 
 
 @app.get("/api/exchange-netflow")
@@ -791,71 +825,29 @@ async def get_exchange_netflow(limit: int = Query(default=0, le=9999)):
 
     limit=0 返回全部历史, 否则返回最近 N 天 (newest first)
     """
-    import json as _json
     from data_sources.exchange_netflow import ExchangeNetflow
 
-    local_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "data", "exchange_netflow_history.json",
-    )
-
-    local_data: list = []
-    try:
-        if os.path.exists(local_path):
-            with open(local_path, "r", encoding="utf-8") as f:
-                local_data = _json.load(f)
-    except Exception as e:
-        logger.warning(f"读取交易所净流入本地历史失败: {e}")
-
-    try:
-        netflow = ExchangeNetflow()
-        api_data = await asyncio.to_thread(netflow.fetch_history, 240)
-        if api_data:
-            by_date = {d["date"]: d for d in local_data if d.get("date")}
-            changed = False
-            for item in api_data:
-                date = item.get("date")
-                if not date:
-                    continue
-                record = {
-                    "date": date,
-                    "netflow_btc": item["netflow_btc"],
-                    "inflow_btc": item["inflow_btc"],
-                    "outflow_btc": item["outflow_btc"],
-                    "signal": item.get("signal"),
-                }
-                if by_date.get(date) != record:
-                    by_date[date] = record
-                    changed = True
-
-            if changed:
-                local_data = sorted(by_date.values(), key=lambda x: x["date"])
-                try:
-                    with open(local_path, "w", encoding="utf-8") as f:
-                        _json.dump(local_data, f, ensure_ascii=False)
-                    logger.info("交易所净流入本地历史已更新")
-                except Exception as e:
-                    logger.warning(f"回写交易所净流入本地历史失败: {e}")
-    except Exception as e:
-        logger.warning(f"交易所净流入 API 增量更新失败: {e}")
-
-    result = [
-        {
+    return await _daily_history(
+        filename="exchange_netflow_history.json",
+        label="交易所净流入",
+        fetch=lambda: ExchangeNetflow().fetch_history(240),
+        to_record=lambda item: {
+            "date": item.get("date"),
+            "netflow_btc": item["netflow_btc"],
+            "inflow_btc": item["inflow_btc"],
+            "outflow_btc": item["outflow_btc"],
+            "signal": item.get("signal"),
+        },
+        project=lambda d: {
             "date": d["date"],
             "netflow_btc": d.get("netflow_btc", 0),
             "inflow_btc": d.get("inflow_btc", 0),
             "outflow_btc": d.get("outflow_btc", 0),
             "signal": d.get("signal"),
-        }
-        for d in local_data
-        if d.get("date")
-    ]
-    result.sort(key=lambda x: x["date"], reverse=True)
-
-    if limit > 0:
-        result = result[:limit]
-
-    return result
+        },
+        upsert=True,
+        limit=limit,
+    )
 
 
 def _ai_analysis_payload() -> dict:
@@ -909,6 +901,7 @@ async def refresh_ai_analysis_manual():
             await refresh_ai_analysis_async()
             app_state.ai_last_refresh_ts = time.time()
         logger.info("🤖 手动触发的 AI 综合研判已完成")
+        await app_state.notify_frontend()
         return {"status": "ok", **_ai_analysis_payload()}
     except Exception as e:
         logger.error(f"手动 AI 分析失败: {e}")
@@ -996,6 +989,25 @@ async def get_account():
 # WebSocket
 # ══════════════════════════════════════════════════════════════
 
+async def _dashboard_update_payload() -> dict:
+    return {
+        "type": "update",
+        "selected_preset": app_state.selected_preset,
+        "indicators": (await _get_indicators_cached()).model_dump(),
+        "portfolio": (await get_portfolio()).model_dump(),
+        "status": (await get_status()).model_dump(),
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+async def broadcast_dashboard_update() -> None:
+    """把当前仪表盘快照推给所有已连接的前端。"""
+    await app_state.broadcast(await _dashboard_update_payload())
+
+
+app_state.push_dashboard = broadcast_dashboard_update
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket 实时推送"""
@@ -1006,15 +1018,7 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             try:
-                data = {
-                    "type": "update",
-                    "selected_preset": app_state.selected_preset,
-                    "indicators": (await _get_indicators_cached()).model_dump(),
-                    "portfolio": (await get_portfolio()).model_dump(),
-                    "status": (await get_status()).model_dump(),
-                    "timestamp": datetime.now().isoformat(),
-                }
-                await websocket.send_json(data)
+                await websocket.send_json(await _dashboard_update_payload())
             except WebSocketDisconnect:
                 raise
             except Exception as e:
@@ -1038,6 +1042,16 @@ async def index():
     return FileResponse(
         os.path.join(WEB_DIR, "index.html"),
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """浏览器默认 favicon 请求"""
+    return FileResponse(
+        os.path.join(WEB_DIR, "favicon.svg"),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
     )
 
 

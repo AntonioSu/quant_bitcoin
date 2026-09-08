@@ -211,23 +211,6 @@ class MACalculator:
             strength=strength,
         )
 
-    def is_bullish(self, klines: List[List]) -> bool:
-        """是否出现看涨信号"""
-        result = self.calculate(klines)
-        return result.signal_type in (
-            MASignalType.GOLDEN_CROSS,
-            MASignalType.BULLISH_ALIGNMENT,
-        )
-
-    def is_bearish(self, klines: List[List]) -> bool:
-        """是否出现看跌信号"""
-        result = self.calculate(klines)
-        return result.signal_type in (
-            MASignalType.DEATH_CROSS,
-            MASignalType.BEARISH_ALIGNMENT,
-        )
-
-
 def main():
     """测试"""
     import random

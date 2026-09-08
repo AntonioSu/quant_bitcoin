@@ -106,7 +106,6 @@ quant_bitcoin/
 │   ├── trading_advisor.py  # 交易执行建议
 │   ├── schemas.py          # 数据结构 + 置信度常量 + 硬约束
 │   ├── prompts/            # LLM 提示词
-│   │   ├── market_analyzer.md
 │   │   ├── bull_researcher.md
 │   │   ├── bear_researcher.md
 │   │   ├── risk_reviewer.md
@@ -160,47 +159,34 @@ quant_bitcoin/
 - 交易记录 (trades)
 - 模式状态 (aegis/spear)
 
-### API 接口
-
-```bash
-# 重置状态为初始值
-curl -X POST http://localhost:8088/api/reset
-```
-
 ## 历史数据
 
-所有指标数据自动保存到 `data/history/` 目录，服务重启后可查看历史记录。
+指标数据由 `server/history_store.py` 自动落盘到 `data/history/`，服务重启后不丢失。
 
-### 历史数据 API
-
-```bash
-# 获取 F&G 指数历史 (最近100条)
-curl http://localhost:8088/api/history/fear_greed
-
-# 获取最近7天的资金费率
-curl "http://localhost:8088/api/history/funding_rate?days=7"
-
-# 获取巨鲸流向统计
-curl http://localhost:8088/api/history/whale_netflow/stats
-
-# 获取 BTC 价格历史
-curl "http://localhost:8088/api/history/btc_price?limit=500"
-
-# 清除某类历史数据
-curl -X DELETE http://localhost:8088/api/history/fear_greed
-
-# 清除所有历史数据
-curl -X DELETE http://localhost:8088/api/history/all
-```
-
-### 支持的数据类型
+### 落盘的数据类型
 
 | 类型 | 说明 | 存储文件 |
 |------|------|---------|
 | `fear_greed` | F&G 指数 | `data/history/fear_greed.json` |
 | `funding_rate` | 资金费率 | `data/history/funding_rate.json` |
-| `whale_netflow` | 巨鲸净流向 | `data/history/whale_netflow.json` |
+| `top_trader_ratio` | 大户多空比 | `data/history/top_trader_ratio.json` |
 | `btc_price` | BTC 价格 | `data/history/btc_price.json` |
+| `etf_flow` | ETF 资金流 | `data/history/etf_flow.json` |
+| `exchange_netflow` | 交易所净流入 | `data/history/exchange_netflow.json` |
+
+### 对外暴露的历史接口
+
+按日聚合的两类历史通过独立接口提供（本地历史 + 数据源增量合并）：
+
+```bash
+# ETF 每日资金流 (limit=0 返回全部，按日期倒序)
+curl "http://localhost:8088/api/etf-flow?limit=30"
+
+# 交易所每日净流入
+curl "http://localhost:8088/api/exchange-netflow?limit=30"
+```
+
+> 其余落盘数据目前只供前端图表内部使用，未开放独立的读取/删除接口。
 
 ## 三档参数
 
@@ -230,8 +216,7 @@ curl -X DELETE http://localhost:8088/api/history/all
 |------|------|
 | 单次最大亏损 | 1.0% 权益 |
 | ATR止损倍数 | 2.0 (止损宽，不易被震出) |
-| 移动止盈倍数 | 0.5 |
-| 做空杠杆 | 2x |
+| 做空杠杆 | 5x |
 | 做多杠杆 | 10x |
 
 ---
@@ -262,8 +247,7 @@ curl -X DELETE http://localhost:8088/api/history/all
 |------|------|
 | 单次最大亏损 | 1.5% 权益 |
 | ATR止损倍数 | 1.5 |
-| 移动止盈倍数 | 0.5 |
-| 做空杠杆 | 2x |
+| 做空杠杆 | 5x |
 | 做多杠杆 | 10x |
 
 ---
@@ -292,46 +276,158 @@ curl -X DELETE http://localhost:8088/api/history/all
 
 | 参数 | 值 |
 |------|------|
-| 单次最大亏损 | 2.5% 权益 |
+| 单次最大亏损 | 5.0% 权益 |
 | ATR止损倍数 | 1.2 (止损紧，容易被震出) |
-| 移动止盈倍数 | 0.5 |
-| 做空杠杆 | 2x |
+| 做空杠杆 | 5x |
 | 做多杠杆 | 10x |
 
 ### 开仓与平仓分离
 
-- **信号决定开仓**: 三灯全绿时开仓，信号变化不会平掉现有仓位
-- **止损/止盈决定平仓**: 仓位由价格驱动的止损和止盈管理
+- **信号决定开仓**: Signal AI 给出 ≥MODERATE 的方向且 entry_ok=true 时，Trading AI 开仓
+- **AI 决定平仓**: 持仓期间的保本 / 移动止损 / 落袋 / 离场全部由 Trading AI 每 5 分钟决定一次；
+  代码只保留强平 + 硬止损两道机械兜底，并保证止损永不回退
 
-### 止盈止损机制
+### 风险管理参数 (`core/config.py` 的 `RiskConfig`)
 
-```
-阶段1 (TP1前):
-  止损价 = 入场价 - ATR × ATR止损倍数
-  TP1价  = 入场价 + ATR × ATR止损倍数 (1:1 盈亏比)
+| 参数 | 默认值 | 含义 | 谁定 |
+|------|--------|------|------|
+| `ai_stop_atr_mult_min/max` | 1.0 / 3.0 | AI 自定止损 ATR 倍数的允许区间（这一步定下 1R） | 固定 |
+| `range_lookback_hours` | 48 | 追高护栏的区间回看窗口 | 固定 |
+| `max_entry_range_pct` | 60 | 顺方向位置 ≥ 60% 视为追高，拒绝开仓 | 固定 |
+| `breakout_range_pct` | 100 | 突破区间（创新高/新低）放行 | 固定 |
 
-阶段2 (TP1后 → 移动止盈):
-  TP1 触发 → 平掉 50% 仓位，启动移动止盈
-  trailing_stop = 最高价 - ATR × 移动止盈倍数
-  止盈线只会往有利方向移动，永远不回退
-  价格跌破止盈线 → 平掉剩余 50%
-```
+以前的阶梯五项（`breakeven_trigger_r` / `trailing_trigger_r` / `trailing_distance_r` /
+`tp_trigger_r` / `tp_fraction`）已经删除：这些「浮盈到几 R 就做什么」的规则现在不再由代码
+执行，而是 Trading AI 每个 tick 看着 R 坐标自己拍。
 
-### 示例 (Standard, ATR ≈ $980)
+### 谁决定止损止盈
+
+**AI 决定，代码兜底。** 调度器每 **5 分钟**一个 tick，每个 tick 做两件事：
+
+| 步骤 | 做什么 | 由谁 |
+|---|---|---|
+| 1. 硬安全网 | 价格触及强平价 / 硬止损 → 无条件平仓；同时记录峰值价（MFE） | 纯代码，不含网络请求 |
+| 2. 交易决策 | 开多 / 开空 / 平仓 / 减仓 / 持仓观望，以及可选的 `stop_r`（推进硬止损） | Trading AI，每 tick 真正调一次 LLM |
+
+开仓时 AI 定 `stop_atr_mult`（止损距离 = ATR × 该倍数），这一步定下 **1R 并冻结**，
+也是这一仓的初始硬止损（= -1R）。之后每 5 分钟 AI 拿到一块「本仓风险坐标」：
+当前浮盈、峰值浮盈、自峰值回撤、当前止损位置、ATR 变化、开仓以来的路径 —— 全部以 R 为单位 ——
+然后决定：
+
+- **持仓观望**（默认）；
+- **`stop_r`**：把硬止损推到 `入场价 + stop_r × R`。`0` = 保本，`0.8` = 锁定 0.8R，
+  `-0.5` = 从 -1R 收紧到 -0.5R。可与任何持仓动作同时给；
+- **减仓** `close_ratio` 0.1~0.9：论点被削弱但没被推翻，或浮盈很大想先落袋一部分；
+- **平仓**：论点被推翻、突破明确失败、或继续持有期望值为负。
+
+**AI 只输出相对倍数，不输出绝对价格**——它拿到的现价可能有延迟，凭感觉写出的绝对价位
+可能贴近强平价。`stop_r` 由调度器 `_apply_ai_stop()` 换算成真实价位。
+
+#### 全权授权下仍然成立的三条
+
+1. **棘轮是结构性的。** `_apply_ai_stop()` 只接受比现有止损更靠有利方向的值，
+   AI 说什么都不能把已经推进的止损退回去，也不能放宽开仓时的硬止损。
+2. **`stop_r` 不能越过现价。** 那等价于「下一 tick 立刻平仓」；想离场应当直接输出 `平仓`。
+   越界的请求会被记日志并忽略。
+3. **1R 开仓即冻结，强平价是最后底线。** 止损若穿透强平价会被拉回强平价内侧。
+
+#### 护栏只做两件事（`TradingAdvisor._apply_policy`）
+
+护栏**不再替 AI 判断该不该平仓**（以前会拦下「非强反转」的平仓、并在 -5% / 强反转时
+强制平仓，现在都删掉了）。剩下的是：
+
+| 类别 | 规则 |
+|---|---|
+| 开仓门槛 | entry_ok=true、bias=LONG/SHORT、等级 ≥MODERATE、方向与 bias 一致 |
+| 重开冷却 | 全平（无论 AI 平仓还是止损 / 强平）后，同方向 15 分钟内不重开；同一份研判下不重开 |
+| 减仓防抖 | `close_ratio` 钳到 0.1~0.9；每仓最多减 2 次，第 3 次按全平执行；减完剩不到初始仓位 20% 按全平执行 |
+
+「重开冷却」针对的是一个真实发生过的抖动：移动止损把仓位打掉，2 分钟后 Trading AI
+看到同一份 LONG 研判、发现自己空仓，就把同方向仓位原样开回去。
+
+#### 决策缓存
+
+`TradingAdvisor.decide()` 的缓存只在「同一研判 + 同一仓位 + 未超过 `decision_ttl_sec`」
+时命中。调度器把 ttl 设成自己的节拍（300s），所以正常情况下每个 tick 都会真正问一次 LLM；
+研判刷新或仓位变化则立即失效。
+
+#### AI 用 tool call 试算风险（`multi_agent/risk_tools.py`）
+
+光让 AI 输出倍数是「盲填」：它看不到 ATR，不知道 1.5 倍到底是多少美元、会亏多少钱。
+因此空仓决策时会给它一个 function calling 工具 `compute_risk_levels`，把相对倍数换算成
+真实数字再反馈：
+
+| 入参 | 出参（节选） |
+|------|------|
+| `direction`、`stop_atr_mult`、`position_size_hint`、`leverage` | `stop_price`、`liquidation_price`、`r_unit_usd`、`loss_at_stop_usd`、`loss_pct_of_equity`、`price_at_plus_1r`、`warnings` |
+
+要点：
+
+- 工具复用 `PositionLevel.preview` 和 `SIZE_PCT_MAP` 的同一套公式，保证 AI 看到的
+  数字和真正下单时用的数字一致；两边算法一旦漂移，AI 的判断就失去意义
+  （`tests/test_risk_tools.py` 的 Test 1 就是钉这个一致性的）
+- `r_unit_usd` 取**实际**止损距离：止损穿透强平价被拉回时 R 会收窄，此时 `warnings`
+  会提示降杠杆
+- 只在**空仓**时挂这个工具。持仓中的 R 已冻结，AI 直接在 R 坐标里输出 `stop_r` /
+  `平仓` / `减仓`，不需要第二个工具
+- 提示词要求正常只调 1 次、最多 2 次（`warnings` 非空或亏损过大才重试）。实测
+  不给收敛条件时模型会在仓位/杠杆之间反复试算，把轮数耗尽
+- 达到轮数上限时会追加一条显式指令再问一次。**只去掉 tools 是不够的**：DeepSeek 系
+  会把工具调用语法当普通文本吐出来（`<｜｜DSML｜｜tool_calls>`），下游 JSON 解析直接失败
+- 工具执行异常、参数非 JSON、未知工具名都以 `{"error": ...}` 回灌给模型自行纠正，
+  不会中断决策
+
+通用的 tool call 循环在 `LLMClient.chat_with_tools()`，与业务无关，可复用于其他 agent。
+
+#### AI 每 5 分钟看到的输入（`_build_position_risk()`）
+
+| 分组 | 字段 |
+|------|------|
+| R 坐标系 | `r_unit_usd` / `r_unit_pct`、`initial_stop`、`profit_r`、**`peak_r`**、`drawdown_from_peak_r`、`stop_price` / `stop_r`、`stop_moved_by_ai`、`dist_to_liq_r` |
+| 波动重标定 | `atr_at_open` → `atr_now` 的比值 |
+| 路径 | 开仓以来的 4H 收盘价，换算成 R |
+| 论点变化 | `trend_regime` / `volatility_regime`，以及开仓时的 bias / confidence 基准 |
+
+其中 **`peak_r` 是必须给的**：「冲到 1.4R 又跌回 0.3R」和「一路磨到 0.3R」当前浮盈完全相同，
+但前者是突破失败该收紧或离场、后者是缓慢推进该给空间。只看当前浮盈无法区分这两种相反的局面。
+
+### 示例 (Standard, ATR ≈ $980, ATR止损倍数 1.5 → R = $1,470)
 
 ```
 开多 @ $69,000
-  止损 = $69,000 - $1,470 = $67,530
-  TP1  = $69,000 + $1,470 = $70,470
+  初始硬止损 = $69,000 - $1,470 = $67,530   (-1R，代码兜底)
 
-涨到 $70,470 → TP1: 平 50%, trailing_dist = $490
-  止盈线 = $70,470 - $490 = $69,980
++5min ... 涨到 $69,735 (+0.5R)
+  AI: 持仓观望, stop_r=0 → 硬止损推到 $69,000（保本）
 
-继续涨到 $72,000:
-  止盈线上移 = $72,000 - $490 = $71,510
++5min ... 涨到 $71,205 (+1.5R)
+  AI: 减仓 40% 落袋, stop_r=0.6 → 硬止损推到 $69,882
 
-回落到 $71,510 → 移动止盈触发: 平剩余 50%
+继续涨到 $73,000 (+2.7R), 随后回落到 $71,800 (峰值回撤 0.8R)
+  AI: 持仓观望, stop_r=1.5 → 硬止损推到 $71,205
+
+回落到 $71,205 → 「AI移动止损触发」，代码平掉剩余仓位
+  （或者 AI 在前一个 tick 判断突破失败，直接输出 平仓）
+
+平仓后 15 分钟内 / 同一份研判下，护栏拦截同方向重开
 ```
+
+### 追高护栏
+
+历史数据显示，开仓价落在近 48h 区间「顺方向 60~100%」区段的交易胜率仅 19%，
+是震荡行情下的主要亏损来源（追高做多 / 杀跌做空）。开仓前检查：
+
+```
+顺方向位置 = LONG:  (开仓价 - 区间低) / (区间高 - 区间低)
+             SHORT: 1 - 上式
+
+< 60%   → 放行（区间下沿做多 / 上沿做空）
+60~100% → 拒绝开仓（追高）
+> 100%  → 放行（已突破区间，属于趋势跟随而非追高）
+```
+
+区间由已收盘的 4H K 线构造（排除进行中的当前根），因此突破时位置可以 > 100%。
+K 线不足或区间退化时不拦截。
 ## 指标解释
 
 ### F&G 指数计算逻辑

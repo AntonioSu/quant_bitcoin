@@ -1,7 +1,7 @@
 """技术指标模块"""
 
 from indicators.atr import ATRCalculator
-from indicators.profit_loss_level import LongLevel, ShortLevel
+from indicators.profit_loss_level import PositionLevel
 from indicators.cvd_divergence import CVDDivergenceDetector
 from indicators.macd_signal import MACDCalculator
 from indicators.rsi_signal import RSICalculator
@@ -11,8 +11,7 @@ from indicators.volume_signal import VolumeCalculator
 from indicators.support_resistance import SupportResistanceCalculator
 __all__ = [
     "ATRCalculator",
-    "LongLevel",
-    "ShortLevel",
+    "PositionLevel",
     "CVDDivergenceDetector",
     "MACDCalculator",
     "RSICalculator",

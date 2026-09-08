@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>交易策略梳理 · quant_bitcoin</title>
+<style>
+:root {
+  --bg: #FBFAFC;
+  --surface: #FFFFFF;
+  --inset: #F4F1F7;
+  --border: #E4DEEB;
+  --border-strong: #D2C8DC;
+  --text: #241A33;
+  --text-mid: #5C5069;
+  --text-dim: #8B7F99;
+  --accent: #7C4DD1;
+  --accent-bg: rgba(124, 77, 209, 0.07);
+  --green: #0F9D6E;
+  --red: #D93A3A;
+  --amber: #B87A0B;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16121C;
+    --surface: #1E1926;
+    --inset: #241E2E;
+    --border: #322A3D;
+    --border-strong: #443A52;
+    --text: #EDE8F2;
+    --text-mid: #B3A8BF;
+    --text-dim: #857A91;
+    --accent: #A98BE8;
+    --accent-bg: rgba(169, 139, 232, 0.12);
+    --green: #34C892;
+    --red: #F1706F;
+    --amber: #E0A63C;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+               "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-size: 15px; line-height: 1.78;
+}
+.layout {
+  display: grid;
+  grid-template-columns: 228px minmax(0, 900px);
+  gap: 0 52px;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 28px 96px;
+  align-items: start;
+}
+.wrap { max-width: none; margin: 0; padding: 56px 0 0; }
+
+.toc {
+  position: sticky; top: 0; height: 100vh;
+  overflow-y: auto; padding: 36px 18px 48px 0;
+  border-right: 1px solid var(--border);
+}
+.toc-title {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--text-dim); margin: 0 0 14px;
+}
+.toc nav { display: flex; flex-direction: column; gap: 2px; }
+.toc a {
+  display: block; color: var(--text-mid); text-decoration: none;
+  font-size: 13px; line-height: 1.4; padding: 5px 10px 5px 12px;
+  border-left: 2px solid transparent; border-radius: 0 4px 4px 0;
+}
+.toc a:hover { color: var(--text); background: var(--accent-bg); }
+.toc a.is-active {
+  color: var(--accent); border-left-color: var(--accent);
+  background: var(--accent-bg); font-weight: 600;
+}
+.toc .l2 { font-weight: 600; color: var(--text); margin-top: 10px; padding-left: 12px; }
+.toc .l2:first-child { margin-top: 0; }
+.toc .l3 { font-size: 12.5px; padding-left: 22px; color: var(--text-dim); }
+
+.doc-head { border-bottom: 1px solid var(--border); padding-bottom: 26px; margin-bottom: 12px; }
+.eyebrow {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--text-dim); margin: 0 0 10px;
+}
+h1 {
+  font-size: 30px; line-height: 1.25; margin: 0 0 18px; letter-spacing: -0.015em;
+  scroll-margin-top: 20px;
+}
+.lede { font-size: 16.5px; color: var(--text-mid); margin: 0; }
+.lede strong { color: var(--text); font-weight: 600; }
+
+section { margin: 46px 0 0; }
+h2 {
+  font-size: 21px; margin: 0 0 8px; letter-spacing: -0.012em;
+  padding-bottom: 9px; border-bottom: 1px solid var(--border);
+  scroll-margin-top: 20px;
+}
+.sub { color: var(--text-dim); font-size: 13.5px; margin: 0 0 20px; }
+h3 { font-size: 15.5px; margin: 28px 0 8px; scroll-margin-top: 20px; }
+p { margin: 0 0 14px; }
+p:last-child { margin-bottom: 0; }
+ul { margin: 0 0 14px; padding-left: 20px; }
+li { margin-bottom: 6px; color: var(--text-mid); }
+li strong { color: var(--text); }
+
+code {
+  font-family: var(--mono); font-size: 0.885em;
+  background: var(--inset); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 5px; white-space: nowrap;
+}
+
+/* 代码引用块 */
+figure { margin: 16px 0; }
+figcaption {
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-dim);
+  padding: 6px 12px; background: var(--inset);
+  border: 1px solid var(--border); border-bottom: none;
+  border-radius: 6px 6px 0 0;
+}
+pre {
+  margin: 0; padding: 13px 14px; overflow-x: auto;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 0 0 6px 6px;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.65;
+  color: var(--text-mid);
+}
+pre b { color: var(--text); font-weight: 600; }
+pre i { color: var(--text-dim); font-style: normal; }
+
+table { width: 100%; border-collapse: collapse; margin: 4px 0 8px; font-size: 14px; }
+caption {
+  caption-side: bottom; text-align: left; color: var(--text-dim);
+  font-size: 12.5px; padding-top: 10px; line-height: 1.65;
+}
+th {
+  text-align: left; font-weight: 600; font-size: 12px; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.055em;
+  padding: 0 11px 8px; border-bottom: 1px solid var(--border-strong);
+}
+td { padding: 9px 11px; border-bottom: 1px solid var(--border); color: var(--text-mid); }
+td:first-child { color: var(--text); }
+tbody tr:last-child td { border-bottom: none; }
+.num-col { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.dead td:first-child { color: var(--text-dim); text-decoration: line-through; }
+td.ok { color: var(--green); }
+td.warn { color: var(--amber); }
+td.bad { color: var(--red); }
+
+/* 数据层分组 */
+.groups { display: flex; flex-wrap: wrap; gap: 9px; margin: 8px 0 4px; }
+.group {
+  flex: 1 1 200px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 7px; padding: 13px 15px;
+}
+.group .gt {
+  font-size: 12px; color: var(--accent); font-weight: 600;
+  letter-spacing: 0.03em; margin-bottom: 7px;
+}
+.group .gi { font-size: 13.5px; color: var(--text-mid); line-height: 1.7; }
+.group .gc {
+  font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+  margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border);
+}
+
+/* 流程箭头 */
+.chain { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 12px 0 18px; }
+.chain .node {
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: 5px; padding: 5px 11px; font-size: 13.5px;
+}
+.chain .node.veto { border-color: var(--amber); color: var(--text); }
+.chain .arw { color: var(--text-dim); font-size: 13px; }
+
+/* 参数条 */
+.params { display: flex; flex-wrap: wrap; gap: 9px; margin: 8px 0; }
+.param {
+  flex: 1 1 132px; background: var(--surface); padding: 13px 15px;
+  border: 1px solid var(--border); border-radius: 7px;
+}
+.param .v { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 17px; color: var(--text); }
+.param .k { font-size: 11.5px; color: var(--text-dim); margin-top: 3px; }
+.param.hl .v { color: var(--accent); }
+
+/* R 阶梯 */
+.ladder { border: 1px solid var(--border); border-radius: 7px; overflow: hidden; margin: 10px 0; }
+.rung {
+  display: grid; grid-template-columns: 92px 70px 1fr; gap: 13px;
+  padding: 9px 14px; border-bottom: 1px solid var(--border); align-items: baseline;
+}
+.rung:last-child { border-bottom: none; }
+.rung .px { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13.5px; }
+.rung .rv { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12.5px; color: var(--text-dim); }
+.rung .ev { font-size: 13.5px; color: var(--text-mid); }
+.rung.up .px, .rung.up .rv { color: var(--green); }
+.rung.entry { background: var(--inset); }
+.rung.entry .px { font-weight: 600; }
+.rung.down .px, .rung.down .rv { color: var(--red); }
+.rung.faint .px, .rung.faint .rv, .rung.faint .ev { color: var(--text-dim); }
+
+.note {
+  border-left: 2px solid var(--border-strong); padding: 2px 0 2px 16px;
+  margin: 20px 0; color: var(--text-mid); font-size: 14.5px;
+}
+.note.key { border-left-color: var(--accent); }
+.note.warn { border-left-color: var(--amber); }
+.note.bad { border-left-color: var(--red); }
+.note .h { display: block; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+
+footer {
+  border-top: 1px solid var(--border); margin-top: 52px; padding-top: 22px;
+  color: var(--text-dim); font-size: 12.5px;
+}
+footer h2 {
+  font-size: 15px; color: var(--text); border-bottom: none; padding-bottom: 0;
+  margin: 0 0 10px;
+}
+footer p { margin: 0 0 6px; }
+
+@media (max-width: 960px) {
+  .layout {
+    grid-template-columns: 1fr;
+    padding: 0 28px 96px;
+  }
+  .toc {
+    position: sticky; top: 0; z-index: 8; height: auto; max-height: 44vh;
+    overflow-y: auto; padding: 12px 0 10px;
+    border-right: none; border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .toc-title { margin-bottom: 8px; }
+  .toc .l2 { margin-top: 6px; }
+  .wrap { padding-top: 28px; }
+}
+@media (max-width: 560px) {
+  .layout { padding: 0 18px 72px; }
+  h1 { font-size: 25px; }
+  .lede { font-size: 15.5px; }
+  .rung { grid-template-columns: 74px 56px 1fr; gap: 9px; padding: 9px 11px; }
+  .rung .px { font-size: 12.5px; }
+  .rung .rv { font-size: 11.5px; }
+  .rung .ev { font-size: 12.5px; }
+  table { font-size: 13px; }
+  th, td { padding-left: 7px; padding-right: 7px; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+<aside class="toc" aria-label="目录">
+  <p class="toc-title">目录</p>
+  <nav>
+    <a class="l2" href="#overview">概述</a>
+    <a class="l2" href="#data">一、数据层</a>
+    <a class="l3" href="#data-inputs">输入分组</a>
+    <a class="l3" href="#data-refresh">刷新节奏</a>
+    <a class="l2" href="#signal">二、信号层</a>
+    <a class="l3" href="#risk-reviewer">风险审查员</a>
+    <a class="l3" href="#manager">决策经理</a>
+    <a class="l2" href="#execution">三、执行层</a>
+    <a class="l3" href="#open-threshold">开仓门槛</a>
+    <a class="l3" href="#sizing">仓位算法</a>
+    <a class="l3" href="#policy-guard">下单前的硬规则</a>
+    <a class="l2" href="#exit">四、出场与止损</a>
+    <a class="l3" href="#risk-job">主要功能</a>
+    <a class="l3" href="#risk-rules">出场策略</a>
+    <a class="l3" href="#safety-net">两道兜底</a>
+    <a class="l2" href="#presets">五、三档预设</a>
+  </nav>
+</aside>
+<div class="wrap">
+
+<div class="doc-head" id="overview">
+  <p class="eyebrow">quant_bitcoin · 策略梳理</p>
+  <h1>交易策略：四层结构与实际生效的规则</h1>
+  <p class="lede">
+    数据层 → 信号层 → 执行层 → 出场与止损。层与层之间靠不同的时钟驱动，
+    越往下越不依赖模型。所有参数取自代码而非文档，
+    <strong>凡与 README 或旧描述冲突之处，以本文为准</strong>。
+  </p>
+</div>
+
+<!-- ══════════════ 一 · 数据层 ══════════════ -->
+<section id="data">
+  <h2>一、数据层：22 路输入，三种刷新节奏</h2>
+  <p class="sub">14 个外部采集器 + 8 个技术指标，全部汇入 <code>market</code> 单例这一条数据总线。</p>
+
+  <h3 id="data-inputs">输入分组</h3>
+  <div class="groups">
+    <div class="group">
+      <div class="gt">情绪 / 资金面</div>
+      <div class="gi">恐惧贪婪指数、资金费率、大户多空比、ETF 流入流出、稳定币供应、交易所净流量、爆仓数据、期权（P/C 比与最大痛点）、未平仓量</div>
+      <div class="gc">9 个采集器</div>
+    </div>
+    <div class="group">
+      <div class="gt">链上 / 宏观 / 新闻</div>
+      <div class="gi">MVRV、M2、DXY、加密新闻情绪、CVD 订单流（aggTrade 逐笔）、taker 买卖盘</div>
+      <div class="gc">5 个采集器</div>
+    </div>
+    <div class="group">
+      <div class="gt">技术面（4H K 线）</div>
+      <div class="gi">MACD、RSI、布林带、均线 EMA7/EMA25、成交量与 OBV、CVD 背离、支撑阻力、ATR</div>
+      <div class="gc">8 个指标，算在 K 线上</div>
+    </div>
+  </div>
+
+  <div class="note">
+    <span class="h">两个是推流，其余都是轮询</span>
+    爆仓单（<code>!forceOrder@arr</code>）和逐笔成交（<code>btcusdt@aggTrade</code>）走 WebSocket，
+    各有一个后台守护线程和 24 小时内存缓冲；其余全部是 REST 拉取，带 TTL 缓存。
+  </div>
+
+  <h3 id="data-refresh">刷新节奏</h3>
+  <p>三条刷新循环各跑各的，互不等待：</p>
+  <table>
+    <thead><tr><th>循环</th><th class="num-col">周期</th><th>对齐</th><th>LLM 开销</th></tr></thead>
+    <tbody>
+      <tr><td>市场数据 + 指标重算</td><td class="num-col">300 秒</td><td>固定间隔</td><td>无</td></tr>
+      <tr><td>AI 综合研判（委员会）</td><td class="num-col">1 小时</td><td>整点对齐</td><td>每轮 4 次调用</td></tr>
+      <tr><td>新闻情绪分析</td><td class="num-col">2 小时</td><td>双小时对齐</td><td>每轮 1 次调用</td></tr>
+    </tbody>
+    <caption>另有两条不属于数据层的时钟：交易循环每 5 分钟跑一次（每次都问一次交易 AI）、前端 WebSocket 推送 5 秒。</caption>
+  </table>
+
+  <div class="note warn">
+    <span class="h">信号必然比行情旧</span>
+    研判每小时一次、基于 4H K 线收盘价；而交易循环每 5 分钟取一次实时标记价。
+    所以开仓瞬间用的方向判断，最坏情况已经是 55 分钟前的结论 ——
+    但止损价位是用当前价算的。这个不对称是设计取舍，不是缺陷。
+  </div>
+</section>
+
+<!-- ══════════════ 二 · 信号层 ══════════════ -->
+<section id="signal">
+  <h2>二、信号层：四个 LLM 角色顺序辩论</h2>
+  <p class="sub"><code>DecisionCommittee</code> 按固定顺序串行跑四个角色，各自有独立 system prompt 和知识库切片。</p>
+
+  <div class="chain">
+    <span class="node">多头研究员</span><span class="arw">→</span>
+    <span class="node">空头研究员</span><span class="arw">→</span>
+    <span class="node veto">风险审查员</span><span class="arw">→</span>
+    <span class="node">决策经理</span>
+  </div>
+
+  <p>
+    前两个角色<strong>只构造本方论证，不给结论</strong>。风险审查员看完双方论证后产出
+    <code>entry_ok</code>，并且拥有否决权 —— 决策经理不能把它翻回来。
+  </p>
+
+  <h3 id="risk-reviewer">风险审查员</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>risk_level</th>
+        <th>entry_ok</th>
+        <th>position_size_hint</th>
+        <th>blockers</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="mono ok">low / medium</td>
+        <td class="mono ok">true</td>
+        <td class="mono">25% ~ 50%</td>
+        <td>空</td>
+      </tr>
+      <tr>
+        <td class="mono warn">high</td>
+        <td class="mono ok">true</td>
+        <td class="mono">25%</td>
+        <td>写明具体担忧</td>
+      </tr>
+      <tr>
+        <td class="mono bad">extreme</td>
+        <td class="mono bad">false</td>
+        <td class="mono">0%</td>
+        <td>必须有阻断项</td>
+      </tr>
+    </tbody>
+    <caption>
+      输出字段就是这四列。schema 还会再钳一次：<code>extreme</code> 或仓位 0% → <code>entry_ok=false</code>。
+      另外两条硬阻断不走这张表：<code>HIGH_VOL_EXTREME</code> 且爆仓异常、多空双方证据都极弱。
+    </caption>
+  </table>
+
+  <div class="note">
+    提示词里明确写了「<strong>entry_ok 默认倾向应该是 true</strong>」「零交易 ≠ 零风险」，
+    并列出三条「绝对不应该阻断」的情况（双方置信度相近、存在矛盾信号、缩量）——
+    审查员的职责被定义为管控风险，不是消灭风险。
+  </div>
+
+  <h3 id="manager">决策经理</h3>
+  <p>
+    user prompt 三块：市场快照、委员会三方结论、动态上下文（上次研判 / 备忘录）。
+    持仓来自调度器每 5 分钟写入的 <code>market.position_context</code>，嵌进快照。
+    <code>bias</code> 是市场方向，不因已有仓位而翻转；
+    <code>action</code> 必须和当前是否有仓一致：空仓只能加多／加空／等待入场，
+    有仓只能持仓观望／减仓／离场，不得在已持仓时再输出加多／加空。
+  </p>
+
+  <p><strong>输入</strong> · 当前持仓 <code>position_context</code></p>
+
+  <table>
+    <thead><tr><th>字段</th><th>取值</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>is_active</code></td>
+        <td>true / false</td>
+        <td>当前有没有合约仓。空仓时这一项为 false，下面各字段都不出现</td>
+      </tr>
+      <tr>
+        <td><code>direction</code></td>
+        <td>LONG / SHORT</td>
+        <td>持仓方向。与 <code>bias</code> 同向则继续拿，反向才考虑减仓／离场</td>
+      </tr>
+      <tr>
+        <td><code>size_btc</code></td>
+        <td>BTC 数量</td>
+        <td>当前仓位大小，用来判断是轻仓还是已满</td>
+      </tr>
+      <tr>
+        <td><code>leverage</code></td>
+        <td>整数倍</td>
+        <td>本仓杠杆。高杠杆时离强平更近，反向信号要更敏感</td>
+      </tr>
+      <tr>
+        <td><code>entry_price</code></td>
+        <td>USD</td>
+        <td>入场均价。和现价比才知道浮盈还是浮亏</td>
+      </tr>
+      <tr>
+        <td><code>current_price</code></td>
+        <td>USD</td>
+        <td>当前标记价</td>
+      </tr>
+      <tr>
+        <td><code>liquidation_price</code></td>
+        <td>USD</td>
+        <td>强平价。距现价过近时不得建议继续扛</td>
+      </tr>
+      <tr>
+        <td><code>holding_duration</code></td>
+        <td>如 6h 20m</td>
+        <td>已持多久。刚开仓的反向信号要更谨慎，拿了很久才更可能是结构变了</td>
+      </tr>
+    </tbody>
+    <caption>
+      委员会三方（<code>bull.thesis / evidence</code>、<code>bear.thesis / evidence</code>、
+      <code>risk.entry_ok / risk_level / position_size_hint / blockers</code>）始终传入，与有没有仓无关。
+    </caption>
+  </table>
+
+  <p><strong>输出</strong></p>
+
+  <table>
+    <thead><tr><th>字段</th><th>取值</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>bias</code></td>
+        <td>LONG / SHORT / NEUTRAL</td>
+        <td>市场方向判断，与有没有仓无关</td>
+      </tr>
+      <tr>
+        <td><code>confidence</code> / <code>confidence_level</code></td>
+        <td>0–100；WEAK…VERY_STRONG</td>
+        <td>方向确信程度。决定空仓时仓位／杠杆上限，也决定有仓时该观望还是离场</td>
+      </tr>
+      <tr>
+        <td><code>trend_regime</code></td>
+        <td>UP_TREND / DOWN_TREND / RANGE / UNCLEAR</td>
+        <td>趋势状态</td>
+      </tr>
+      <tr>
+        <td><code>volatility_regime</code></td>
+        <td>LOW_VOL_COMPRESSION / NORMAL_VOL / BREAKOUT_EXPANSION / HIGH_VOL_EXTREME</td>
+        <td>波动状态。极端波动时仓位和杠杆都要压</td>
+      </tr>
+      <tr>
+        <td><code>entry_ok</code></td>
+        <td>true / false</td>
+        <td>只约束<strong>新开仓</strong>。有仓时 false 不是平仓理由</td>
+      </tr>
+      <tr>
+        <td><code>action</code></td>
+        <td>见下表</td>
+        <td>结合仓位后的建议动作，执行层按这个理解经理想干什么</td>
+      </tr>
+      <tr>
+        <td><code>position_size_hint</code></td>
+        <td>0% / 25% / 50% / 75% / 100%</td>
+        <td>空仓且允许开仓时的保证金占权益比例；有仓或不可开仓时必须为 0%</td>
+      </tr>
+      <tr>
+        <td><code>leverage_hint</code></td>
+        <td>1 / 2 / 3 / 5 / 10 / 20</td>
+        <td>空仓开仓时的杠杆上限。有仓时不影响已有杠杆</td>
+      </tr>
+      <tr>
+        <td><code>summary</code></td>
+        <td>≤40 字中文</td>
+        <td>一句话研判。允许入场时不要写成观望话术</td>
+      </tr>
+      <tr>
+        <td><code>key_drivers</code></td>
+        <td>3–5 条</td>
+        <td>方向依据。每条含 factor / side / weight</td>
+      </tr>
+      <tr>
+        <td><code>risks</code></td>
+        <td>1–3 条</td>
+        <td>当前结论的反向风险</td>
+      </tr>
+      <tr>
+        <td><code>invalidations</code></td>
+        <td>可观察条件</td>
+        <td>什么出现则本轮观点失效</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <table>
+    <thead><tr><th>当前仓位</th><th>bias</th><th>action</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>空仓 · entry_ok=true</td>
+        <td>LONG / SHORT</td>
+        <td>加多 / 加空</td>
+        <td>允许按 <code>position_size_hint</code> 开仓</td>
+      </tr>
+      <tr>
+        <td>空仓 · entry_ok=false</td>
+        <td>任意</td>
+        <td>等待入场</td>
+        <td>方向可以有，但不能开</td>
+      </tr>
+      <tr>
+        <td>有仓 · 同向</td>
+        <td>= 持仓方向</td>
+        <td>持仓观望</td>
+        <td>论点仍在，继续拿。论点削弱则改为减仓</td>
+      </tr>
+      <tr>
+        <td>有仓 · 反向</td>
+        <td>≠ 持仓方向</td>
+        <td>离场</td>
+        <td>结构反了，先平掉本仓。不够确信则减仓</td>
+      </tr>
+      <tr>
+        <td>有仓 · 中性</td>
+        <td>NEUTRAL</td>
+        <td>持仓观望</td>
+        <td>方向不清，不主动加也不主动砍</td>
+      </tr>
+    </tbody>
+    <caption>有仓时禁止输出加多／加空。<code>position_size_hint</code> 一律 0%。</caption>
+  </table>
+
+  <p>提示词里有一条强制的维度优先级，用来压制振荡指标的话语权：</p>
+  <ul>
+    <li>M2／稳定币供应 &gt; ETF／净流／均线结构 &gt; CVD／订单流 &gt; <strong>RSI／MACD</strong></li>
+    <li>RSI 或 MACD 出现在 key_drivers 时权重不得为 high，单独出现必须为 low</li>
+    <li>不得因 RSI／MACD 与流动性冲突而翻转 bias，冲突时以流动性为准</li>
+    <li>计维时 <strong>RSI + MACD 合计最多算 1 个同向维度</strong></li>
+  </ul>
+</section>
+
+<!-- ══════════════ 三 · 执行层 ══════════════ -->
+<section id="execution">
+  <h2>三、执行层：开仓与下单</h2>
+  <p class="sub">交易 AI 只说「开 / 平 / 减 / 观望」。真正下单前，代码再拦一遍：够不够门槛、刚平过能不能马上再开、减仓会不会减得太碎。</p>
+
+  <h3 id="open-threshold">开仓门槛按置信度分档</h3>
+  <table>
+    <thead>
+      <tr><th>等级</th><th class="num-col">置信度</th><th>维度共振</th><th class="num-col">仓位</th><th class="num-col">杠杆上限</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>VERY_STRONG</td><td class="num-col">≥ 80</td><td>≥5 维同向</td><td class="num-col">100%</td><td class="num-col">10x <span style="color:var(--amber)">*</span></td></tr>
+      <tr><td>STRONG</td><td class="num-col">≥ 65</td><td>4 维同向</td><td class="num-col">75%</td><td class="num-col">5x</td></tr>
+      <tr><td>MODERATE</td><td class="num-col">≥ 50</td><td>3 维同向</td><td class="num-col">50%</td><td class="num-col">5x</td></tr>
+      <tr><td>CAUTIOUS</td><td class="num-col">≥ 35</td><td>2 维同向</td><td class="num-col">不开仓</td><td class="num-col">3x</td></tr>
+      <tr><td>WEAK</td><td class="num-col">&lt; 35</td><td>≤1 维同向</td><td class="num-col">不开仓</td><td class="num-col">2x</td></tr>
+    </tbody>
+    <caption>
+      「维度共振」是提示词层面的启发式，不是代码计算量；置信度阈值与仓位映射则是
+      <code>schemas.py</code> 的代码约束。杠杆只能取 1／2／3／5／10／20，其余值就近吸附。
+    </caption>
+  </table>
+
+  <div class="note bad">
+    <span class="h">* VERY_STRONG 的 10x 上限没有代码兜底</span>
+    <code>schemas.py</code> 的杠杆钳制是一条 if/elif 链：置信度 &lt;35 压到 2x、&lt;50 压到 3x、
+    &lt;65 压到 5x、&lt;80 压到 5x —— 而<strong>置信度 ≥80 时一条分支都不命中，不做任何钳制</strong>。
+    10x 这个上限只写在提示词里，模型若输出 20x 会被原样放过（仅
+    <code>HIGH_VOL_EXTREME</code> 波动状态会压到 3x）。
+    也就是说，唯一允许最高杠杆的那一档，恰好是唯一没有代码保护的一档。
+  </div>
+
+  <h3 id="sizing">仓位算法</h3>
+  <figure>
+    <figcaption>server/trading_scheduler/base.py · _resolve_ai_sizing</figcaption>
+<pre>保证金   = 权益 × 仓位比例      <i># 50% → 1000 × 0.5 = $500</i>
+名义本金 = 保证金 × 杠杆        <i># 500 × 5x      = $2,500</i>
+下单数量 = 名义本金 ÷ 现价
+
+<i># 最终杠杆再夹一次，硬上限 20x</i>
+leverage = max(1, min(20, int(leverage)))</pre>
+  </figure>
+
+  <h3 id="policy-guard">下单前的硬规则</h3>
+  <p>交易 AI 说了要开、要减，代码还会拦一次。拦的是下单，不管持仓中该不该平（那是下一层的事）。</p>
+  <ul>
+    <li><strong>开仓门槛</strong>：允许入场 + 方向对上 + 等级至少中等，否则不开</li>
+    <li><strong>追高不让开</strong>：顺方向落在近 48 小时区间的 60–100% 拒绝；真正突破（超过 100%）才放行</li>
+    <li><strong>刚平过不能马上再开</strong>：同方向 15 分钟内不重开，同一份研判也不重开（防止止损刚打掉又原样开回去）</li>
+    <li><strong>减仓别减太碎</strong>：一次减 10%–90%；同一仓最多减 2 次，第 3 次或剩不到 20% 就全平</li>
+  </ul>
+</section>
+
+<!-- ══════════════ 四 · 出场与止损 ══════════════ -->
+<section id="exit">
+  <h2>四、出场与止损：仓开起来之后怎么管</h2>
+  <p class="sub">管的是仓位开起来之后：要不要减、要不要平、止损往哪推。不管方向判断，也不管能不能下单。</p>
+
+  <h3 id="risk-job">主要功能</h3>
+  <p>
+    开仓那一刻先定好「亏多少算一笔」：交易 AI 只给一个 ATR 倍数（1.0～3.0，越界会被夹回去），
+    代码换成真实止损价和 1R 金额。不让它直接写绝对价格，避免现价延迟或拍脑袋把止损写到贴近强平。
+  </p>
+  <p>
+    之后每 5 分钟再问一次。它看着当前信号和本仓的盈亏位置，输出一个动作：
+    <code>持仓观望</code> / <code>减仓</code> / <code>平仓</code>，以及可选的
+    <code>stop_r</code>（把硬止损推到 <code>入场价 + stop_r × R</code>）。
+    什么时候落袋、落多少，也是这轮决定，不是开仓时写死的。
+  </p>
+  <p>
+    代码不再自动保本、不再自动移动止损、不再自动部分止盈。
+    AI 两次决策之间，只靠下面两道机械兜底把仓砍掉。
+  </p>
+
+  <h3 id="risk-rules">出场策略</h3>
+  <table>
+    <thead><tr><th>情况</th><th>动作</th></tr></thead>
+    <tbody>
+      <tr><td>信号同向或中性，走势正常</td><td>持仓观望（默认，绝大多数时候都是这个）</td></tr>
+      <tr><td>论点被削弱，或浮盈较大想先落袋一部分</td><td>减仓</td></tr>
+      <tr><td>方向反转且确信，或突破明确失败</td><td>平仓</td></tr>
+      <tr><td>浮盈够了，想锁住利润或抬到保本</td><td>给 <code>stop_r</code>，止损只许收紧不许放宽</td></tr>
+    </tbody>
+    <caption>
+      不因小幅浮盈全平；<code>entry_ok=false</code> 只拦新开仓，不是平仓理由。
+    </caption>
+  </table>
+
+  <h3 id="safety-net">两道兜底</h3>
+  <table>
+    <thead><tr><th>兜底</th><th>谁执行</th><th>作用</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>硬止损</td>
+        <td>AI 定价位，代码 / 交易所执行</td>
+        <td>开仓时定下 −1R；之后 AI 只能往有利方向推。价格碰到即全平。实盘挂在交易所，不等 5 分钟轮询</td>
+      </tr>
+      <tr>
+        <td>强平价</td>
+        <td>交易所</td>
+        <td>触及即全平，关不掉。算出的止损若穿透强平价，会被拉回强平价内侧</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ══════════════ 五 · 预设真相 ══════════════ -->
+<section id="presets">
+  <h2>五、三档预设的真相：其实只有一套策略</h2>
+  <p class="sub">保守／标准／激进三档在运行时几乎没有差异 —— 大部分参数已经没有任何代码在读。</p>
+
+  <p>全仓检索后，运行时真正被读取的配置只有三处：</p>
+  <table>
+    <thead><tr><th>参数</th><th class="num-col">保守 / 标准 / 激进</th><th>实际作用</th></tr></thead>
+    <tbody>
+      <tr><td><code>atr_multiplier</code></td><td class="num-col">2.0 / 1.5 / 1.2</td>
+          <td>仅当 AI 不给 <code>stop_atr_mult</code> 时的兜底默认值</td></tr>
+      <tr><td><code>long.leverage</code></td><td class="num-col">10</td>
+          <td>仅实盘交易所侧兜底杠杆，每笔实际杠杆由 AI 覆盖</td></tr>
+      <tr><td><code>RiskConfig</code> 追高拦截</td><td class="num-col">三档完全相同</td>
+          <td>开仓前的追高硬规则，AI 无权干预</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note warn">
+    <span class="h">结论：并行跑三档，得不到参数敏感性对比</span>
+    三档唯一的实质差异 <code>atr_multiplier</code>，只在 AI 不指定止损倍数时才生效 ——
+    而现在提示词要求 AI 必须给出，所以连这一个差异也基本不触发。
+    持仓中的保本 / 移动止损 / 落袋更是完全由 AI 每 5 分钟决定，与档位无关。
+    三档跑出来的行为几乎完全一样，本质上是同一套策略的三份随机复现。
+    要真做档位对比，得先让档位去影响 AI 拿到的约束（例如按档给不同的参数建议区间），
+    而不是改一组它随手就会覆盖掉的默认值。
+  </div>
+</section>
+
+</div>
+</div>
+<script>
+(function () {
+  const links = Array.from(document.querySelectorAll(".toc a[href^='#']"));
+  const items = links.map((a) => {
+    const el = document.querySelector(a.getAttribute("href"));
+    return el ? { a, el } : null;
+  }).filter(Boolean);
+  if (!items.length) return;
+
+  const MARK = 96;
+  function update() {
+    let current = items[0];
+    for (const item of items) {
+      if (item.el.getBoundingClientRect().top <= MARK) current = item;
+    }
+    links.forEach((a) => a.classList.toggle("is-active", a === current.a));
+  }
+  window.addEventListener("scroll", update, { passive: true });
+  update();
+})();
+</script>
+</body>
+</html>

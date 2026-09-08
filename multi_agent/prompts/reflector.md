@@ -10,7 +10,7 @@
 1. **开仓时 AI 研判**：bias / confidence_level / summary / key_drivers / risks
    - 如果包含 `trend_regime` 与 `volatility_regime`，请一并使用；否则按你的判断推断
 2. **开仓时市场快照摘要**：关键指标数值
-3. **交易结果**：PnL / 持仓时间 / 退出原因（止损 / TP1 / 移动止盈 / 强平）
+3. **交易结果**：PnL / 持仓时间 / 退出原因（止损 / AI移动止损 / AI 平仓或减仓 / 强平）
 
 # 分析规则
 

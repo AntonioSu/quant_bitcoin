@@ -4,18 +4,37 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Sequence
 
 from pydantic import ValidationError
 
 from multi_agent.schemas import CommitteeDecision, DebateCase, RiskReview
 from utils import logger
-from utils.common_utils import read_file_prompt
+from utils.common_utils import parse_llm_json, read_file_prompt
 from utils.llm_client import LLMClient
+
+
+_ROLE_KNOWLEDGE: Dict[str, Optional[Sequence[str]]] = {
+    "bull_researcher.md": ("indicators/indicator_guide.md",),
+    "bear_researcher.md": ("indicators/indicator_guide.md",),
+    "risk_reviewer.md": (
+        "regimes/volatility_regime.md",
+        "regimes/regime_matrix.md",
+    ),
+    "decision_manager.md": None,  # all files
+}
 
 
 class DecisionCommitteeError(Exception):
     """Raised when the final manager output cannot be used."""
+
+
+_ROLE_PROMPTS = (
+    "bull_researcher.md",
+    "bear_researcher.md",
+    "risk_reviewer.md",
+    "decision_manager.md",
+)
 
 
 class DecisionCommittee:
@@ -25,13 +44,14 @@ class DecisionCommittee:
         self,
         llm: LLMClient,
         prompt_dir: Optional[str] = None,
-        static_context: str = "",
+        knowledge_files: Optional[Dict[str, str]] = None,
     ):
         self.llm = llm
         self.prompt_dir = prompt_dir or os.path.join(
             os.path.dirname(__file__), "prompts"
         )
-        self.static_context = static_context
+        self._knowledge_files = knowledge_files or {}
+        self._system_prompts = self._build_system_prompts()
 
     def run(self, snapshot: Dict[str, Any], dynamic_context: str = "") -> Dict[str, Any]:
         """Return a MarketAnalyzer-compatible JSON dict (pure signal, no position awareness)."""
@@ -49,11 +69,12 @@ class DecisionCommittee:
 
         result = decision.to_analysis_dict()
         logger.info(
-            "🤖 决策委员会: %s %s (%s%%), entry_ok=%s",
+            "🤖 决策委员会: %s %s (%s%%), entry_ok=%s, gate=%s",
             result.get("bias"),
             result.get("confidence_level"),
             result.get("confidence"),
             result.get("entry_ok"),
+            result.get("entry_gate"),
         )
         return result
 
@@ -115,6 +136,7 @@ class DecisionCommittee:
                 usage_tag="[manager]",
             )
             data = self._parse_json(resp)
+            data = self._merge_risk_into_manager_payload(data, risk)
             return CommitteeDecision.model_validate(data)
         except (json.JSONDecodeError, ValidationError, KeyError, TypeError, ValueError) as e:
             logger.warning(f"🤖 decision manager 输出不可用: {e}")
@@ -124,10 +146,39 @@ class DecisionCommittee:
             raise DecisionCommitteeError(str(e)) from e
 
     def _system_prompt(self, prompt_name: str) -> str:
-        prompt = read_file_prompt(os.path.join(self.prompt_dir, prompt_name))
-        if self.static_context:
-            prompt += "\n\n## 共享交易规则与知识库\n" + self.static_context
-        return prompt
+        cached = self._system_prompts.get(prompt_name)
+        if cached is not None:
+            return cached
+        return self._compose_system_prompt(prompt_name)
+
+    def _build_system_prompts(self) -> Dict[str, str]:
+        """Pre-compose stable system prompts with knowledge prefix first."""
+        return {
+            prompt_name: self._compose_system_prompt(prompt_name)
+            for prompt_name in _ROLE_PROMPTS
+        }
+
+    @staticmethod
+    def _join_system_prompt(*, knowledge: str, role_prompt: str) -> str:
+        """Knowledge first so identical prefixes can hit LLM prompt cache."""
+        if knowledge:
+            return knowledge + "\n\n## 角色指令\n" + role_prompt
+        return role_prompt
+
+    def _compose_system_prompt(self, prompt_name: str) -> str:
+        knowledge = self._knowledge_for_role(prompt_name)
+        role_prompt = read_file_prompt(os.path.join(self.prompt_dir, prompt_name))
+        return self._join_system_prompt(knowledge=knowledge, role_prompt=role_prompt)
+
+    def _knowledge_for_role(self, prompt_name: str) -> str:
+        if not self._knowledge_files:
+            return ""
+        needed = _ROLE_KNOWLEDGE.get(prompt_name)
+        if needed is None:
+            keys = sorted(self._knowledge_files)
+        else:
+            keys = sorted(k for k in needed if k in self._knowledge_files)
+        return "\n\n".join(self._knowledge_files[k] for k in keys)
 
     @staticmethod
     def _debate_prompt(
@@ -186,6 +237,41 @@ class DecisionCommittee:
         )
 
     @staticmethod
+    def _merge_risk_into_manager_payload(
+        data: Dict[str, Any],
+        risk: RiskReview,
+    ) -> Dict[str, Any]:
+        """补全 Manager 省略字段，并落实 Risk Reviewer 的否决权。"""
+        payload = dict(data or {})
+
+        # manager_entry 为 None 表示 Manager 省略了该字段
+        manager_entry = payload.get("entry_ok") if "entry_ok" in payload else None
+
+        if manager_entry is None:
+            payload["entry_ok"] = risk.entry_ok
+            payload["entry_gate"] = "OPEN" if risk.entry_ok else "RISK_DEFAULT"
+        elif bool(manager_entry) and not risk.entry_ok:
+            # 风险审查否决优先：不允许 Manager 覆盖为可入场
+            payload["entry_ok"] = False
+            payload["entry_gate"] = "RISK_VETO"
+            logger.warning(
+                "🛡️ 风险审查员行使否决权: manager entry_ok=true → false | "
+                f"风险等级={risk.risk_level} | 阻断项={'；'.join(risk.blockers[:2]) or '未列明'}"
+            )
+        else:
+            payload["entry_gate"] = "OPEN" if bool(manager_entry) else "MANAGER_BLOCK"
+
+        size = str(payload.get("position_size_hint") or "").strip()
+        if payload.get("entry_ok") and (not size or size == "0%"):
+            if risk.entry_ok and risk.position_size_hint != "0%":
+                payload["position_size_hint"] = risk.position_size_hint
+
+        if not payload.get("entry_ok"):
+            payload["position_size_hint"] = "0%"
+
+        return payload
+
+    @staticmethod
     def _summarize_risk(risk: RiskReview) -> str:
         blockers = "；".join(risk.blockers[:2]) if risk.blockers else "无明确阻断项"
         return (
@@ -195,18 +281,6 @@ class DecisionCommittee:
 
     @staticmethod
     def _parse_json(text: str) -> Dict[str, Any]:
-        raw = str(text or "").strip()
-        if "```json" in raw:
-            raw = raw.split("```json", 1)[1].split("```", 1)[0]
-        elif "```" in raw:
-            raw = raw.split("```", 1)[1].split("```", 1)[0]
-        else:
-            start = raw.find("{")
-            end = raw.rfind("}")
-            if start >= 0 and end > start:
-                raw = raw[start:end + 1]
-
-        parsed = json.loads(raw.strip())
-        if not isinstance(parsed, dict):
-            raise TypeError("LLM output is not a JSON object")
-        return parsed
+        result = parse_llm_json(text, strict=True)
+        assert result is not None
+        return result

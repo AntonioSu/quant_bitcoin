@@ -7,7 +7,11 @@ from typing import Optional
 from core import TradingConfig, TradingMode
 from utils import logger
 
-from server.trading_scheduler.base import BaseTradingScheduler
+from server.trading_scheduler.base import (
+    BaseTradingScheduler,
+    DEFAULT_CHECK_INTERVAL,
+    DIRECTION_ICON,
+)
 
 OPEN_COOLDOWN_SEC = 120
 
@@ -23,7 +27,7 @@ class LiveTradingScheduler(BaseTradingScheduler):
         self,
         config: Optional[TradingConfig] = None,
         futures_executor=None,
-        check_interval: int = 300,
+        check_interval: int = DEFAULT_CHECK_INTERVAL,
         max_capital: Optional[float] = None,
         state_file: Optional[str] = None,
     ):
@@ -117,6 +121,10 @@ class LiveTradingScheduler(BaseTradingScheduler):
     async def _on_position_reduced(self):
         await self._replace_exchange_sl()
 
+    async def _on_stop_loss_moved(self):
+        """AI 推进止损后，同步替换交易所止损单"""
+        await self._replace_exchange_sl()
+
     def _fallback_to_local_file(self):
         """API 失败且内存无仓位时，尝试从状态文件恢复（最后兜底）"""
         if self.position.is_active:
@@ -180,6 +188,8 @@ class LiveTradingScheduler(BaseTradingScheduler):
             elif self.position.is_active:
                 logger.warning("⚠️ 交易所无仓位，重置本地状态")
                 await self._cancel_exchange_orders()
+                # 多半是交易所侧止损单成交了：同样要进重开冷却，否则下一 tick 会原样开回
+                self._notify_advisor_closed(self.position.direction)
                 self.position.reset()
                 self.current_mode = TradingMode.IDLE
 
@@ -206,45 +216,45 @@ class LiveTradingScheduler(BaseTradingScheduler):
                 logger.warning("⚠️ 无法获取K线数据，使用兜底止损")
                 klines = []
 
-            if direction == "LONG":
-                cfg = self.config.long
-                try:
-                    levels = self.long_level.calculate(
-                        entry_price=entry_price,
-                        klines=klines,
-                        atr_multiplier=cfg.atr_multiplier,
-                        leverage=leverage,
-                        notional_value=self.OPEN_NOTIONAL,
-                    )
-                except Exception:
-                    levels = self.long_level.fallback(entry_price, leverage=leverage, notional_value=self.OPEN_NOTIONAL)
-            else:
-                cfg = self.config.short
-                try:
-                    levels = self.short_level.calculate(
-                        entry_price=entry_price,
-                        klines=klines,
-                        atr_multiplier=cfg.atr_multiplier,
-                        leverage=leverage,
-                        notional_value=self.OPEN_NOTIONAL,
-                    )
-                except Exception:
-                    levels = self.short_level.fallback(entry_price, leverage=leverage, notional_value=self.OPEN_NOTIONAL)
+            is_long = direction == "LONG"
+            cfg = self.config.long if is_long else self.config.short
+            level = self.long_level if is_long else self.short_level
+            # 开仓倍数已持久化，优先用它重建，否则 R 会和开仓时的意图不一致
+            atr_mult = self.position.stop_atr_mult or cfg.atr_multiplier
+            try:
+                levels = level.calculate(
+                    entry_price=entry_price,
+                    klines=klines,
+                    atr_multiplier=atr_mult,
+                    leverage=leverage,
+                    notional_value=self.OPEN_NOTIONAL,
+                )
+            except Exception:
+                levels = level.fallback(
+                    entry_price, leverage=leverage, notional_value=self.OPEN_NOTIONAL
+                )
 
             self.position.stop_loss = levels["stop_loss"]
             if self.position.liquidation_price == 0:
                 self.position.liquidation_price = levels["liquidation_price"]
+            # 该分支只在本地无止损时触发，此时 R 基准 / 峰值也一并重建
+            self.position.initial_stop = levels["stop_loss"]
+            self.position.mfe_price = entry_price
+            # R 是用这里的 ATR 重新定的，留档必须跟着更新，否则 AI 拿到的
+            # 「开仓 ATR → 当前 ATR」比值对应的是另一个 R，判断会反向。
+            self.position.stop_atr_mult = atr_mult
+            self.position.atr_at_open = float(levels.get("atr") or 0.0)
 
             logger.info(
                 f"📂 重新计算止损: {direction} @ ${entry_price:,.0f}, "
-                f"止损=${levels['stop_loss']:,.0f}"
+                f"止损=${levels['stop_loss']:,.0f} (ATR×{atr_mult:.2f})"
             )
         except Exception as e:
             logger.error(f"重新计算止损失败: {e}")
 
-    def _check_capital_guard(self, action_label: str,
-                             notional: float = 0, leverage: int = 5) -> Optional[str]:
-        """检查资金上限，返回拒绝原因；None 表示通过"""
+    def _reject_open(self, direction: str, notional: float = 0,
+                     leverage: int = 5) -> Optional[str]:
+        """实盘开仓四层护栏：已有仓位 / 同步异常 / 开仓冷却 / 资金上限"""
         if self.position.is_active:
             return f"已有 {self.position.direction} 仓位"
 
@@ -270,184 +280,47 @@ class LiveTradingScheduler(BaseTradingScheduler):
 
         return None
 
-    async def _open_long(self, btc_price: float, klines: list,
-                         market_indicators: dict = None, decision=None) -> Optional[dict]:
-        notional, leverage = self._resolve_ai_sizing(decision)
-
-        reject = self._check_capital_guard("开多", notional, leverage)
-        if reject:
-            logger.warning(f"⚠️ 拒绝开多: {reject}")
-            return None
-
-        cfg = self.config.long
-        sig_meta = self._get_signal_metadata()
-
-        try:
-            levels = self.long_level.calculate(
-                entry_price=btc_price,
-                klines=klines,
-                atr_multiplier=cfg.atr_multiplier,
-                leverage=leverage,
-                notional_value=notional,
-            )
-        except Exception as e:
-            logger.error(f"ATR 计算失败: {e}, 使用兜底价位")
-            levels = self.long_level.fallback(btc_price, leverage=leverage, notional_value=notional)
-
+    async def _execute_open(self, direction: str, notional: float,
+                            btc_price: float) -> Optional[tuple]:
+        """在交易所建仓，返回 (成交价, 成交数量)"""
+        is_long = direction == "LONG"
+        execute = (
+            self._futures_executor.execute_buy if is_long
+            else self._futures_executor.execute_short
+        )
         result = await asyncio.to_thread(
-            self._futures_executor.execute_buy,
-            self.FUTURES_SYMBOL, notional, btc_price,
+            execute, self.FUTURES_SYMBOL, notional, btc_price
         )
         if not result.get("success"):
-            logger.error(f"🗡️ 交易所开多失败: {result.get('message')}")
+            logger.error(
+                f"{DIRECTION_ICON[direction]} 交易所开{'多' if is_long else '空'}失败: "
+                f"{result.get('message')}"
+            )
             return None
 
         order = result.get("order", {})
-        fill_price = float(order.get("average") or btc_price)
-        fill_amount = float(order.get("filled") or notional / btc_price)
-
-        self.position.direction = "LONG"
-        self.position.entry_price = fill_price
-        self.position.size_btc = fill_amount
-        self.position.stop_loss = levels["stop_loss"]
-        self.position.leverage = leverage
-        self.position.liquidation_price = levels["liquidation_price"]
-        self.position.analysis_id = sig_meta["analysis_id"]
         self._last_open_ts = time.time()
-
-        logger.info(
-            f"🗡️ 实盘开多: {fill_amount:.4f} BTC @ ${fill_price:,.0f} "
-            f"(${notional:,.0f}, {leverage}x), "
-            f"止损=${levels['stop_loss']:,.0f}, 强平=${levels['liquidation_price']:,.0f}"
+        return (
+            float(order.get("average") or btc_price),
+            float(order.get("filled") or notional / btc_price),
         )
 
-        return self._make_trade(
-            "LONG", "LONG", fill_price, fill_amount, 0,
-            market_indicators=market_indicators,
-            trigger_reason=decision.reason if decision else None,
-            signal_confidence=sig_meta["confidence"],
-            position_levels=levels,
-            analysis_id=self.position.analysis_id,
-            notional=notional, leverage=leverage,
-        )
-
-    async def _open_short(self, btc_price: float, klines: list,
-                          market_indicators: dict = None, decision=None) -> Optional[dict]:
-        notional, leverage = self._resolve_ai_sizing(decision)
-
-        reject = self._check_capital_guard("开空", notional, leverage)
-        if reject:
-            logger.warning(f"⚠️ 拒绝开空: {reject}")
-            return None
-
-        cfg = self.config.short
-        sig_meta = self._get_signal_metadata()
-
-        try:
-            levels = self.short_level.calculate(
-                entry_price=btc_price,
-                klines=klines,
-                atr_multiplier=cfg.atr_multiplier,
-                leverage=leverage,
-                notional_value=notional,
-            )
-        except Exception as e:
-            logger.error(f"ATR 计算失败: {e}, 使用兜底价位")
-            levels = self.short_level.fallback(btc_price, leverage=leverage, notional_value=notional)
-
-        result = await asyncio.to_thread(
-            self._futures_executor.execute_short,
-            self.FUTURES_SYMBOL, notional, btc_price,
-        )
-        if not result.get("success"):
-            logger.error(f"🛡️ 交易所开空失败: {result.get('message')}")
-            return None
-
-        order = result.get("order", {})
-        fill_price = float(order.get("average") or btc_price)
-        fill_amount = float(order.get("filled") or notional / btc_price)
-
-        self.position.direction = "SHORT"
-        self.position.entry_price = fill_price
-        self.position.size_btc = fill_amount
-        self.position.stop_loss = levels["stop_loss"]
-        self.position.leverage = leverage
-        self.position.liquidation_price = levels["liquidation_price"]
-        self.position.analysis_id = sig_meta["analysis_id"]
-        self._last_open_ts = time.time()
-
-        logger.info(
-            f"🛡️ 实盘开空: {fill_amount:.4f} BTC @ ${fill_price:,.0f} "
-            f"(${notional:,.0f}, {leverage}x), "
-            f"止损=${levels['stop_loss']:,.0f}, 强平=${levels['liquidation_price']:,.0f}"
-        )
-
-        return self._make_trade(
-            "SHORT", "SHORT", fill_price, fill_amount, 0,
-            market_indicators=market_indicators,
-            trigger_reason=decision.reason if decision else None,
-            signal_confidence=sig_meta["confidence"],
-            position_levels=levels,
-            analysis_id=self.position.analysis_id,
-            notional=notional, leverage=leverage,
-        )
-
-    async def _close_position(self, btc_price: float, reason: str = "",
-                              close_ratio: float = 1.0, is_partial: bool = False) -> Optional[dict]:
-        if not self.position.is_active:
-            return None
-
+    async def _execute_close(self, is_long: bool, close_ratio: float,
+                             btc_price: float) -> Optional[float]:
+        """在交易所平仓，返回成交价"""
+        # 先撤掉挂在交易所的止损单，避免平仓后残留孤儿单
         await self._cancel_exchange_orders()
 
-        is_long = self.position.direction == "LONG"
-
-        if is_long:
-            result = await asyncio.to_thread(
-                self._futures_executor.execute_sell,
-                self.FUTURES_SYMBOL, close_ratio, btc_price,
-            )
-        else:
-            result = await asyncio.to_thread(
-                self._futures_executor.execute_cover,
-                self.FUTURES_SYMBOL, close_ratio, btc_price,
-            )
-
+        execute = (
+            self._futures_executor.execute_sell if is_long
+            else self._futures_executor.execute_cover
+        )
+        result = await asyncio.to_thread(
+            execute, self.FUTURES_SYMBOL, close_ratio, btc_price
+        )
         if not result.get("success"):
             logger.error(f"交易所平仓失败: {result.get('message')}")
             return None
 
         order = result.get("order", {})
-        fill_price = float(order.get("average") or btc_price)
-
-        close_btc = self.position.size_btc * close_ratio
-        sign = 1 if is_long else -1
-        pnl = sign * (fill_price - self.position.entry_price) * close_btc
-        close_notional = close_btc * fill_price
-        position_leverage = self.position.leverage
-
-        mode_str = "LONG" if is_long else "SHORT"
-        action = "REDUCE" if (is_partial and close_ratio < 1.0) else "CLOSE"
-
-        logger.info(
-            f"{'🗡️' if mode_str == 'LONG' else '🛡️'} 实盘平仓: "
-            f"{close_btc:.4f} BTC @ ${fill_price:,.0f}, "
-            f"入场=${self.position.entry_price:,.0f}, "
-            f"PnL=${pnl:+,.2f} ({reason})"
-        )
-
-        trade = self._make_trade(mode_str, action, fill_price, close_btc, pnl,
-                                 entry_price=self.position.entry_price,
-                                 market_indicators=self._capture_market_indicators(),
-                                 trigger_reason=reason or None,
-                                 analysis_id=self.position.analysis_id,
-                                 notional=close_notional, leverage=position_leverage)
-
-        if close_ratio >= 1.0:
-            self.position.reset()
-        else:
-            self.position.size_btc -= close_btc
-            if self.position.size_btc < 0.0001:
-                logger.info("📌 剩余仓位过小，视为全平")
-                self.position.reset()
-
-        return trade
+        return float(order.get("average") or btc_price)

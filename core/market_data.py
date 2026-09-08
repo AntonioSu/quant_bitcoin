@@ -390,7 +390,7 @@ async def refresh_market_data_async() -> MarketData:
 
 
 async def refresh_news_data_async() -> None:
-    """刷新新闻多空分析 (独立于市场数据，30分钟一次)"""
+    """刷新新闻多空分析 (独立于市场数据，2 小时一次)"""
     import asyncio
     try:
         market.news = await asyncio.to_thread(_news_analyzer.fetch)
@@ -400,7 +400,7 @@ async def refresh_news_data_async() -> None:
 
 
 async def refresh_ai_analysis_async() -> None:
-    """刷新 AI 综合多空研判 (独立刷新, 默认 15 分钟一次)
+    """刷新 AI 综合多空研判 (独立刷新, 默认 1 小时一次)
 
     依赖 market 已经被 refresh_market_data 填充过, 否则跳过本轮.
     失败时保留上一次的结果, 不会清空 market.ai_analysis.
@@ -427,23 +427,3 @@ def get_analysis_memory():
 def get_strategy_summarizer():
     """获取全局策略备忘录实例"""
     return _strategy_summarizer
-
-
-def get_sentiment() -> str:
-    """获取市场情绪描述"""
-    if not market.top_trader:
-        return "未知"
-    
-    ratio = market.top_trader.value
-    if ratio > 2.0:
-        return "极度看多（过热）"
-    elif ratio > 1.5:
-        return "看多"
-    elif ratio > 1.0:
-        return "偏多"
-    elif ratio > 0.67:
-        return "偏空"
-    elif ratio > 0.5:
-        return "看空"
-    else:
-        return "极度看空（超跌）"

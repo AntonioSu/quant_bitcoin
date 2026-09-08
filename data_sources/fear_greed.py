@@ -12,7 +12,6 @@ API: https://api.alternative.me/fng/
 
 import requests
 from datetime import datetime
-from typing import Optional
 
 from data_sources.base import DataSourceBase, DataPoint
 from utils import logger, retry_request

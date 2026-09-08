@@ -9,12 +9,9 @@
 5. 同步异常 + 冷却期 → 拒绝开仓
 """
 
-import sys
-import os
 import asyncio
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core import TradingConfig, ParameterSet, TradingMode
 from server.trading_scheduler.live_scheduler import LiveTradingScheduler, OPEN_COOLDOWN_SEC
@@ -150,7 +147,7 @@ def test_3_capital_guard_blocks_when_balance_low():
 
     short_calls = [c for c in executor.call_log if c[0] == "execute_short"]
     assert len(short_calls) == 0, "Should NOT call exchange"
-    print(f"  ✅ 余额=$5, 保证金需=$10 (最低$50/5x), 拒绝开仓")
+    print("  ✅ 余额=$5, 保证金需=$10 (最低$50/5x), 拒绝开仓")
 
 
 def test_4_capital_guard_blocks_with_max_capital():
@@ -211,38 +208,3 @@ def test_7_normal_open_succeeds():
     assert sched.position.direction == "SHORT"
     assert sched._last_open_ts > 0
     print(f"  ✅ 开空成功: {result['amount']:.6f} BTC @ ${result['price']:,.0f}")
-
-
-if __name__ == "__main__":
-    print("=" * 60)
-    print("LiveTradingScheduler 四层防护测试")
-    print("=" * 60)
-
-    tests = [
-        test_1_api_error_preserves_local_state,
-        test_2_active_position_blocks_open,
-        test_3_capital_guard_blocks_when_balance_low,
-        test_4_capital_guard_blocks_with_max_capital,
-        test_5_sync_error_blocks_open,
-        test_6_cooldown_blocks_rapid_reopen,
-        test_7_normal_open_succeeds,
-    ]
-
-    passed = 0
-    failed = 0
-    for test_fn in tests:
-        try:
-            test_fn()
-            passed += 1
-        except AssertionError as e:
-            print(f"  ❌ FAILED: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ❌ ERROR: {e}")
-            failed += 1
-
-    print(f"\n{'=' * 60}")
-    print(f"结果: {passed} passed, {failed} failed, {len(tests)} total")
-    print(f"{'=' * 60}")
-
-    sys.exit(1 if failed else 0)

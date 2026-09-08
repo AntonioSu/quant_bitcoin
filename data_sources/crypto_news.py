@@ -13,7 +13,7 @@ import re
 import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime
-from typing import Optional, List, Dict, Tuple
+from typing import List, Dict, Tuple
 
 from data_sources.base import DataSourceBase, DataPoint
 from utils import logger, retry_request

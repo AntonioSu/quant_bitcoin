@@ -245,33 +245,6 @@ class RSICalculator:
             strength=strength,
         )
 
-    def is_overbought(self, klines: List[List]) -> bool:
-        """是否超买"""
-        result = self.calculate(klines)
-        return result.signal_type == RSISignalType.OVERBOUGHT
-
-    def is_oversold(self, klines: List[List]) -> bool:
-        """是否超卖"""
-        result = self.calculate(klines)
-        return result.signal_type == RSISignalType.OVERSOLD
-
-    def is_bullish(self, klines: List[List]) -> bool:
-        """是否出现看涨信号 (超卖 或 看涨背离)"""
-        result = self.calculate(klines)
-        return result.signal_type in (
-            RSISignalType.OVERSOLD,
-            RSISignalType.BULLISH_DIVERGENCE,
-        )
-
-    def is_bearish(self, klines: List[List]) -> bool:
-        """是否出现看跌信号 (超买 或 看跌背离)"""
-        result = self.calculate(klines)
-        return result.signal_type in (
-            RSISignalType.OVERBOUGHT,
-            RSISignalType.BEARISH_DIVERGENCE,
-        )
-
-
 def main():
     """测试"""
     import random
