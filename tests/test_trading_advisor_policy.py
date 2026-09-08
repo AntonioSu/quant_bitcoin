@@ -1,202 +1,280 @@
-"""TradingAdvisor 持仓/开仓护栏单测"""
+"""TradingAdvisor 护栏 / 缓存单测
 
+护栏只管：开仓门槛（entry_ok / 等级 / 方向一致 / 平仓后重开冷却）
+和减仓防抖（比例区间 / 次数 / 残仓）。持仓中的平仓决定完全交给 AI。
+"""
+
+import time
+
+import multi_agent.trading_advisor as ta
 from multi_agent.trading_advisor import TradingAdvisor, TradingDecision
 
 
-def _advisor() -> TradingAdvisor:
+def _advisor(ttl=300) -> TradingAdvisor:
     adv = TradingAdvisor.__new__(TradingAdvisor)
+    adv._decision_ttl_sec = float(ttl)
     adv._reduce_count = 0
     adv._initial_position_size = 0.0
+    adv._last_close = None
+    adv._last_signal_id = None
+    adv._last_position_hash = None
+    adv._last_decision_ts = 0.0
+    adv._cached_decision = None
     return adv
 
 
+def _policy(adv, decision, signal, direction="NONE", size=0.0, entry=0.0,
+            price=64000, signal_id="s"):
+    return adv._apply_policy(
+        decision, signal=signal, position_direction=direction,
+        position_entry=entry, position_size_btc=size, btc_price=price,
+        signal_id=signal_id,
+    )
+
+
+# ── 开仓门槛 ──────────────────────────────────────────────
+
 def test_block_open_on_cautious():
-    adv = _advisor()
-    adv._last_partial_close_signal_id = None
-    out = adv._apply_policy(
+    out = _policy(
+        _advisor(),
         TradingDecision(action="开空", position_size_hint="25%", reason="CAUTIOUS 试探"),
-        signal={"bias": "SHORT", "confidence_level": "CAUTIOUS", "entry_ok": True},
-        position_direction="NONE",
-        position_entry=0,
-        position_size_btc=0,
-        btc_price=64000,
-        signal_id="s1",
+        {"bias": "SHORT", "confidence_level": "CAUTIOUS", "entry_ok": True},
     )
     assert out.action == "等待入场"
     assert out.position_size_hint == "0%"
 
 
 def test_allow_open_on_moderate():
-    adv = _advisor()
-    adv._last_partial_close_signal_id = None
-    out = adv._apply_policy(
+    out = _policy(
+        _advisor(),
         TradingDecision(action="开空", position_size_hint="50%", reason="MODERATE 开空"),
-        signal={"bias": "SHORT", "confidence_level": "MODERATE", "entry_ok": True},
-        position_direction="NONE",
-        position_entry=0,
-        position_size_btc=0,
-        btc_price=64000,
-        signal_id="s2",
+        {"bias": "SHORT", "confidence_level": "MODERATE", "entry_ok": True},
     )
     assert out.action == "开空"
 
 
 def _block_reason(signal, action="开多") -> str:
-    adv = _advisor()
-    adv._last_partial_close_signal_id = None
-    return adv._apply_policy(
+    return _policy(
+        _advisor(),
         TradingDecision(action=action, position_size_hint="50%", reason="x"),
-        signal=signal,
-        position_direction="NONE",
-        position_entry=0,
-        position_size_btc=0,
-        btc_price=64000,
-        signal_id="s-reason",
+        signal, signal_id="s-reason",
     ).reason
 
 
 def test_block_reason_names_the_failing_condition():
-    """拦截原因必须指出真正没通过的那一项。
-
-    以前无论哪项失败都拼 "{level}<MODERATE"，等级明明够用时也这么写，
-    照着日志排查会被带到完全错误的方向。
-    """
-    # 等级够、bias 不是 LONG/SHORT → 不能诬告等级
+    """拦截原因必须指出真正没通过的那一项。"""
     r = _block_reason({"bias": "NEUTRAL", "confidence_level": "STRONG", "entry_ok": True})
-    assert "bias=NEUTRAL" in r, r
-    assert "STRONG<" not in r, r
+    assert "bias=NEUTRAL" in r and "STRONG<" not in r, r
 
-    # 等级够、entry_ok=false → 只报 entry_ok
     r = _block_reason({"bias": "LONG", "confidence_level": "STRONG", "entry_ok": False})
     assert "entry_ok=false" in r and "STRONG<" not in r, r
 
-    # 等级确实不够 → 要报等级
     r = _block_reason({"bias": "LONG", "confidence_level": "CAUTIOUS", "entry_ok": True})
     assert "CAUTIOUS<MODERATE" in r, r
 
-    # 多项同时失败 → 全部列出
     r = _block_reason({"bias": "NEUTRAL", "confidence_level": "WEAK", "entry_ok": False})
     assert "entry_ok=false" in r and "bias=NEUTRAL" in r and "WEAK<MODERATE" in r, r
 
-    # 各项都过、只是方向与 bias 相反 → 不能报成空原因
     r = _block_reason({"bias": "SHORT", "confidence_level": "STRONG", "entry_ok": True},
                       action="开多")
     assert r and "护栏拦截开仓:" in r and r.rstrip().endswith(")"), r
 
 
-def test_entry_ok_false_does_not_force_close_when_holding():
+# ── 平仓后重开冷却（原始问题：止损出局 → 2 分钟后原样开回）──
+
+_LONG_OK = {"bias": "LONG", "confidence_level": "MODERATE", "entry_ok": True}
+
+
+def test_reentry_same_direction_blocked_within_cooldown():
     adv = _advisor()
-    adv._last_partial_close_signal_id = None
-    out = adv._apply_policy(
-        TradingDecision(action="平仓", reason="entry_ok=false 果断离场"),
-        signal={
-            "bias": "NEUTRAL",
-            "confidence_level": "WEAK",
-            "entry_ok": False,
-        },
-        position_direction="SHORT",
-        position_entry=64000,
-        position_size_btc=0.01,
-        btc_price=63800,  # 小幅浮盈
-        signal_id="s3",
+    adv.note_position_closed("LONG", "sig-A")
+
+    out = _policy(adv, TradingDecision(action="开多", position_size_hint="50%"),
+                  _LONG_OK, signal_id="sig-B")  # 研判已换，但时间未到
+    assert out.action == "等待入场", out
+    assert "冷却" in out.reason, out.reason
+
+
+def test_reentry_same_signal_blocked_after_cooldown():
+    adv = _advisor()
+    adv.note_position_closed("LONG", "sig-A")
+    adv._last_close["ts"] -= ta.REENTRY_COOLDOWN_SEC + 1  # 时间过了，研判没换
+
+    out = _policy(adv, TradingDecision(action="开多", position_size_hint="50%"),
+                  _LONG_OK, signal_id="sig-A")
+    assert out.action == "等待入场", out
+    assert "研判未更新" in out.reason, out.reason
+
+
+def test_reentry_allowed_with_new_signal_after_cooldown():
+    adv = _advisor()
+    adv.note_position_closed("LONG", "sig-A")
+    adv._last_close["ts"] -= ta.REENTRY_COOLDOWN_SEC + 1
+
+    out = _policy(adv, TradingDecision(action="开多", position_size_hint="50%"),
+                  _LONG_OK, signal_id="sig-B")
+    assert out.action == "开多", out
+
+
+def test_reentry_opposite_direction_not_blocked():
+    adv = _advisor()
+    adv.note_position_closed("LONG", "sig-A")
+
+    out = _policy(adv, TradingDecision(action="开空", position_size_hint="50%"),
+                  {"bias": "SHORT", "confidence_level": "STRONG", "entry_ok": True},
+                  signal_id="sig-A")
+    assert out.action == "开空", out
+
+
+def test_note_close_ignores_invalid_direction():
+    adv = _advisor()
+    adv.note_position_closed("NONE", "sig")
+    assert adv._last_close is None
+
+
+# ── 持仓：平仓交给 AI ──────────────────────────────────────
+
+def test_ai_close_is_executed_even_without_reversal():
+    """AI 想止盈/离场，护栏不再以「信号未强反转」拦下"""
+    adv = _advisor()
+    out = _policy(
+        adv,
+        TradingDecision(action="平仓", reason="峰值 1.8R 回撤 1.1R，突破失败"),
+        {"bias": "SHORT", "confidence_level": "MODERATE", "entry_ok": True},
+        direction="SHORT", size=0.01, entry=64000, price=63800,
+    )
+    assert out.action == "平仓" and out.close_ratio == 1.0
+    assert adv._reduce_count == 0 and adv._initial_position_size == 0.0
+
+
+def test_no_forced_close_on_strong_reversal():
+    """反向 STRONG 时不再替 AI 强制平仓：AI 说观望就观望"""
+    out = _policy(
+        _advisor(),
+        TradingDecision(action="持仓观望", reason="观望"),
+        {"bias": "LONG", "confidence_level": "STRONG", "entry_ok": True},
+        direction="SHORT", size=0.01, entry=64000, price=64100,
     )
     assert out.action == "持仓观望"
 
 
-def test_strong_reversal_forces_close():
-    adv = _advisor()
-    adv._last_partial_close_signal_id = None
-    out = adv._apply_policy(
-        TradingDecision(action="持仓观望", reason="观望"),
-        signal={"bias": "LONG", "confidence_level": "STRONG", "entry_ok": True},
-        position_direction="SHORT",
-        position_entry=64000,
-        position_size_btc=0.01,
-        btc_price=64100,
-        signal_id="s4",
+def test_hold_passes_through_with_stop_r():
+    out = _policy(
+        _advisor(),
+        TradingDecision(action="持仓观望", stop_r=0.0, reason="浮盈 0.7R，推到保本"),
+        _LONG_OK, direction="LONG", size=0.01, entry=64000, price=64500,
     )
-    assert out.action == "平仓"
-    assert out.close_ratio == 1.0
+    assert out.action == "持仓观望" and out.stop_r == 0.0
 
 
-def test_moderate_reversal_caps_reduce():
+# ── 减仓防抖 ─────────────────────────────────────────────
+
+def test_reduce_ratio_clamped_to_range():
     adv = _advisor()
-    adv._last_partial_close_signal_id = None
-    out = adv._apply_policy(
-        TradingDecision(action="平仓", close_ratio=1.0, reason="反转平仓"),
-        signal={"bias": "LONG", "confidence_level": "MODERATE", "entry_ok": True},
-        position_direction="SHORT",
-        position_entry=64000,
-        position_size_btc=0.01,
-        btc_price=64100,
-        signal_id="s5",
-    )
-    assert out.action == "减仓"
-    assert out.close_ratio == 0.25
+    lo = _policy(adv, TradingDecision(action="减仓", close_ratio=0.01, reason="r"),
+                 _LONG_OK, direction="LONG", size=0.01, entry=64000)
+    assert lo.action == "减仓" and lo.close_ratio == ta._MIN_REDUCE_RATIO
 
-
-def test_same_signal_reduce_only_once():
     adv = _advisor()
-    adv._last_partial_close_signal_id = None
-    first = adv._apply_policy(
-        TradingDecision(action="减仓", close_ratio=0.5, reason="减仓"),
-        signal={"bias": "LONG", "confidence_level": "MODERATE", "entry_ok": True},
-        position_direction="SHORT",
-        position_entry=64000,
-        position_size_btc=0.01,
-        btc_price=64100,
-        signal_id="same",
-    )
-    second = adv._apply_policy(
-        TradingDecision(action="减仓", close_ratio=0.5, reason="再减"),
-        signal={"bias": "LONG", "confidence_level": "MODERATE", "entry_ok": True},
-        position_direction="SHORT",
-        position_entry=64000,
-        position_size_btc=0.005,
-        btc_price=64100,
-        signal_id="same",
-    )
-    assert first.action == "减仓"
-    assert first.close_ratio == 0.25
-    assert second.action == "持仓观望"
+    hi = _policy(adv, TradingDecision(action="减仓", close_ratio=0.99, reason="r"),
+                 _LONG_OK, direction="LONG", size=0.01, entry=64000)
+    # 0.9 减完剩 10% < 20% 残仓阈值 → 升级为平仓
+    assert hi.action == "平仓", hi
 
 
-def test_reduce_exhausted_escalates_to_close():
-    """累计减仓达到上限后，信号仍反向时升级为全平"""
+def test_reduce_keeps_stop_r():
+    out = _policy(_advisor(),
+                  TradingDecision(action="减仓", close_ratio=0.5, stop_r=0.2, reason="r"),
+                  _LONG_OK, direction="LONG", size=0.01, entry=64000)
+    assert out.action == "减仓" and out.close_ratio == 0.5 and out.stop_r == 0.2
+
+
+def test_third_reduce_escalates_to_close():
     adv = _advisor()
-    adv._last_partial_close_signal_id = None
-    adv._reduce_count = 2
+    adv._reduce_count = ta._MAX_REDUCE_COUNT
     adv._initial_position_size = 0.01
-
-    out = adv._apply_policy(
-        TradingDecision(action="减仓", close_ratio=0.25, reason="继续减仓"),
-        signal={"bias": "LONG", "confidence_level": "MODERATE", "entry_ok": True},
-        position_direction="SHORT",
-        position_entry=64000,
-        position_size_btc=0.005,
-        btc_price=64100,
-        signal_id="s6",
-    )
-    assert out.action == "平仓"
-    assert out.close_ratio == 1.0
-    assert "已减仓" in out.reason
+    out = _policy(adv, TradingDecision(action="减仓", close_ratio=0.3, reason="再减"),
+                  _LONG_OK, direction="LONG", size=0.006, entry=64000)
+    assert out.action == "平仓" and out.close_ratio == 1.0
 
 
-def test_position_too_small_escalates_to_close():
-    """仓位低于初始 50% 且信号仍反向时升级为全平"""
+def test_reduce_leaving_tiny_remainder_escalates_to_close():
     adv = _advisor()
-    adv._last_partial_close_signal_id = None
     adv._reduce_count = 1
     adv._initial_position_size = 0.01
+    # 剩 30%，再减 50% → 剩 15% < 20%
+    out = _policy(adv, TradingDecision(action="减仓", close_ratio=0.5, reason="再减"),
+                  _LONG_OK, direction="LONG", size=0.003, entry=64000)
+    assert out.action == "平仓", out
 
-    out = adv._apply_policy(
-        TradingDecision(action="减仓", close_ratio=0.25, reason="再减仓"),
-        signal={"bias": "LONG", "confidence_level": "MODERATE", "entry_ok": True},
-        position_direction="SHORT",
-        position_entry=64000,
-        position_size_btc=0.004,
-        btc_price=64100,
-        signal_id="s7",
-    )
-    assert out.action == "平仓"
-    assert out.close_ratio == 1.0
+
+def test_reduce_count_increments_and_resets_on_close():
+    adv = _advisor()
+    first = _policy(adv, TradingDecision(action="减仓", close_ratio=0.3, reason="a"),
+                    _LONG_OK, direction="LONG", size=0.01, entry=64000)
+    assert first.action == "减仓" and adv._reduce_count == 1
+    second = _policy(adv, TradingDecision(action="减仓", close_ratio=0.3, reason="b"),
+                     _LONG_OK, direction="LONG", size=0.007, entry=64000)
+    assert second.action == "减仓" and adv._reduce_count == 2
+
+    adv.note_position_closed("LONG", "s")
+    assert adv._reduce_count == 0 and adv._initial_position_size == 0.0
+
+
+# ── 决策缓存：有效期 = 节拍 ────────────────────────────────
+
+def test_cache_expires_after_ttl():
+    adv = _advisor(ttl=300)
+    adv._cached_decision = TradingDecision(action="持仓观望")
+    adv._last_signal_id = "sig"
+    adv._last_position_hash = "LONG:0.010000"
+    adv._last_decision_ts = time.monotonic()
+
+    assert adv._cache_valid("sig", "LONG:0.010000")
+    adv._last_decision_ts -= 301
+    assert not adv._cache_valid("sig", "LONG:0.010000"), "过期后必须重新问 LLM"
+
+
+def test_cache_misses_on_signal_or_position_change():
+    adv = _advisor(ttl=300)
+    adv._cached_decision = TradingDecision(action="持仓观望")
+    adv._last_signal_id = "sig"
+    adv._last_position_hash = "LONG:0.010000"
+    adv._last_decision_ts = time.monotonic()
+
+    assert not adv._cache_valid("sig-new", "LONG:0.010000")
+    assert not adv._cache_valid("sig", "LONG:0.005000")
+    assert not adv._cache_valid("", "LONG:0.010000"), "无研判 ID 不缓存"
+
+
+def test_zero_ttl_disables_time_cache():
+    adv = _advisor(ttl=0)
+    adv._cached_decision = TradingDecision(action="持仓观望")
+    adv._last_signal_id = "sig"
+    adv._last_position_hash = "NONE:0.000000"
+    adv._last_decision_ts = time.monotonic()
+    assert not adv._cache_valid("sig", "NONE:0.000000")
+
+
+# ── 解析：stop_r / close_ratio ────────────────────────────
+
+def test_parse_stop_r_only_when_holding():
+    adv = _advisor()
+    held = adv._parse_response('{"action": "持仓观望", "stop_r": 0.5}', "LONG")
+    assert held.stop_r == 0.5
+    neg = adv._parse_response('{"action": "持仓观望", "stop_r": -0.4}', "LONG")
+    assert neg.stop_r == -0.4, "负值合法：从 -1R 收紧到 -0.4R"
+    flat = adv._parse_response('{"action": "等待入场", "stop_r": 0.5}', "NONE")
+    assert flat.stop_r is None
+    junk = adv._parse_response('{"action": "持仓观望", "stop_r": "很近"}', "LONG")
+    assert junk.stop_r is None
+
+
+def test_parse_reduce_ratio_defaults_and_clamps():
+    adv = _advisor()
+    d = adv._parse_response('{"action": "减仓"}', "LONG")
+    assert d.close_ratio == 0.5
+    d = adv._parse_response('{"action": "减仓", "close_ratio": 0.95}', "LONG")
+    assert d.close_ratio == ta._MAX_REDUCE_RATIO
+    d = adv._parse_response('{"action": "减仓", "close_ratio": 0.7}', "LONG")
+    assert d.close_ratio == 0.7
