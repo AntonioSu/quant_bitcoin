@@ -40,21 +40,57 @@
 }
 
 * { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
                "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   font-size: 15px; line-height: 1.78;
 }
-.wrap { max-width: 900px; margin: 0 auto; padding: 56px 28px 96px; }
+.layout {
+  display: grid;
+  grid-template-columns: 228px minmax(0, 900px);
+  gap: 0 52px;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 28px 96px;
+  align-items: start;
+}
+.wrap { max-width: none; margin: 0; padding: 56px 0 0; }
+
+.toc {
+  position: sticky; top: 0; height: 100vh;
+  overflow-y: auto; padding: 36px 18px 48px 0;
+  border-right: 1px solid var(--border);
+}
+.toc-title {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--text-dim); margin: 0 0 14px;
+}
+.toc nav { display: flex; flex-direction: column; gap: 2px; }
+.toc a {
+  display: block; color: var(--text-mid); text-decoration: none;
+  font-size: 13px; line-height: 1.4; padding: 5px 10px 5px 12px;
+  border-left: 2px solid transparent; border-radius: 0 4px 4px 0;
+}
+.toc a:hover { color: var(--text); background: var(--accent-bg); }
+.toc a.is-active {
+  color: var(--accent); border-left-color: var(--accent);
+  background: var(--accent-bg); font-weight: 600;
+}
+.toc .l2 { font-weight: 600; color: var(--text); margin-top: 10px; padding-left: 12px; }
+.toc .l2:first-child { margin-top: 0; }
+.toc .l3 { font-size: 12.5px; padding-left: 22px; color: var(--text-dim); }
 
 .doc-head { border-bottom: 1px solid var(--border); padding-bottom: 26px; margin-bottom: 12px; }
 .eyebrow {
   font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.09em;
   text-transform: uppercase; color: var(--text-dim); margin: 0 0 10px;
 }
-h1 { font-size: 30px; line-height: 1.25; margin: 0 0 18px; letter-spacing: -0.015em; }
+h1 {
+  font-size: 30px; line-height: 1.25; margin: 0 0 18px; letter-spacing: -0.015em;
+  scroll-margin-top: 20px;
+}
 .lede { font-size: 16.5px; color: var(--text-mid); margin: 0; }
 .lede strong { color: var(--text); font-weight: 600; }
 
@@ -62,9 +98,10 @@ section { margin: 46px 0 0; }
 h2 {
   font-size: 21px; margin: 0 0 8px; letter-spacing: -0.012em;
   padding-bottom: 9px; border-bottom: 1px solid var(--border);
+  scroll-margin-top: 20px;
 }
 .sub { color: var(--text-dim); font-size: 13.5px; margin: 0 0 20px; }
-h3 { font-size: 15.5px; margin: 28px 0 8px; }
+h3 { font-size: 15.5px; margin: 28px 0 8px; scroll-margin-top: 20px; }
 p { margin: 0 0 14px; }
 p:last-child { margin-bottom: 0; }
 ul { margin: 0 0 14px; padding-left: 20px; }
@@ -109,7 +146,11 @@ td { padding: 9px 11px; border-bottom: 1px solid var(--border); color: var(--tex
 td:first-child { color: var(--text); }
 tbody tr:last-child td { border-bottom: none; }
 .num-col { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .dead td:first-child { color: var(--text-dim); text-decoration: line-through; }
+td.ok { color: var(--green); }
+td.warn { color: var(--amber); }
+td.bad { color: var(--red); }
 
 /* 数据层分组 */
 .groups { display: flex; flex-wrap: wrap; gap: 9px; margin: 8px 0 4px; }
@@ -175,10 +216,29 @@ footer {
   border-top: 1px solid var(--border); margin-top: 52px; padding-top: 22px;
   color: var(--text-dim); font-size: 12.5px;
 }
+footer h2 {
+  font-size: 15px; color: var(--text); border-bottom: none; padding-bottom: 0;
+  margin: 0 0 10px;
+}
 footer p { margin: 0 0 6px; }
 
+@media (max-width: 960px) {
+  .layout {
+    grid-template-columns: 1fr;
+    padding: 0 28px 96px;
+  }
+  .toc {
+    position: sticky; top: 0; z-index: 8; height: auto; max-height: 44vh;
+    overflow-y: auto; padding: 12px 0 10px;
+    border-right: none; border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .toc-title { margin-bottom: 8px; }
+  .toc .l2 { margin-top: 6px; }
+  .wrap { padding-top: 28px; }
+}
 @media (max-width: 560px) {
-  .wrap { padding: 36px 18px 72px; }
+  .layout { padding: 0 18px 72px; }
   h1 { font-size: 25px; }
   .lede { font-size: 15.5px; }
   .rung { grid-template-columns: 74px 56px 1fr; gap: 9px; padding: 9px 11px; }
@@ -191,23 +251,46 @@ footer p { margin: 0 0 6px; }
 </style>
 </head>
 <body>
+<div class="layout">
+<aside class="toc" aria-label="目录">
+  <p class="toc-title">目录</p>
+  <nav>
+    <a class="l2" href="#overview">概述</a>
+    <a class="l2" href="#data">一、数据层</a>
+    <a class="l3" href="#data-inputs">输入分组</a>
+    <a class="l3" href="#data-refresh">刷新节奏</a>
+    <a class="l2" href="#signal">二、信号层</a>
+    <a class="l3" href="#risk-reviewer">风险审查员</a>
+    <a class="l3" href="#manager">决策经理</a>
+    <a class="l2" href="#execution">三、执行层</a>
+    <a class="l3" href="#open-threshold">开仓门槛</a>
+    <a class="l3" href="#sizing">仓位算法</a>
+    <a class="l3" href="#policy-guard">下单前的硬规则</a>
+    <a class="l2" href="#exit">四、出场与止损</a>
+    <a class="l3" href="#risk-job">主要功能</a>
+    <a class="l3" href="#risk-rules">出场策略</a>
+    <a class="l3" href="#safety-net">两道兜底</a>
+    <a class="l2" href="#presets">五、三档预设</a>
+  </nav>
+</aside>
 <div class="wrap">
 
-<div class="doc-head">
+<div class="doc-head" id="overview">
   <p class="eyebrow">quant_bitcoin · 策略梳理</p>
   <h1>交易策略：四层结构与实际生效的规则</h1>
   <p class="lede">
-    数据层 → 信号层 → 执行层 → 风控层。层与层之间靠不同的时钟驱动，
-    越往下越不依赖 LLM。所有参数取自代码而非文档，
+    数据层 → 信号层 → 执行层 → 出场与止损。层与层之间靠不同的时钟驱动，
+    越往下越不依赖模型。所有参数取自代码而非文档，
     <strong>凡与 README 或旧描述冲突之处，以本文为准</strong>。
   </p>
 </div>
 
 <!-- ══════════════ 一 · 数据层 ══════════════ -->
-<section>
+<section id="data">
   <h2>一、数据层：22 路输入，三种刷新节奏</h2>
   <p class="sub">14 个外部采集器 + 8 个技术指标，全部汇入 <code>market</code> 单例这一条数据总线。</p>
 
+  <h3 id="data-inputs">输入分组</h3>
   <div class="groups">
     <div class="group">
       <div class="gt">情绪 / 资金面</div>
@@ -232,6 +315,7 @@ footer p { margin: 0 0 6px; }
     各有一个后台守护线程和 24 小时内存缓冲；其余全部是 REST 拉取，带 TTL 缓存。
   </div>
 
+  <h3 id="data-refresh">刷新节奏</h3>
   <p>三条刷新循环各跑各的，互不等待：</p>
   <table>
     <thead><tr><th>循环</th><th class="num-col">周期</th><th>对齐</th><th>LLM 开销</th></tr></thead>
@@ -240,19 +324,19 @@ footer p { margin: 0 0 6px; }
       <tr><td>AI 综合研判（委员会）</td><td class="num-col">1 小时</td><td>整点对齐</td><td>每轮 4 次调用</td></tr>
       <tr><td>新闻情绪分析</td><td class="num-col">2 小时</td><td>双小时对齐</td><td>每轮 1 次调用</td></tr>
     </tbody>
-    <caption>另有两条不属于数据层的时钟：交易 tick 60 秒、前端 WebSocket 推送 5 秒。</caption>
+    <caption>另有两条不属于数据层的时钟：交易循环每 5 分钟跑一次（每次都问一次交易 AI）、前端 WebSocket 推送 5 秒。</caption>
   </table>
 
   <div class="note warn">
     <span class="h">信号必然比行情旧</span>
-    研判每小时一次、基于 4H K 线收盘价；而交易 tick 每 60 秒取一次实时标记价。
-    所以开仓瞬间用的方向判断，最坏情况已经是 59 分钟前的结论 ——
-    但止损止盈价位是用当前价算的。这个不对称是设计取舍，不是缺陷。
+    研判每小时一次、基于 4H K 线收盘价；而交易循环每 5 分钟取一次实时标记价。
+    所以开仓瞬间用的方向判断，最坏情况已经是 55 分钟前的结论 ——
+    但止损价位是用当前价算的。这个不对称是设计取舍，不是缺陷。
   </div>
 </section>
 
 <!-- ══════════════ 二 · 信号层 ══════════════ -->
-<section>
+<section id="signal">
   <h2>二、信号层：四个 LLM 角色顺序辩论</h2>
   <p class="sub"><code>DecisionCommittee</code> 按固定顺序串行跑四个角色，各自有独立 system prompt 和知识库切片。</p>
 
@@ -265,43 +349,44 @@ footer p { margin: 0 0 6px; }
 
   <p>
     前两个角色<strong>只构造本方论证，不给结论</strong>。风险审查员看完双方论证后产出
-    <code>entry_ok</code>，并且拥有否决权 —— 决策经理不能把它翻回来：
+    <code>entry_ok</code>，并且拥有否决权 —— 决策经理不能把它翻回来。
   </p>
 
-  <figure>
-    <figcaption>multi_agent/decision_committee.py · _merge_risk_into_manager_payload</figcaption>
-<pre>manager_entry = payload.get("entry_ok") <i>if "entry_ok" in payload else None</i>
-
-<i># manager 省略该字段 → 采用风险审查员的判断</i>
-if manager_entry is None:
-    payload["entry_ok"]   = risk.entry_ok
-    payload["entry_gate"] = "OPEN" if risk.entry_ok else "RISK_DEFAULT"
-
-<i># manager 想放行但风险审查员否决 → 否决优先</i>
-elif bool(manager_entry) and not risk.entry_ok:
-    <b>payload["entry_ok"]   = False</b>
-    payload["entry_gate"] = "RISK_VETO"
-    logger.warning("风险审查员行使否决权 ...")
-
-else:
-    payload["entry_gate"] = "OPEN" if bool(manager_entry) else "MANAGER_BLOCK"</pre>
-  </figure>
-
-  <p>
-    <code>entry_gate</code> 记录的是「这一次被谁挡住了」，取值有
-    <code>OPEN</code> / <code>RISK_VETO</code> / <code>RISK_DEFAULT</code> /
-    <code>MANAGER_BLOCK</code> / <code>LOW_CONFIDENCE</code> /
-    <code>NEUTRAL_BIAS</code> / <code>ZERO_SIZE</code> / <code>COMMITTEE_FAILED</code>，
-    落盘进研判记忆，用于事后归因。
-  </p>
-
-  <h3>风险审查员的判定逻辑</h3>
-  <p>三步顺序判定，命中即停：</p>
-  <ul>
-    <li><strong>第 1 步 · 硬阻断</strong>：risk_level = extreme、极端波动且爆仓数据异常、多空双方证据都极弱 → <code>entry_ok = false</code></li>
-    <li><strong>第 2 步 · 放行</strong>：优势方有 ≥2 条 high 权重证据，或趋势明确且有均线排列确认，或 risk_level 为 low／medium → <code>entry_ok = true</code></li>
-    <li><strong>第 3 步 · 兜底</strong>：典型是 risk_level = high 但不构成硬阻断，此时仍放行，但仓位压到 25% 并在 blockers 写明担忧</li>
-  </ul>
+  <h3 id="risk-reviewer">风险审查员</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>risk_level</th>
+        <th>entry_ok</th>
+        <th>position_size_hint</th>
+        <th>blockers</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="mono ok">low / medium</td>
+        <td class="mono ok">true</td>
+        <td class="mono">25% ~ 50%</td>
+        <td>空</td>
+      </tr>
+      <tr>
+        <td class="mono warn">high</td>
+        <td class="mono ok">true</td>
+        <td class="mono">25%</td>
+        <td>写明具体担忧</td>
+      </tr>
+      <tr>
+        <td class="mono bad">extreme</td>
+        <td class="mono bad">false</td>
+        <td class="mono">0%</td>
+        <td>必须有阻断项</td>
+      </tr>
+    </tbody>
+    <caption>
+      输出字段就是这四列。schema 还会再钳一次：<code>extreme</code> 或仓位 0% → <code>entry_ok=false</code>。
+      另外两条硬阻断不走这张表：<code>HIGH_VOL_EXTREME</code> 且爆仓异常、多空双方证据都极弱。
+    </caption>
+  </table>
 
   <div class="note">
     提示词里明确写了「<strong>entry_ok 默认倾向应该是 true</strong>」「零交易 ≠ 零风险」，
@@ -309,13 +394,172 @@ else:
     审查员的职责被定义为管控风险，不是消灭风险。
   </div>
 
-  <h3>决策经理的输出</h3>
+  <h3 id="manager">决策经理</h3>
   <p>
-    经理输出的是<strong>纯方向判断，不知道当前有没有持仓</strong>：
-    <code>bias</code>（LONG/SHORT/NEUTRAL）、<code>confidence</code>、
-    <code>trend_regime</code>、<code>volatility_regime</code>、
-    <code>entry_ok</code>、<code>position_size_hint</code>、<code>leverage_hint</code>。
+    user prompt 三块：市场快照、委员会三方结论、动态上下文（上次研判 / 备忘录）。
+    持仓来自调度器每 5 分钟写入的 <code>market.position_context</code>，嵌进快照。
+    <code>bias</code> 是市场方向，不因已有仓位而翻转；
+    <code>action</code> 必须和当前是否有仓一致：空仓只能加多／加空／等待入场，
+    有仓只能持仓观望／减仓／离场，不得在已持仓时再输出加多／加空。
   </p>
+
+  <p><strong>输入</strong> · 当前持仓 <code>position_context</code></p>
+
+  <table>
+    <thead><tr><th>字段</th><th>取值</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>is_active</code></td>
+        <td>true / false</td>
+        <td>当前有没有合约仓。空仓时这一项为 false，下面各字段都不出现</td>
+      </tr>
+      <tr>
+        <td><code>direction</code></td>
+        <td>LONG / SHORT</td>
+        <td>持仓方向。与 <code>bias</code> 同向则继续拿，反向才考虑减仓／离场</td>
+      </tr>
+      <tr>
+        <td><code>size_btc</code></td>
+        <td>BTC 数量</td>
+        <td>当前仓位大小，用来判断是轻仓还是已满</td>
+      </tr>
+      <tr>
+        <td><code>leverage</code></td>
+        <td>整数倍</td>
+        <td>本仓杠杆。高杠杆时离强平更近，反向信号要更敏感</td>
+      </tr>
+      <tr>
+        <td><code>entry_price</code></td>
+        <td>USD</td>
+        <td>入场均价。和现价比才知道浮盈还是浮亏</td>
+      </tr>
+      <tr>
+        <td><code>current_price</code></td>
+        <td>USD</td>
+        <td>当前标记价</td>
+      </tr>
+      <tr>
+        <td><code>liquidation_price</code></td>
+        <td>USD</td>
+        <td>强平价。距现价过近时不得建议继续扛</td>
+      </tr>
+      <tr>
+        <td><code>holding_duration</code></td>
+        <td>如 6h 20m</td>
+        <td>已持多久。刚开仓的反向信号要更谨慎，拿了很久才更可能是结构变了</td>
+      </tr>
+    </tbody>
+    <caption>
+      委员会三方（<code>bull.thesis / evidence</code>、<code>bear.thesis / evidence</code>、
+      <code>risk.entry_ok / risk_level / position_size_hint / blockers</code>）始终传入，与有没有仓无关。
+    </caption>
+  </table>
+
+  <p><strong>输出</strong></p>
+
+  <table>
+    <thead><tr><th>字段</th><th>取值</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>bias</code></td>
+        <td>LONG / SHORT / NEUTRAL</td>
+        <td>市场方向判断，与有没有仓无关</td>
+      </tr>
+      <tr>
+        <td><code>confidence</code> / <code>confidence_level</code></td>
+        <td>0–100；WEAK…VERY_STRONG</td>
+        <td>方向确信程度。决定空仓时仓位／杠杆上限，也决定有仓时该观望还是离场</td>
+      </tr>
+      <tr>
+        <td><code>trend_regime</code></td>
+        <td>UP_TREND / DOWN_TREND / RANGE / UNCLEAR</td>
+        <td>趋势状态</td>
+      </tr>
+      <tr>
+        <td><code>volatility_regime</code></td>
+        <td>LOW_VOL_COMPRESSION / NORMAL_VOL / BREAKOUT_EXPANSION / HIGH_VOL_EXTREME</td>
+        <td>波动状态。极端波动时仓位和杠杆都要压</td>
+      </tr>
+      <tr>
+        <td><code>entry_ok</code></td>
+        <td>true / false</td>
+        <td>只约束<strong>新开仓</strong>。有仓时 false 不是平仓理由</td>
+      </tr>
+      <tr>
+        <td><code>action</code></td>
+        <td>见下表</td>
+        <td>结合仓位后的建议动作，执行层按这个理解经理想干什么</td>
+      </tr>
+      <tr>
+        <td><code>position_size_hint</code></td>
+        <td>0% / 25% / 50% / 75% / 100%</td>
+        <td>空仓且允许开仓时的保证金占权益比例；有仓或不可开仓时必须为 0%</td>
+      </tr>
+      <tr>
+        <td><code>leverage_hint</code></td>
+        <td>1 / 2 / 3 / 5 / 10 / 20</td>
+        <td>空仓开仓时的杠杆上限。有仓时不影响已有杠杆</td>
+      </tr>
+      <tr>
+        <td><code>summary</code></td>
+        <td>≤40 字中文</td>
+        <td>一句话研判。允许入场时不要写成观望话术</td>
+      </tr>
+      <tr>
+        <td><code>key_drivers</code></td>
+        <td>3–5 条</td>
+        <td>方向依据。每条含 factor / side / weight</td>
+      </tr>
+      <tr>
+        <td><code>risks</code></td>
+        <td>1–3 条</td>
+        <td>当前结论的反向风险</td>
+      </tr>
+      <tr>
+        <td><code>invalidations</code></td>
+        <td>可观察条件</td>
+        <td>什么出现则本轮观点失效</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <table>
+    <thead><tr><th>当前仓位</th><th>bias</th><th>action</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>空仓 · entry_ok=true</td>
+        <td>LONG / SHORT</td>
+        <td>加多 / 加空</td>
+        <td>允许按 <code>position_size_hint</code> 开仓</td>
+      </tr>
+      <tr>
+        <td>空仓 · entry_ok=false</td>
+        <td>任意</td>
+        <td>等待入场</td>
+        <td>方向可以有，但不能开</td>
+      </tr>
+      <tr>
+        <td>有仓 · 同向</td>
+        <td>= 持仓方向</td>
+        <td>持仓观望</td>
+        <td>论点仍在，继续拿。论点削弱则改为减仓</td>
+      </tr>
+      <tr>
+        <td>有仓 · 反向</td>
+        <td>≠ 持仓方向</td>
+        <td>离场</td>
+        <td>结构反了，先平掉本仓。不够确信则减仓</td>
+      </tr>
+      <tr>
+        <td>有仓 · 中性</td>
+        <td>NEUTRAL</td>
+        <td>持仓观望</td>
+        <td>方向不清，不主动加也不主动砍</td>
+      </tr>
+    </tbody>
+    <caption>有仓时禁止输出加多／加空。<code>position_size_hint</code> 一律 0%。</caption>
+  </table>
+
   <p>提示词里有一条强制的维度优先级，用来压制振荡指标的话语权：</p>
   <ul>
     <li>M2／稳定币供应 &gt; ETF／净流／均线结构 &gt; CVD／订单流 &gt; <strong>RSI／MACD</strong></li>
@@ -326,11 +570,11 @@ else:
 </section>
 
 <!-- ══════════════ 三 · 执行层 ══════════════ -->
-<section>
-  <h2>三、执行层：第二个 LLM + 写死的护栏</h2>
-  <p class="sub"><code>TradingAdvisor</code> 只做仓位动作，不做市场判断。信号 ID 与仓位哈希都没变时走缓存，不重复调用。</p>
+<section id="execution">
+  <h2>三、执行层：开仓与下单</h2>
+  <p class="sub">交易 AI 只说「开 / 平 / 减 / 观望」。真正下单前，代码再拦一遍：够不够门槛、刚平过能不能马上再开、减仓会不会减得太碎。</p>
 
-  <h3>开仓门槛按置信度分档</h3>
+  <h3 id="open-threshold">开仓门槛按置信度分档</h3>
   <table>
     <thead>
       <tr><th>等级</th><th class="num-col">置信度</th><th>维度共振</th><th class="num-col">仓位</th><th class="num-col">杠杆上限</th></tr>
@@ -357,7 +601,7 @@ else:
     也就是说，唯一允许最高杠杆的那一档，恰好是唯一没有代码保护的一档。
   </div>
 
-  <h3>仓位算法</h3>
+  <h3 id="sizing">仓位算法</h3>
   <figure>
     <figcaption>server/trading_scheduler/base.py · _resolve_ai_sizing</figcaption>
 <pre>保证金   = 权益 × 仓位比例      <i># 50% → 1000 × 0.5 = $500</i>
@@ -368,261 +612,71 @@ else:
 leverage = max(1, min(20, int(leverage)))</pre>
   </figure>
 
-  <h3>LLM 之后还有一层写死的护栏</h3>
-  <p>
-    <code>_apply_policy</code> 的设计取向非常明确 —— <strong>防止小赚就跑</strong>。
-    LLM 说要平仓也可能被拦回去：
-  </p>
+  <h3 id="policy-guard">下单前的硬规则</h3>
+  <p>交易 AI 说了要开、要减，代码还会拦一次。拦的是下单，不管持仓中该不该平（那是下一层的事）。</p>
   <ul>
-    <li>开仓必须同时满足 <code>entry_ok=true</code> + <code>bias</code> 匹配方向 + 等级 ≥ MODERATE</li>
-    <li><code>entry_ok=false</code> <strong>只约束新开仓，绝不构成平仓理由</strong>；NEUTRAL、「方向不明」同理</li>
-    <li>反向信号只有 ≥STRONG 才允许全平；MODERATE 自动降级为减仓 25%</li>
-    <li>减仓单次最多 25%，同一个信号 ID 只能减一次，累计最多两次</li>
-    <li>减到剩余不足 50% 且信号仍反向，才升级为全平</li>
-    <li>浮亏 &gt; 5% 是唯一无条件的全平理由</li>
+    <li><strong>开仓门槛</strong>：允许入场 + 方向对上 + 等级至少中等，否则不开</li>
+    <li><strong>追高不让开</strong>：顺方向落在近 48 小时区间的 60–100% 拒绝；真正突破（超过 100%）才放行</li>
+    <li><strong>刚平过不能马上再开</strong>：同方向 15 分钟内不重开，同一份研判也不重开（防止止损刚打掉又原样开回去）</li>
+    <li><strong>减仓别减太碎</strong>：一次减 10%–90%；同一仓最多减 2 次，第 3 次或剩不到 20% 就全平</li>
   </ul>
-
-  <div class="note key">
-    <span class="h">开仓时 AI 还要自定风险几何</span>
-    <code>stop_atr_mult</code>（止损 = ATR × 该倍数，允许 1.0~3.0）和
-    <code>tp_trigger_r</code>（止盈触发的 R 倍数，允许 0.5~3.0）由 AI 给出，越界即钳制。
-    <strong>AI 只输出相对倍数，不输出绝对价格</strong> —— 它拿到的现价可能有延迟，
-    凭感觉写出的绝对价位可能贴近强平价。为了让它不至于盲填，
-    空仓决策时会挂一个 <code>compute_risk_levels</code> 工具（function calling），
-    把倍数换算成真实价位和真实亏损金额回灌给它，由它确认或调整。
-  </div>
 </section>
 
-<!-- ══════════════ 四 · 风控层 ══════════════ -->
-<section>
-  <h2>四、风控层：参数每小时由 AI 定，执行每 60 秒由代码跑</h2>
-  <p class="sub">全系统唯一被拆成两个时钟的一层：AI 每小时重拍一次阶梯参数，触发判断留在 60 秒的纯计算里。</p>
+<!-- ══════════════ 四 · 出场与止损 ══════════════ -->
+<section id="exit">
+  <h2>四、出场与止损：仓开起来之后怎么管</h2>
+  <p class="sub">管的是仓位开起来之后：要不要减、要不要平、止损往哪推。不管方向判断，也不管能不能下单。</p>
 
-  <div class="note key">
-    <span class="h">「都由 AI 决策」和「这一层不依赖 LLM」并不矛盾</span>
-    AI 决定的是<strong>参数</strong>，代码负责<strong>执行</strong>。每小时新研判到达时，
-    AI 可以整组重调阶梯参数，写入 <code>Position</code> 对象；此后每个 tick 只是拿这些数字
-    和现价做比较，不发起任何 LLM 调用。所以「不依赖 LLM」说的是离场动作的<strong>触发环节</strong>。
-  </div>
-
+  <h3 id="risk-job">主要功能</h3>
   <p>
-    这个拆分是必需的，因为两件事的时间尺度差了 60 倍：<strong>方向判断每小时刷新一次，
-    而价格每 60 秒变一次</strong>。用真实 1 分钟 K 线跑完整阶梯做过对照
-    （两个 45 天窗口，各 2004 笔）：把触发判断也挪到每小时，
-    <strong>平均收益几乎无差异</strong>（每笔 −0.008R ~ +0.062R，方向不一致），
-    胜率反而更高 1~7 个百分点 —— 因为躲掉了假止损。
+    开仓那一刻先定好「亏多少算一笔」：交易 AI 只给一个 ATR 倍数（1.0～3.0，越界会被夹回去），
+    代码换成真实止损价和 1R 金额。不让它直接写绝对价格，避免现价延迟或拍脑袋把止损写到贴近强平。
   </p>
-  <div class="note bad">
-    <span class="h">但左尾一致地更差，所以触发判断留在 60 秒</span>
-    同一组对照里，四个单元格的<strong>最差单笔全部恶化</strong>：
-    −1.21R→−1.81R、−1.06R→−1.18R、−1.36R→−1.92R、−1.23R→−1.74R。
-    −1.92R 的含义是止损被击穿了近两倍距离 —— 而「单笔最大亏损 ≈ 1R」正是
-    整套 R 制度赖以成立的前提，也是所有回测数字的前提。
-    典型的卖波动率曲线：多赚小钱，偶尔亏一次大的，均值看不出来。
-    <br><br>
-    补充一点：实盘的止损是真挂在交易所的（<code>place_stop_loss</code>，止损移动时重挂），
-    由币安逐笔执行，不受轮询频率影响。这个尾部风险只落在模拟盘上。
-  </div>
+  <p>
+    之后每 5 分钟再问一次。它看着当前信号和本仓的盈亏位置，输出一个动作：
+    <code>持仓观望</code> / <code>减仓</code> / <code>平仓</code>，以及可选的
+    <code>stop_r</code>（把硬止损推到 <code>入场价 + stop_r × R</code>）。
+    什么时候落袋、落多少，也是这轮决定，不是开仓时写死的。
+  </p>
+  <p>
+    代码不再自动保本、不再自动移动止损、不再自动部分止盈。
+    AI 两次决策之间，只靠下面两道机械兜底把仓砍掉。
+  </p>
 
-  <h3>这一层的数字，谁说了算</h3>
+  <h3 id="risk-rules">出场策略</h3>
   <table>
-    <thead><tr><th>参数</th><th class="num-col">默认</th><th>来源</th><th>作用</th></tr></thead>
+    <thead><tr><th>情况</th><th>动作</th></tr></thead>
     <tbody>
-      <tr><td><code>stop_atr_mult</code></td><td class="num-col">1.5</td>
-          <td style="color:var(--accent)"><strong>AI 开仓时定</strong></td>
-          <td>决定 R 有多大。<strong>开仓后冻结，谁都改不了</strong></td></tr>
-      <tr><td><code>tp_trigger_r</code></td><td class="num-col">1.0</td>
-          <td style="color:var(--accent)"><strong>AI 每小时可改</strong></td><td>落袋线</td></tr>
-      <tr><td><code>tp_fraction</code></td><td class="num-col">0.5</td>
-          <td style="color:var(--accent)"><strong>AI 每小时可改</strong></td>
-          <td>落袋比例。填 0 = 本仓不落袋，全交给移动止损</td></tr>
-      <tr><td><code>breakeven_trigger_r</code></td><td class="num-col">0.5</td>
-          <td style="color:var(--accent)"><strong>AI 每小时可改</strong></td><td>止损移到成本价的触发线</td></tr>
-      <tr><td><code>trailing_trigger_r</code></td><td class="num-col">1.5</td>
-          <td style="color:var(--accent)"><strong>AI 每小时可改</strong></td><td>移动止损启动线</td></tr>
-      <tr><td><code>trailing_distance_r</code></td><td class="num-col">1.25</td>
-          <td style="color:var(--accent)"><strong>AI 每小时可改</strong></td><td>移动止损跟在峰值后的距离</td></tr>
-      <tr><td>追高护栏三参数</td><td class="num-col">48h / 60% / 100%</td>
-          <td>配置写死</td><td>区间窗口、拒绝线、突破放行线</td></tr>
+      <tr><td>信号同向或中性，走势正常</td><td>持仓观望（默认，绝大多数时候都是这个）</td></tr>
+      <tr><td>论点被削弱，或浮盈较大想先落袋一部分</td><td>减仓</td></tr>
+      <tr><td>方向反转且确信，或突破明确失败</td><td>平仓</td></tr>
+      <tr><td>浮盈够了，想锁住利润或抬到保本</td><td>给 <code>stop_r</code>，止损只许收紧不许放宽</td></tr>
     </tbody>
     <caption>
-      五个阶梯参数<strong>不设区间钳制</strong> —— AI 全权决定，只做类型校验：非数值、
-      负数、无穷一律回落当前生效值并把原因告知模型。覆盖值存在仓位上而非全局配置，
-      平仓即清空，不会污染下一仓。
+      不因小幅浮盈全平；<code>entry_ok=false</code> 只拦新开仓，不是平仓理由。
     </caption>
   </table>
 
-  <div class="note warn">
-    <span class="h">全权授权下仍有两条拿不掉的性质</span>
-    <strong>其一，棘轮是结构性的，不是参数。</strong>
-    <code>resolve_ladder_stop</code> 只返回比现有止损更靠有利方向的候选值，
-    所以 AI 把 <code>trailing_distance_r</code> 调宽<strong>不会</strong>让已经推进的止损退回去，
-    只影响之后的推进 —— 「放宽以求解套」在这套代码里无效。
-    <strong>其二，1R 开仓即冻结。</strong>AI 能移动各级触发线，但改不了那把尺子本身。
-  </div>
-
-  <h3>AI 每小时看到什么</h3>
-  <p>
-    阶梯的每一级都是用 R 定义的，而此前传给这一层的只有美元和绝对价格 ——
-    模型<strong>连 1R 是多少都算不出来</strong>，也就无法用系统自己的单位表达判断。
-    现在补齐了一整套 R 坐标：
-  </p>
-  <ul>
-    <li><strong>R 坐标系</strong>：<code>1R</code> 的金额与占入场价百分比、初始止损、
-      当前浮盈、<strong>峰值浮盈</strong>、自峰值回撤、当前止损在 R 上的位置、距强平几个 R</li>
-    <li><strong>当前生效的五个阶梯参数</strong>，以及部分止盈是否已落袋</li>
-    <li><strong>波动重标定</strong>：开仓时 ATR 与当前 ATR 的比值。R 是用开仓那一刻的 ATR 定的，
-      波动翻倍后同样的 R 已不是同样的风险 —— 这是放宽移动止损距离最正当的理由</li>
-    <li><strong>路径</strong>：开仓以来的 4H 收盘价，换算成 R</li>
-    <li><strong>趋势与波动状态</strong>（<code>trend_regime</code> / <code>volatility_regime</code>）。
-      这两个字段信号里一直有，但之前没传到这一层，而它们恰好最该驱动阶梯松紧</li>
-    <li><strong>开仓时的研判基准</strong>：当时的 bias 与置信度，用于对比论点是被加强还是削弱</li>
-  </ul>
-
-  <div class="note key">
-    <span class="h">峰值必须给，否则两种相反的局面长得一模一样</span>
-    整个棘轮是峰值驱动的。「冲到 1.4R 又跌回 0.3R」和「一路磨到 0.3R」
-    当前浮盈完全相同，但前者是突破失败该收紧、后者是缓慢推进该给空间。
-    只看当前浮盈的话，模型无法区分这两者。
-  </div>
-
-  <h3>改阶梯必须先过工具</h3>
-  <p>
-    想动任何一项，AI 必须先调用 <code>compute_ladder_levels</code>，把五个参数一起传进去，
-    拿回这一仓的真实价位和真实金额。工具会明确告诉它三件事：
-    <code>resulting_stop_price</code>（止损会落在哪）、
-    <code>exits_immediately</code>（<strong>这组参数会不会下一次检查就平仓离场</strong>）、
-    <code>tp_fires_immediately</code>（止盈会不会当场触发）。
-  </p>
-  <div class="note">
-    <span class="h">工具和调度器共用同一份阶梯数学</span>
-    <code>resolve_ladder_stop</code> 是唯一实现，
-    <code>_update_protective_stop</code> 和 <code>LadderTool</code> 都调它。
-    两边一旦漂移，模型看到的就是假数字，它的决策也就失去意义 —— 有测试专门钉住这一点。
-  </div>
-
-  <h3>tick 内部的实际顺序</h3>
+  <h3 id="safety-net">两道兜底</h3>
   <table>
-    <thead><tr><th class="num-col">#</th><th>步骤</th><th>说明</th></tr></thead>
+    <thead><tr><th>兜底</th><th>谁执行</th><th>作用</th></tr></thead>
     <tbody>
-      <tr><td class="num-col">1</td><td>仓位对账</td><td>实盘从交易所拉真实仓位覆盖本地，防止漂移</td></tr>
-      <tr><td class="num-col">2</td><td>保本／移动止损推进</td><td>刷新峰值价，按本仓生效的阶梯参数推进止损</td></tr>
-      <tr><td class="num-col">3</td><td>部分止盈检查</td><td>浮盈够 <code>tp_trigger_r</code> 且本仓未止盈过 → 平掉 <code>tp_fraction</code></td></tr>
-      <tr><td class="num-col">4</td><td>强平检查</td><td>触及强平价 → 全平</td></tr>
-      <tr><td class="num-col">5</td><td>止损检查</td><td>触及当前止损 → 全平，原因按档位区分</td></tr>
-      <tr><td class="num-col">6</td><td>才轮到 AI 决策</td><td>前面若已平仓，本 tick 跳过动作执行</td></tr>
-      <tr><td class="num-col">7</td><td>写入 AI 新阶梯</td><td>仅在这一 tick 真调过 LLM 时写；缓存命中不重复写</td></tr>
+      <tr>
+        <td>硬止损</td>
+        <td>AI 定价位，代码 / 交易所执行</td>
+        <td>开仓时定下 −1R；之后 AI 只能往有利方向推。价格碰到即全平。实盘挂在交易所，不等 5 分钟轮询</td>
+      </tr>
+      <tr>
+        <td>强平价</td>
+        <td>交易所</td>
+        <td>触及即全平，关不掉。算出的止损若穿透强平价，会被拉回强平价内侧</td>
+      </tr>
     </tbody>
-    <caption>
-      第 1~5 步没有任何 LLM 调用。第 6 步靠信号 ID 做缓存，所以持仓期间实际每小时才真正
-      调一次模型。第 7 步写入的新参数从<strong>下一个 tick</strong> 开始生效。
-      止损推进（2）排在止损检查（5）之前，所以同一 tick 内价格大幅跳升时，
-      会先把止损抬上去再判断是否触发。
-    </caption>
   </table>
-
-  <h3>开仓前 · 追高护栏</h3>
-  <p>
-    算开仓价在近 48 小时区间中的「顺方向位置」：多头 0% 是贴区间底部、100% 是贴顶部，空头镜像。
-    落在 <strong>60–100% 直接拒绝</strong>（这一档历史胜率仅约 19%，是主要亏损来源）；
-    <strong>突破 &gt;100% 放行</strong>。
-  </p>
-  <div class="note warn">
-    <span class="h">区间必须用已收盘 K 线构造</span>
-    若把进行中的当前 K 线计入区间，价格永远算不出 &gt;100% 的位置，
-    突破与追高就无法区分，护栏会把所有突破行情一并拦掉。
-  </div>
-
-  <h3>持仓中 · 棘轮止损</h3>
-  <p>
-    R = 开仓时的止损距离，是这一仓的风险单位，<strong>开仓后固定不变</strong>。
-    AI 通过 <code>stop_atr_mult</code> 决定 R 有多大，之后所有刻度都是 R 的倍数：
-  </p>
-  <figure>
-    <figcaption>multi_agent/risk_tools.py · resolve_ladder_stop（调度器与 AI 工具共用）</figcaption>
-<pre>开仓        止损 = 入场 ∓ ATR × 倍数     <i># 倍数由 AI 给，这一步定下 R 并冻结</i>
-峰值 0.5R   止损 → <b>成本价</b>              <i># breakeven_trigger_r，AI 每小时可改</i>
-浮盈 1.0R   <b>平掉 50% 落袋</b>              <i># tp_trigger_r / tp_fraction，可改</i>
-峰值 1.5R   止损 → <b>峰值回撤 1.25R</b>      <i># trailing_trigger_r / _distance_r，可改</i>
-
-<i># 棘轮：只采纳更靠有利方向的候选值，所以峰值回落时止损不退</i>
-improved = (candidate &gt; current_stop) if is_long else (candidate &lt; current_stop)</pre>
-  </figure>
-
-  <div class="note key">
-    <span class="h">0.5R 是止损位，不是止盈</span>
-    价格摸到 0.5R 时<strong>不卖出任何仓位</strong>，只是把止损抬到成本价。
-    真正落袋的动作只有 <code>tp_trigger_r</code> 那一次部分止盈。
-  </div>
-
-  <div class="note warn">
-    <span class="h">止盈线越过移动止损启动线时，两者变成竞争关系</span>
-    若 AI 把 <code>tp_trigger_r</code> 调到 2.5R 而移动止损仍在 1.5R 启动，
-    价格必须<strong>在任何一次回撤都不到 1.25R 的前提下</strong>一路推进到 2.5R，
-    止盈才轮得到执行；否则移动止损先平掉全仓。谁先触发完全取决于路径。
-    这不是 bug，但此时部分止盈已经离开了它被设计用来填补的 0.5R~1.5R 空档，
-    那份回测依据不再适用。<strong>工具会就此明确告警</strong>，
-    并且 AI 现在也能同时调高 <code>trailing_trigger_r</code> 让两者配套。
-  </div>
-
-  <h3>还有一道最后底线 · 强平钳制</h3>
-  <p>
-    算出的止损若穿透强平价（高杠杆 + 宽止损时会发生），会被强行拉回强平价内侧 0.5%。
-    此时<strong>实际 R 小于 ATR × 倍数</strong>，后续所有 R 刻度都按收窄后的真实距离计算。
-  </p>
-
-  <h3>一笔多单的完整价格阶梯</h3>
-  <div class="params">
-    <div class="param"><div class="v">$1,000</div><div class="k">账户权益</div></div>
-    <div class="param"><div class="v">$80,000</div><div class="k">入场价</div></div>
-    <div class="param"><div class="v">$2,000</div><div class="k">ATR (4H)</div></div>
-    <div class="param hl"><div class="v">$3,000</div><div class="k">1R = 止损距离</div></div>
-    <div class="param"><div class="v">14.1%</div><div class="k">单笔风险占权益</div></div>
-  </div>
-
-  <div class="ladder">
-    <div class="rung up"><span class="px">$90,000</span><span class="rv">+3.33R</span>
-      <span class="ev">假设峰值到此，移动止损跟到 86,250（峰值 − 1.25R）</span></div>
-    <div class="rung up"><span class="px">$84,500</span><span class="rv">+1.50R</span>
-      <span class="ev">移动止损启动，此后止损 = 峰值 − 3,750，只涨不退</span></div>
-    <div class="rung up"><span class="px">$83,000</span><span class="rv">+1.00R</span>
-      <span class="ev">部分止盈：平掉半仓，落袋 +$70，剩余半仓止损压到成本</span></div>
-    <div class="rung up"><span class="px">$81,500</span><span class="rv">+0.50R</span>
-      <span class="ev">保本止损：止损从 77,000 抬到 80,000，这一仓不再可能亏钱</span></div>
-    <div class="rung entry"><span class="px">$80,000</span><span class="rv">0</span>
-      <span class="ev">入场成交价，也是保本后的止损位</span></div>
-    <div class="rung down"><span class="px">$77,000</span><span class="rv">−1.00R</span>
-      <span class="ev">初始硬止损，触发即亏 $141（14.1% 权益）</span></div>
-    <div class="rung faint"><span class="px">$64,320</span><span class="rv">−5.23R</span>
-      <span class="ev">强平价。止损永远在它上方，正常路径下摸不到</span></div>
-  </div>
-  <p style="color:var(--text-dim);font-size:12.5px;margin-top:10px">
-    参数取自 75% 仓位 / 5x 杠杆 / 止损 1.5×ATR / 止盈 1.0R，
-    每个价位都用系统的 <code>compute_risk_levels</code> 工具实算验证过。
-  </p>
-
-  <h3>止盈为什么长这样</h3>
-  <p>
-    旧版本有 1:1 的固定止盈 TP1，胜率高达 78%，但盈亏比只有 0.33 ——
-    赚小钱亏大钱，两个月净赚约 8 美元。2026 年 6 月的重构把它整个移除，改为纯移动止损，
-    让利润上不封顶。
-  </p>
-  <p>
-    但纯移动止损又暴露出新的空档：<strong>0.5R 到 1.5R 之间没有任何落袋动作</strong>。
-    历史上约三成交易的峰值浮盈正好落在这一段 —— 越过保本线、够不上移动止损启动线，
-    最终按成本价离场，一分不赚。
-  </p>
-  <div class="note bad">
-    <span class="h">这正是此前 4 笔连亏的症结</span>
-    那几笔峰值只到 <strong>0.71R</strong>：止损已被抬到成本价，却够不上落袋线，
-    回落后按保本止损离场。1.0R 部分止盈就是为填补这段空档而加的 ——
-    回测 148 个独立事件：无止盈方案总收益 6.36R，但去掉最赚的 5 笔即转负 −1.16R；
-    加入 1.0R 半仓止盈后为 8.15R，去掉最赚 5 笔仍有 +1.89R，优势更分散也更稳健。
-  </div>
 </section>
 
 <!-- ══════════════ 五 · 预设真相 ══════════════ -->
-<section>
+<section id="presets">
   <h2>五、三档预设的真相：其实只有一套策略</h2>
   <p class="sub">保守／标准／激进三档在运行时几乎没有差异 —— 大部分参数已经没有任何代码在读。</p>
 
@@ -634,67 +688,44 @@ improved = (candidate &gt; current_stop) if is_long else (candidate &lt; current
           <td>仅当 AI 不给 <code>stop_atr_mult</code> 时的兜底默认值</td></tr>
       <tr><td><code>long.leverage</code></td><td class="num-col">10</td>
           <td>仅实盘交易所侧兜底杠杆，每笔实际杠杆由 AI 覆盖</td></tr>
-      <tr><td><code>RiskConfig</code> 阶梯字段</td><td class="num-col">三档完全相同</td>
-          <td>只是 AI 未指定时的兜底默认值，实际每仓由 AI 每小时覆盖</td></tr>
-      <tr><td><code>RiskConfig</code> 护栏字段</td><td class="num-col">三档完全相同</td>
-          <td>追高护栏，AI 无权干预</td></tr>
+      <tr><td><code>RiskConfig</code> 追高拦截</td><td class="num-col">三档完全相同</td>
+          <td>开仓前的追高硬规则，AI 无权干预</td></tr>
     </tbody>
-  </table>
-
-  <h3>零引用的装饰性参数</h3>
-  <p>下列字段在三档里配了不同的值，但<strong>没有任何代码读取它们</strong>：</p>
-  <table>
-    <thead><tr><th>字段</th><th>看起来像什么</th></tr></thead>
-    <tbody>
-      <tr class="dead"><td><code>fear_greed_threshold</code></td><td>恐慌贪婪指数入场阈值</td></tr>
-      <tr class="dead"><td><code>funding_rate_threshold</code></td><td>资金费率入场阈值</td></tr>
-      <tr class="dead"><td><code>top_trader_ratio_threshold</code></td><td>大户多空比入场阈值</td></tr>
-      <tr class="dead"><td><code>exit_funding_rate</code></td><td>费率回落离场阈值</td></tr>
-      <tr class="dead"><td><code>exit_fear_greed</code></td><td>情绪回落离场阈值</td></tr>
-      <tr class="dead"><td><code>cvd_lookback_periods</code></td><td>CVD 回看周期</td></tr>
-      <tr class="dead"><td><code>max_loss_pct</code></td><td>单笔最大亏损上限</td></tr>
-      <tr class="dead"><td><code>short.leverage</code></td><td>做空杠杆</td></tr>
-    </tbody>
-    <caption>这些看起来是 AI 接管决策之前那套规则式策略的遗留。</caption>
   </table>
 
   <div class="note warn">
     <span class="h">结论：并行跑三档，得不到参数敏感性对比</span>
     三档唯一的实质差异 <code>atr_multiplier</code>，只在 AI 不指定止损倍数时才生效 ——
     而现在提示词要求 AI 必须给出，所以连这一个差异也基本不触发。
-    阶梯参数现在更是完全由 AI 按仓、按小时决定，与档位无关。
+    持仓中的保本 / 移动止损 / 落袋更是完全由 AI 每 5 分钟决定，与档位无关。
     三档跑出来的行为几乎完全一样，本质上是同一套策略的三份随机复现。
     要真做档位对比，得先让档位去影响 AI 拿到的约束（例如按档给不同的参数建议区间），
     而不是改一组它随手就会覆盖掉的默认值。
   </div>
-
-  <div class="note">
-    <span class="h">还有一处不自洽</span>
-    <code>max_loss_pct</code> 不只是没被读取，它与现行仓位模型也矛盾：标准档配 1.5%，
-    而 50% 保证金 × 5x 杠杆下单笔实际风险约 9% 权益，真要启用需连带重构仓位模型。
-  </div>
 </section>
 
-<footer>
-  <p><strong>与旧描述的五处差异</strong>（本文以代码为准）：</p>
-  <p>
-    ① 数据源是 14 个采集器 + 8 个技术指标，不是 19 个数据源，且不存在独立的鲸鱼监控模块（相关能力由交易所净流量与爆仓数据承担）；
-    ② tick 内部顺序是「止损推进 → 部分止盈 → 强平 → 止损」，强平不在第一位；
-    ③ 系统现在<strong>有</strong>部分止盈，「没有固定止盈目标」已过时；
-    ④ VERY_STRONG 的 10x 上限只存在于提示词，代码不校验；
-    ⑤ <code>decision_committee.py</code> 的 entry_ok 合并逻辑已重写，新增 <code>entry_gate</code> 归因与否决权日志；
-    ⑥ 阶梯参数<strong>不再是配置写死</strong>，五项全部由 AI 每小时全权重调，
-    仅棘轮方向与 1R 冻结是结构性的。
-  </p>
-  <p style="margin-top:12px">
-    结论均来自逐行读码与全仓检索。涉及文件：<code>core/config.py</code> ·
-    <code>multi_agent/schemas.py</code> · <code>multi_agent/decision_committee.py</code> ·
-    <code>multi_agent/trading_advisor.py</code> · <code>multi_agent/risk_tools.py</code> ·
-    <code>multi_agent/prompts/</code> · <code>server/trading_scheduler/base.py</code> ·
-    <code>server/scheduler.py</code> · <code>indicators/profit_loss_level.py</code>
-  </p>
-</footer>
-
 </div>
+</div>
+<script>
+(function () {
+  const links = Array.from(document.querySelectorAll(".toc a[href^='#']"));
+  const items = links.map((a) => {
+    const el = document.querySelector(a.getAttribute("href"));
+    return el ? { a, el } : null;
+  }).filter(Boolean);
+  if (!items.length) return;
+
+  const MARK = 96;
+  function update() {
+    let current = items[0];
+    for (const item of items) {
+      if (item.el.getBoundingClientRect().top <= MARK) current = item;
+    }
+    links.forEach((a) => a.classList.toggle("is-active", a === current.a));
+  }
+  window.addEventListener("scroll", update, { passive: true });
+  update();
+})();
+</script>
 </body>
 </html>
