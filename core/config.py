@@ -53,26 +53,14 @@ class RiskConfig:
     """持仓风险管理配置（三档共用）
 
     R = 开仓时的初始止损距离 |入场价 - 初始止损|，是单笔风险单位。
-    止损只朝有利方向移动，永不回退。
+    开仓后的保本 / 移动止损 / 落袋全部由 Trading AI 每个 tick 自行决定
+    （action=平仓/减仓，或 stop_r 推进硬止损）；代码只保证止损永不回退。
     """
-    # 保本 / 移动止损
-    breakeven_trigger_r: float = 0.5    # 浮盈达到 0.5R → 止损移到成本价
-    trailing_trigger_r: float = 1.5     # 峰值浮盈达到 1.5R → 启动移动止损
-    trailing_distance_r: float = 1.25   # 移动止损挂在峰值回撤 1.25R 处
-
-    # 部分止盈：填补 0.5R~1.5R 的空档（浮盈到过这一段但两端机制都不落袋）
-    # 回测（148 个独立事件，15m 逐根模拟）：无止盈总收益 6.36R，去掉最赚 5 笔即
-    # 转负 -1.16R；本方案 8.15R，去掉最赚 5 笔仍为 +1.89R。优势更分散、更稳健。
-    tp_trigger_r: float = 1.0           # 浮盈达到 1.0R → 落袋一部分
-    tp_fraction: float = 0.5            # 止盈平掉的仓位比例（0 = 关闭部分止盈）
-
-    # AI 自定风控的允许区间。LLM 只输出「相对量」（ATR 倍数 / R 倍数），不输出
+    # AI 自定止损宽度的允许区间。LLM 只输出「相对量」（ATR 倍数），不输出
     # 绝对价格：模型看不到带标签的现价，一旦幻觉出一个绝对价位就可能贴近强平价。
     # 超出区间即钳制，并记日志。
     ai_stop_atr_mult_min: float = 1.0   # AI 止损倍数下限（太紧会被噪声扫掉）
     ai_stop_atr_mult_max: float = 3.0   # AI 止损倍数上限（太宽单笔风险过大）
-    ai_tp_trigger_r_min: float = 0.5    # AI 止盈线下限（低于保本线没意义）
-    ai_tp_trigger_r_max: float = 3.0    # AI 止盈线上限
 
     # 追高护栏：开仓价在回看区间中的顺方向位置
     range_lookback_hours: int = 48      # 区间回看窗口
@@ -171,11 +159,8 @@ class TradingConfig:
                 "leverage": self.long.leverage,
             },
             "risk": {
-                "breakeven_trigger_r": self.risk.breakeven_trigger_r,
-                "trailing_trigger_r": self.risk.trailing_trigger_r,
-                "trailing_distance_r": self.risk.trailing_distance_r,
-                "tp_trigger_r": self.risk.tp_trigger_r,
-                "tp_fraction": self.risk.tp_fraction,
+                "ai_stop_atr_mult_min": self.risk.ai_stop_atr_mult_min,
+                "ai_stop_atr_mult_max": self.risk.ai_stop_atr_mult_max,
                 "range_lookback_hours": self.risk.range_lookback_hours,
                 "max_entry_range_pct": self.risk.max_entry_range_pct,
                 "breakout_range_pct": self.risk.breakout_range_pct,
