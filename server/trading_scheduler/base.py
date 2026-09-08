@@ -11,19 +11,16 @@ from core import (
 )
 from core.market_data import market
 from indicators import PositionLevel
-from multi_agent.risk_tools import (
-    SIZE_PCT_MAP,
-    LadderTool,
-    RiskLevelTool,
-    resolve_ladder_stop,
-)
+from multi_agent.risk_tools import SIZE_PCT_MAP, RiskLevelTool
 from multi_agent.trading_advisor import TradingAdvisor, TradingDecision
 from binance_utils import fetch_klines, fetch_price
 from server.state_store import StateStore
 from utils import logger
 
 # 调度器主循环节拍（秒）。工厂函数与类默认值共用此常量，避免两处漂移。
-DEFAULT_CHECK_INTERVAL = 60
+# 每个 tick 都会调用 Trading AI 做一次完整决策（开/平/减/移动止损），
+# 所以节拍同时也是 AI 的决策频率。
+DEFAULT_CHECK_INTERVAL = 300
 
 # 日志中标识持仓方向：长矛做多 / 神盾做空
 DIRECTION_ICON = {"LONG": "🗡️", "SHORT": "🛡️"}
@@ -63,33 +60,10 @@ class Position:
         self.liquidation_price = 0.0 # 强平价格
         self.sl_order_id = None      # 交易所止损挂单 ID (Live)
         self.analysis_id = None      # 开仓时对应的 AI 研判记录 ID
-        self.initial_stop = 0.0      # 开仓时的原始止损，用于计算 1R
+        self.initial_stop = 0.0      # 开仓时的原始止损，用于计算 1R；也是硬止损兜底
         self.mfe_price = 0.0         # 开仓以来最有利价格 (LONG 最高 / SHORT 最低)
-        self.stop_stage = "INIT"     # INIT → BREAKEVEN → TRAILING
-        self.tp_taken = False        # 部分止盈是否已落袋（每仓只执行一次）
         self.stop_atr_mult = 0.0     # 开仓时定 R 用的 ATR 倍数（仅留档，R 已冻结）
         self.atr_at_open = 0.0       # 开仓时的 ATR，供 AI 判断波动是否已重标定
-
-        # ── 阶梯参数：AI 每小时可整组覆盖，None 表示沿用 RiskConfig 默认 ──
-        # 单独存在仓位上而不是改全局配置，是因为它们只对「这一仓」有效：
-        # 平仓后必须回到默认值，否则上一仓的临时判断会污染下一仓。
-        # 哨兵用 None 而非 0，因为 tp_fraction=0 是有意义的取值（本仓不落袋）。
-        self.tp_trigger_r = None
-        self.tp_fraction = None
-        self.breakeven_trigger_r = None
-        self.trailing_trigger_r = None
-        self.trailing_distance_r = None
-
-    # 阶梯字段名 → RiskConfig 上的同名默认值
-    LADDER_FIELDS = (
-        "tp_trigger_r",
-        "tp_fraction",
-        "breakeven_trigger_r",
-        "trailing_trigger_r",
-        "trailing_distance_r",
-    )
-    # 这些字段的 0 是有意义的取值；其余字段的触发线为 0 无意义，等同未设置
-    ZERO_IS_MEANINGFUL = ("tp_fraction",)
 
     @property
     def is_active(self) -> bool:
@@ -102,25 +76,21 @@ class Position:
             return 0.0
         return abs(self.entry_price - self.initial_stop)
 
-    def ladder(self, risk_cfg) -> dict:
-        """本仓实际生效的阶梯参数：仓位上的覆盖值优先，否则用配置默认。
+    @property
+    def stop_moved_by_ai(self) -> bool:
+        """止损是否已被 AI 从开仓位置推进过（用于区分平仓原因）"""
+        return self.initial_stop > 0 and abs(self.stop_loss - self.initial_stop) > 1e-9
 
-        「什么算未设置」只在这里判定一次：除 tp_fraction 外，触发线为 0 或负数
-        都没有意义（浮盈达到 0R 就落袋是自相矛盾的），一律视为未设置。这样无论
-        字段是被 AI 写的、从旧状态文件恢复的还是测试直接赋的，语义都一致。
-        """
-        out = {}
-        for name in self.LADDER_FIELDS:
-            override = getattr(self, name, None)
-            floor = 0.0 if name in self.ZERO_IS_MEANINGFUL else None
-            valid = override is not None and (
-                override >= floor if floor is not None else override > 0
-            )
-            out[name] = float(override) if valid else getattr(risk_cfg, name)
-        return out
+    def stop_r(self) -> float:
+        """当前止损在 R 坐标中的位置（0 = 成本价，正 = 已锁定利润）"""
+        R = self.risk_unit
+        if R <= 0:
+            return 0.0
+        sign = 1 if self.direction == "LONG" else -1
+        return sign * (self.stop_loss - self.entry_price) / R
 
     def to_dict(self) -> dict:
-        data = {
+        return {
             "direction": self.direction,
             "entry_price": self.entry_price,
             "size_btc": self.size_btc,
@@ -131,14 +101,9 @@ class Position:
             "analysis_id": self.analysis_id,
             "initial_stop": self.initial_stop,
             "mfe_price": self.mfe_price,
-            "stop_stage": self.stop_stage,
-            "tp_taken": self.tp_taken,
             "stop_atr_mult": self.stop_atr_mult,
             "atr_at_open": self.atr_at_open,
         }
-        for name in self.LADDER_FIELDS:
-            data[name] = getattr(self, name)
-        return data
 
 
 class BaseTradingScheduler(ABC):
@@ -162,7 +127,8 @@ class BaseTradingScheduler(ABC):
         self.config = config or TradingConfig.get_preset(ParameterSet.STANDARD)
         self.check_interval = check_interval
 
-        self.trading_advisor = TradingAdvisor()
+        # 决策缓存的有效期与节拍对齐：每个 tick 都重新问一次 AI
+        self.trading_advisor = TradingAdvisor(decision_ttl_sec=check_interval)
         from indicators import ATRCalculator
         self._atr_calc_fallback = ATRCalculator(period=14, timeframe="4h")
         self.long_level = PositionLevel(self._atr_calc_fallback, is_long=True)
@@ -254,13 +220,9 @@ class BaseTradingScheduler(ABC):
             "analysis_id": self.position.analysis_id,
             "initial_stop": self.position.initial_stop,
             "mfe_price": self.position.mfe_price,
-            "stop_stage": self.position.stop_stage,
-            "tp_taken": self.position.tp_taken,
             "stop_atr_mult": self.position.stop_atr_mult,
             "atr_at_open": self.position.atr_at_open,
         }
-        for name in Position.LADDER_FIELDS:
-            state[name] = getattr(self.position, name)
         state.update(self.trading_advisor.get_reduce_state())
         return state
     
@@ -305,18 +267,9 @@ class BaseTradingScheduler(ABC):
         # 旧状态文件没有这几个字段，回退到"刚开仓"的等价值
         self.position.initial_stop = saved.get("initial_stop") or self.position.stop_loss
         self.position.mfe_price = saved.get("mfe_price") or self.position.entry_price
-        self.position.stop_stage = saved.get("stop_stage") or "INIT"
-        self.position.tp_taken = bool(saved.get("tp_taken"))
         self.position.stop_atr_mult = float(saved.get("stop_atr_mult") or 0.0)
         self.position.atr_at_open = float(saved.get("atr_at_open") or 0.0)
-        # 旧状态文件里 tp_trigger_r 是 0（当时的「未设置」哨兵）。这里只做类型
-        # 还原，0 该不该算未设置由 Position.ladder() 统一判定。
-        for name in Position.LADDER_FIELDS:
-            raw = saved.get(name)
-            try:
-                setattr(self.position, name, None if raw is None else float(raw))
-            except (TypeError, ValueError):
-                setattr(self.position, name, None)
+        # 旧状态文件里的阶梯字段（stop_stage / tp_taken / *_trigger_r 等）已废弃，直接忽略
         self.trading_advisor.restore_reduce_state(saved)
         
         if not self.position.is_active:
@@ -408,11 +361,6 @@ class BaseTradingScheduler(ABC):
             risk.ai_stop_atr_mult_min, risk.ai_stop_atr_mult_max,
             "止损 ATR 倍数", cfg.atr_multiplier,
         )
-        tp_trigger = self._clamp_ai_risk(
-            decision.tp_trigger_r if decision else None,
-            risk.ai_tp_trigger_r_min, risk.ai_tp_trigger_r_max,
-            "止盈 R 倍数", risk.tp_trigger_r,
-        )
 
         try:
             levels = level.calculate(
@@ -438,7 +386,6 @@ class BaseTradingScheduler(ABC):
         self.position.leverage = leverage
         self.position.liquidation_price = levels["liquidation_price"]
         self.position.analysis_id = sig_meta["analysis_id"]
-        self.position.tp_trigger_r = tp_trigger
         self.position.stop_atr_mult = atr_mult
         # 留档开仓时的 ATR：R 是用它定的，之后 AI 要靠 ATR 现值/开仓值的比例
         # 判断这把尺子是否还准（波动翻倍时同样的 R 已经不是同样的风险）。
@@ -449,7 +396,7 @@ class BaseTradingScheduler(ABC):
             f"{fill_amount:.4f} BTC @ ${fill_price:,.0f} "
             f"(${notional:,.0f}, {leverage}x), "
             f"止损=${levels['stop_loss']:,.0f}, 强平=${levels['liquidation_price']:,.0f}, "
-            f"ATR倍数={atr_mult:.2f}, 止盈线={tp_trigger:.2f}R"
+            f"ATR倍数={atr_mult:.2f}"
         )
 
         return self._make_trade(
@@ -529,6 +476,17 @@ class BaseTradingScheduler(ABC):
             action = trade.get("action", "")
             if action in ("CLOSE", "REDUCE"):
                 self._link_trade_to_memory(trade)
+            # 全平后告知 Trading AI 层，用于拦截同一研判下立刻重开（防抖）
+            if action == "CLOSE":
+                self._notify_advisor_closed(trade.get("mode", "NONE"))
+
+    def _current_signal_id(self) -> str:
+        raw = market.ai_analysis.raw if market.ai_analysis and market.ai_analysis.raw else {}
+        return str(raw.get("_memory_id", "") or "")
+
+    def _notify_advisor_closed(self, direction: str):
+        """仓位归零（AI 平仓 / 硬止损 / 强平 / 交易所侧成交）后统一走这里"""
+        self.trading_advisor.note_position_closed(direction, self._current_signal_id())
 
     def _link_trade_to_memory(self, trade: dict):
         """将平仓结果关联到研判记忆，并异步触发复盘"""
@@ -574,9 +532,11 @@ class BaseTradingScheduler(ABC):
     async def check_and_execute(self):
         """检查信号并执行（两层 AI 架构）
 
-        1. 硬安全网: 止损 + 强平（每 tick，不依赖 AI）
-        2. Trading AI: 根据 Signal AI 输出 + 仓位状态做交易决策
-           （事件驱动：信号或仓位变化时才调 LLM，否则用缓存）
+        1. 硬安全网: 强平 + 开仓时定下的硬止损（每 tick，不依赖 AI）。
+           这是 AI 两次决策之间唯一的机械兜底；保本 / 移动止损 / 部分止盈
+           全部由 Trading AI 自己决定，代码不再自动推进。
+        2. Trading AI: 每个 tick 都根据 Signal AI 输出 + 仓位 R 坐标做一次
+           完整决策（开/平/减/持仓，以及是否把止损推进到某个 R 位置）。
         """
         self.last_check_time = datetime.now()
 
@@ -602,6 +562,7 @@ class BaseTradingScheduler(ABC):
             # ── 1. 硬安全网（每 tick 检查，不等 AI）──
             just_closed = False
             if self.position.is_active:
+                self._track_mfe(btc_price)
                 safety_trades = await self._check_safety_exits(btc_price)
                 await self._record_trades(safety_trades)
                 if not self.position.is_active:
@@ -610,7 +571,7 @@ class BaseTradingScheduler(ABC):
                     just_closed = bool(safety_trades)
                     self.trading_advisor.invalidate_cache()
 
-            # ── 2. Trading AI 决策（信号/仓位变化时调 LLM）──
+            # ── 2. Trading AI 决策（每 tick 一次；缓存有效期 = 节拍）──
             signal_raw = market.ai_analysis.raw if market.ai_analysis and market.ai_analysis.raw else {}
             pos_ctx = market.position_context or {}
 
@@ -626,13 +587,12 @@ class BaseTradingScheduler(ABC):
                 equity=self.equity,
                 holding_duration=pos_ctx.get("holding_duration", "未知"),
                 risk_tool=self._build_risk_tool(btc_price, klines),
-                ladder_tool=self._build_ladder_tool(btc_price),
                 position_risk=self._build_position_risk(btc_price, klines),
             )
 
-            # AI 每小时随新研判重调一次阶梯参数；执行仍留在 60 秒的纯计算里，
-            # 所以这里只改数字，下一 tick 的安全网就会按新参数推进。
-            if self._apply_ai_ladder(decision):
+            # AI 可以把硬止损推进到某个 R 位置（只允许朝有利方向），
+            # 之后由安全网按新止损价执行。
+            if await self._apply_ai_stop(decision, btc_price):
                 self.save_position_state()
 
             # ── 3. 执行交易决策 ──
@@ -838,8 +798,8 @@ class BaseTradingScheduler(ABC):
     def _build_position_risk(self, btc_price: float, klines: list) -> Optional[dict]:
         """把持仓的 R 坐标系打包给 Trading AI
 
-        每小时重新拍定阶梯参数的前提是模型能在 R 空间里推理，而它此前只拿到
-        美元和绝对价格，连 1R 是多少都算不出来。
+        AI 自己决定何时保本 / 移动止损 / 落袋，前提是它能在 R 空间里推理，
+        而不是只拿到美元和绝对价格。
         """
         pos = self.position
         R = pos.risk_unit
@@ -879,11 +839,10 @@ class BaseTradingScheduler(ABC):
             "peak_r": peak_profit / R,
             "mfe_price": mfe,
             "drawdown_from_peak_r": max(0.0, (peak_profit - profit) / R),
-            "stop_r": sign * (pos.stop_loss - pos.entry_price) / R,
-            "stop_stage": pos.stop_stage,
+            "stop_price": pos.stop_loss,
+            "stop_r": pos.stop_r(),
+            "stop_moved_by_ai": pos.stop_moved_by_ai,
             "dist_to_liq_r": dist_to_liq,
-            "tp_taken": pos.tp_taken,
-            "ladder": pos.ladder(self.config.risk),
             "atr_now": self._atr_now(klines) if klines else 0.0,
             "atr_at_open": pos.atr_at_open,
             "path_r": path_r,
@@ -921,48 +880,66 @@ class BaseTradingScheduler(ABC):
             "trend_regime": analysis.get("trend_regime"),
         }
 
-    def _build_ladder_tool(self, btc_price: float) -> Optional[LadderTool]:
-        """持仓期间给 AI 试算阶梯的工具（R 已冻结，只能移动触发线）"""
+    def _track_mfe(self, btc_price: float):
+        """记录开仓以来的最有利价格（peak_r 的来源），不改止损"""
         pos = self.position
-        if not pos.is_active or pos.risk_unit <= 0 or btc_price <= 0:
-            return None
-        return LadderTool(
-            direction=pos.direction,
-            entry_price=pos.entry_price,
-            size_btc=pos.size_btc,
-            current_stop=pos.stop_loss,
-            liquidation_price=pos.liquidation_price,
-            r_unit=pos.risk_unit,
-            mfe_price=pos.mfe_price,
-            btc_price=btc_price,
-            tp_taken=pos.tp_taken,
-            defaults=pos.ladder(self.config.risk),
-        )
+        if not pos.is_active or btc_price <= 0:
+            return
+        if pos.mfe_price <= 0:
+            pos.mfe_price = pos.entry_price
+        if pos.direction == "LONG":
+            pos.mfe_price = max(pos.mfe_price, btc_price)
+        else:
+            pos.mfe_price = min(pos.mfe_price, btc_price)
 
-    def _apply_ai_ladder(self, decision: TradingDecision) -> bool:
-        """把 AI 本次下发的阶梯参数写到仓位上（全权授权，不做区间钳制）
+    async def _apply_ai_stop(self, decision: TradingDecision, btc_price: float) -> bool:
+        """按 AI 给的 stop_r 推进硬止损，返回是否有改动。
 
-        返回是否有改动。只在真正调过 LLM 的那一次生效（缓存命中不重复写）。
+        stop_r 是相对入场价的 R 坐标（0 = 成本价，正 = 已锁定利润）。
+        两条结构性约束不由 AI 决定：
+          1. 棘轮：只接受比现有止损更靠有利方向的值，开仓时的硬止损永远不会被放宽；
+          2. 不能越过现价：那等价于「立刻平仓」，想离场应当直接输出 action=平仓。
+        只在真正调过 LLM 的那一次生效（缓存命中不重复写）。
         """
         pos = self.position
-        if not pos.is_active or decision is None or decision._from_cache:
+        if (
+            not pos.is_active or decision is None or decision._from_cache
+            or decision.stop_r is None or btc_price <= 0
+        ):
             return False
 
-        overrides = decision.ladder_overrides()
-        if not overrides:
+        R = pos.risk_unit
+        if R <= 0:
+            logger.warning("🛡️ AI 要求移动止损，但本仓 R 未知，忽略")
             return False
 
-        before = pos.ladder(self.config.risk)
-        changed = []
-        for name, value in overrides.items():
-            if abs(before[name] - value) > 1e-9:
-                setattr(pos, name, value)
-                changed.append(f"{name} {before[name]:g}→{value:g}")
+        is_long = pos.direction == "LONG"
+        sign = 1 if is_long else -1
+        candidate = pos.entry_price + sign * decision.stop_r * R
 
-        if not changed:
+        improved = (candidate > pos.stop_loss) if is_long else (candidate < pos.stop_loss)
+        if not improved:
+            logger.info(
+                f"🛡️ AI stop_r={decision.stop_r:+.2f} (${candidate:,.0f}) 不优于当前止损 "
+                f"${pos.stop_loss:,.0f}，棘轮不回退，忽略"
+            )
             return False
 
-        logger.info("🎚️ AI 重调阶梯: %s", ", ".join(changed))
+        crosses_price = (candidate >= btc_price) if is_long else (candidate <= btc_price)
+        if crosses_price:
+            logger.warning(
+                f"🛡️ AI stop_r={decision.stop_r:+.2f} (${candidate:,.0f}) 已越过现价 "
+                f"${btc_price:,.0f}，等同立刻平仓；想离场请直接输出 平仓。忽略"
+            )
+            return False
+
+        old_stop = pos.stop_loss
+        pos.stop_loss = candidate
+        logger.info(
+            f"🔒 AI 移动止损: ${old_stop:,.0f} → ${candidate:,.0f} "
+            f"({pos.stop_r():+.2f}R, 峰值 ${pos.mfe_price:,.0f}) — {decision.reason}"
+        )
+        await self._on_stop_loss_moved()
         return True
 
     def _build_risk_tool(self, btc_price: float, klines: list) -> Optional[RiskLevelTool]:
@@ -1024,128 +1001,22 @@ class BaseTradingScheduler(ABC):
         return {"confidence": 0, "analysis_id": None}
 
     def _arm_protective_stop(self):
-        """开仓后记录风险基准，供保本 / 移动止损使用"""
+        """开仓后记录风险基准：初始止损即 1R，也是硬止损兜底；峰值从入场价起算"""
         self.position.initial_stop = self.position.stop_loss
         self.position.mfe_price = self.position.entry_price
-        self.position.stop_stage = "INIT"
-        self.position.tp_taken = False
-
-    async def _update_protective_stop(self, btc_price: float):
-        """保本 + 移动止损（棘轮：止损只朝有利方向移动）
-
-        R = 开仓时的止损距离。
-          浮盈 >= breakeven_trigger_r × R → 止损上移到成本价
-          峰值浮盈 >= trailing_trigger_r × R → 止损跟在峰值回撤 trailing_distance_r × R 处
-        """
-        pos = self.position
-        lad = pos.ladder(self.config.risk)
-        R = pos.risk_unit
-        if R <= 0 or btc_price <= 0:
-            return
-
-        is_long = pos.direction == "LONG"
-
-        if pos.mfe_price <= 0:
-            pos.mfe_price = pos.entry_price
-        pos.mfe_price = max(pos.mfe_price, btc_price) if is_long else min(pos.mfe_price, btc_price)
-
-        # 与 AI 试算工具共用同一实现，避免模型看到的价位和真正执行的不一致
-        res = resolve_ladder_stop(
-            is_long, pos.entry_price, pos.mfe_price, pos.stop_loss, R,
-            lad["breakeven_trigger_r"], lad["trailing_trigger_r"],
-            lad["trailing_distance_r"],
-        )
-        if res["candidate"] is None or not res["improved"]:
-            return
-
-        candidate = res["candidate"]
-        stage = res["stage"]
-        peak_profit = res["peak_profit"]
-
-        old_stop = pos.stop_loss
-        pos.stop_loss = candidate
-        pos.stop_stage = stage
-        logger.info(
-            f"🔒 {'保本' if stage == 'BREAKEVEN' else '移动'}止损: "
-            f"${old_stop:,.0f} → ${candidate:,.0f} "
-            f"(峰值=${pos.mfe_price:,.0f}, 浮盈={peak_profit / R:.2f}R)"
-        )
-        await self._on_stop_loss_moved()
-        self.save_position_state()
 
     async def _on_stop_loss_moved(self):
-        """止损价被抬高后的钩子（Live 覆盖以替换交易所止损单）"""
-
-    async def _check_partial_take_profit(self, btc_price: float) -> Optional[dict]:
-        """部分止盈：浮盈达到 tp_trigger_r × R 时落袋 tp_fraction 仓位。
-
-        填补 0.5R(保本) 与 1.5R(移动止损) 之间的空档——历史上约三成交易的峰值
-        浮盈落在这一段，两端机制都不落袋，最终只能拿到 0。
-        剩余仓位继续由保本/移动止损管理，因此仍保留上涨参与度。
-        每仓只执行一次。
-        """
-        pos = self.position
-        lad = pos.ladder(self.config.risk)
-        R = pos.risk_unit
-
-        if pos.tp_taken or R <= 0 or btc_price <= 0:
-            return None
-        trigger_r = lad["tp_trigger_r"]
-        tp_fraction = lad["tp_fraction"]
-        if tp_fraction <= 0 or trigger_r <= 0:
-            return None
-
-        is_long = pos.direction == "LONG"
-        profit = (btc_price - pos.entry_price) if is_long else (pos.entry_price - btc_price)
-        if profit < trigger_r * R:
-            return None
-
-        # 先置位再平仓：_close_position 可能触发 reset()，届时 tp_taken 归位为 False，
-        # 但那时仓位已清空，不影响后续逻辑；若平仓失败则回滚，避免永久跳过止盈。
-        pos.tp_taken = True
-        trade = await self._close_position(
-            btc_price,
-            reason=f"部分止盈 {trigger_r:.2f}R",
-            close_ratio=tp_fraction,
-            is_partial=True,
-        )
-        if trade is None:
-            pos.tp_taken = False
-            return None
-
-        logger.info(
-            f"💰 部分止盈: 平掉 {tp_fraction:.0%} 仓位 @ ${btc_price:,.0f} "
-            f"(浮盈={profit / R:.2f}R)"
-        )
-
-        # 落袋后把剩余仓位的止损推到成本价，确保这一仓不再可能亏钱
-        if pos.is_active:
-            improved = (pos.entry_price > pos.stop_loss) if is_long \
-                else (pos.entry_price < pos.stop_loss)
-            if improved:
-                pos.stop_loss = pos.entry_price
-                pos.stop_stage = "BREAKEVEN"
-            # 必须无条件重挂：平仓流程已撤掉交易所止损单，且剩余数量已减半。
-            # 常规路径下保本止损在 0.5R 就已触发，此处 improved 为 False，
-            # 若依赖它来重挂，实盘剩余仓位会失去交易所侧保护。
-            await self._on_stop_loss_moved()
-            self.save_position_state()
-
-        return trade
+        """止损价被 AI 推进后的钩子（Live 覆盖以替换交易所止损单）"""
 
     async def _check_safety_exits(self, btc_price: float) -> list:
-        """硬安全网: 强平 + 保本/移动止损 + 止损（每 tick 检查，不依赖 AI）"""
+        """硬安全网: 强平 + 硬止损（每 tick 检查，不依赖 AI）
+
+        止损价只有两个来源：开仓时按 ATR 定下的初始止损，以及之后 AI 通过
+        stop_r 主动推进的位置。代码本身不再自动移动它。
+        """
         trades = []
         if not self.position.is_active:
             return trades
-
-        await self._update_protective_stop(btc_price)
-
-        tp_trade = await self._check_partial_take_profit(btc_price)
-        if tp_trade:
-            trades.append(tp_trade)
-            if not self.position.is_active:
-                return trades
 
         is_long = self.position.direction == "LONG"
 
@@ -1167,10 +1038,7 @@ class BaseTradingScheduler(ABC):
                      (not is_long and btc_price >= self.position.stop_loss)
             if hit_sl:
                 sl_price = self.position.stop_loss
-                reason = {
-                    "BREAKEVEN": "保本止损触发",
-                    "TRAILING": "移动止盈触发",
-                }.get(self.position.stop_stage, "止损触发")
+                reason = "AI移动止损触发" if self.position.stop_moved_by_ai else "止损触发"
                 trade = await self._close_position(btc_price, reason=reason)
                 if trade:
                     trades.append(trade)

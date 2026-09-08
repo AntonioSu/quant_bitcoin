@@ -122,7 +122,7 @@ class LiveTradingScheduler(BaseTradingScheduler):
         await self._replace_exchange_sl()
 
     async def _on_stop_loss_moved(self):
-        """保本 / 移动止损抬高后，同步替换交易所止损单"""
+        """AI 推进止损后，同步替换交易所止损单"""
         await self._replace_exchange_sl()
 
     def _fallback_to_local_file(self):
@@ -188,6 +188,8 @@ class LiveTradingScheduler(BaseTradingScheduler):
             elif self.position.is_active:
                 logger.warning("⚠️ 交易所无仓位，重置本地状态")
                 await self._cancel_exchange_orders()
+                # 多半是交易所侧止损单成交了：同样要进重开冷却，否则下一 tick 会原样开回
+                self._notify_advisor_closed(self.position.direction)
                 self.position.reset()
                 self.current_mode = TradingMode.IDLE
 
@@ -235,10 +237,9 @@ class LiveTradingScheduler(BaseTradingScheduler):
             self.position.stop_loss = levels["stop_loss"]
             if self.position.liquidation_price == 0:
                 self.position.liquidation_price = levels["liquidation_price"]
-            # 该分支只在本地无止损时触发，此时保本/移动止损基准也一并重建
+            # 该分支只在本地无止损时触发，此时 R 基准 / 峰值也一并重建
             self.position.initial_stop = levels["stop_loss"]
             self.position.mfe_price = entry_price
-            self.position.stop_stage = "INIT"
             # R 是用这里的 ATR 重新定的，留档必须跟着更新，否则 AI 拿到的
             # 「开仓 ATR → 当前 ATR」比值对应的是另一个 R，判断会反向。
             self.position.stop_atr_mult = atr_mult
