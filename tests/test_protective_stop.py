@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """硬止损安全网 + AI 推进止损 + 追高护栏测试
 
-设计前提：持仓期间的保本 / 移动止损 / 部分止盈全部由 Trading AI 决定，
-代码只保留强平 + 硬止损两道兜底，并保证止损永不回退。
+设计前提：持仓期间的平仓 / 减仓由 Trading AI 决定；推进止损也由 AI 提议，
+但代码拒绝过早保本（峰值 < 1.5R 且 stop_r≥0）和贴价（距现价 < 0.6R）。
+安全网只保留强平 + 硬止损，并保证止损永不回退。
 
 验证场景:
 1. 安全网不再自动推进止损（浮盈 2R 后止损仍在开仓位置）
@@ -22,6 +23,10 @@
 15. K 线不足时不拦截
 16. AI 止损 ATR 倍数钳制
 17. 全平后通知 Trading AI 层（重开冷却）
+18. 峰值不足 1.5R 时拒绝保本 / 锁利
+19. 止损离现价不足 0.6R 时拒绝贴价
+20. 峰值未到 1.5R 时仍允许在亏损侧收紧
+21. SHORT 过早保本同样被拒
 """
 
 import asyncio
@@ -128,7 +133,7 @@ def test_4_hard_stop_closes_with_plain_reason():
 
 
 def test_5_ai_stop_r_moves_stop_and_fires_hook():
-    print("\n[Test 5] AI stop_r=0 → 保本；stop_r=0.8 → 锁利；每次触发重挂钩子")
+    print("\n[Test 5] 峰值够了之后：AI stop_r=0 → 保本；stop_r=0.8 → 锁利")
     sched = make_scheduler()
     pos = arm(sched)
     calls = []
@@ -138,11 +143,11 @@ def test_5_ai_stop_r_moves_stop_and_fires_hook():
 
     sched._on_stop_loss_moved = spy
 
-    moved = asyncio.run(sched._apply_ai_stop(ai_stop(0.0), ENTRY + 0.6 * R))
+    moved = asyncio.run(sched._apply_ai_stop(ai_stop(0.0), ENTRY + 1.6 * R))
     assert moved and pos.stop_loss == ENTRY, pos.stop_loss
     assert pos.stop_moved_by_ai
 
-    moved = asyncio.run(sched._apply_ai_stop(ai_stop(0.8), ENTRY + 1.5 * R))
+    moved = asyncio.run(sched._apply_ai_stop(ai_stop(0.8), ENTRY + 2.0 * R))
     assert moved and pos.stop_loss == ENTRY + 0.8 * R, pos.stop_loss
 
     assert calls == [ENTRY, ENTRY + 0.8 * R], calls
@@ -154,11 +159,11 @@ def test_6_ai_stop_ratchet_never_retreats():
     sched = make_scheduler()
     pos = arm(sched)
 
-    assert asyncio.run(sched._apply_ai_stop(ai_stop(0.5), ENTRY + 1.2 * R))
+    assert asyncio.run(sched._apply_ai_stop(ai_stop(0.5), ENTRY + 1.6 * R))
     locked = pos.stop_loss
 
     for retreat in (0.0, -0.5, -1.0, -3.0):
-        moved = asyncio.run(sched._apply_ai_stop(ai_stop(retreat), ENTRY + 1.2 * R))
+        moved = asyncio.run(sched._apply_ai_stop(ai_stop(retreat), ENTRY + 1.6 * R))
         assert not moved and pos.stop_loss == locked, (retreat, pos.stop_loss)
     print(f"  ✅ 四次回退请求均被拒，止损稳定在 ${locked:,.0f}")
 
@@ -168,11 +173,10 @@ def test_7_ai_stop_crossing_price_is_rejected():
     sched = make_scheduler()
     pos = arm(sched)
 
-    # 现价 +0.5R，要求止损到 +0.7R → 等于立刻平仓
-    moved = asyncio.run(sched._apply_ai_stop(ai_stop(0.7), ENTRY + 0.5 * R))
+    # 峰值已够保本门槛，但止损越过 / 等于现价仍应拒绝
+    moved = asyncio.run(sched._apply_ai_stop(ai_stop(1.7), ENTRY + 1.5 * R))
     assert not moved and pos.stop_loss == LONG_STOP, pos.stop_loss
-    # 恰好等于现价也拒绝
-    moved = asyncio.run(sched._apply_ai_stop(ai_stop(0.5), ENTRY + 0.5 * R))
+    moved = asyncio.run(sched._apply_ai_stop(ai_stop(1.5), ENTRY + 1.5 * R))
     assert not moved and pos.stop_loss == LONG_STOP
     print("  ✅ 越过 / 等于现价均被拒，止损未动")
 
@@ -246,12 +250,12 @@ def test_12_state_roundtrip_ignores_legacy_fields():
     print("\n[Test 12] 状态落盘 / 恢复，旧文件废弃字段被忽略")
     sched = make_scheduler()
     pos = arm(sched)
-    sched._track_mfe(ENTRY + 1.3 * R)
-    assert asyncio.run(sched._apply_ai_stop(ai_stop(0.4), ENTRY + 1.3 * R))
+    sched._track_mfe(ENTRY + 1.6 * R)
+    assert asyncio.run(sched._apply_ai_stop(ai_stop(0.4), ENTRY + 1.6 * R))
 
     state = sched._get_position_state()
     assert state["initial_stop"] == LONG_STOP
-    assert state["mfe_price"] == ENTRY + 1.3 * R
+    assert state["mfe_price"] == ENTRY + 1.6 * R
     assert state["stop_loss"] == ENTRY + 0.4 * R
     for legacy in ("stop_stage", "tp_taken", "tp_trigger_r", "trailing_distance_r"):
         assert legacy not in state, legacy
@@ -260,7 +264,7 @@ def test_12_state_roundtrip_ignores_legacy_fields():
     fresh._apply_position_state(state)
     assert fresh.position.risk_unit == R
     assert fresh.position.stop_moved_by_ai
-    assert fresh.position.mfe_price == ENTRY + 1.3 * R
+    assert fresh.position.mfe_price == ENTRY + 1.6 * R
 
     # 旧状态文件带着阶梯字段也能正常恢复
     legacy_state = dict(state)
@@ -339,3 +343,54 @@ def test_17_close_notifies_advisor_for_reentry_cooldown():
     assert block and "冷却" in block, block
     assert adv._reentry_block_reason("SHORT", "any-signal") is None, "反向不受影响"
     print(f"  ✅ {block}")
+
+
+def test_18_reject_breakeven_before_peak_threshold():
+    print("\n[Test 18] 峰值 0.5R 要求保本 → 拒绝（复现 9/15 过早扫出）")
+    sched = make_scheduler()
+    pos = arm(sched)
+
+    moved = asyncio.run(sched._apply_ai_stop(ai_stop(0.0), ENTRY + 0.5 * R))
+    assert not moved and pos.stop_loss == LONG_STOP, pos.stop_loss
+    assert not pos.stop_moved_by_ai
+
+    moved = asyncio.run(sched._apply_ai_stop(ai_stop(0.2), ENTRY + 1.2 * R))
+    assert not moved and pos.stop_loss == LONG_STOP
+    print("  ✅ 峰值不足 1.5R 时 stop_r≥0 全部忽略")
+
+
+def test_19_reject_stop_too_close_to_price():
+    print("\n[Test 19] 峰值够了但止损贴现价 → 拒绝")
+    sched = make_scheduler()
+    pos = arm(sched)
+
+    # 峰值 2R，要锁到 1.5R，距现价仅 0.5R < 0.6R
+    moved = asyncio.run(sched._apply_ai_stop(ai_stop(1.5), ENTRY + 2.0 * R))
+    assert not moved and pos.stop_loss == LONG_STOP, pos.stop_loss
+
+    moved = asyncio.run(sched._apply_ai_stop(ai_stop(1.2), ENTRY + 2.0 * R))
+    assert moved and pos.stop_loss == ENTRY + 1.2 * R, pos.stop_loss
+    print(f"  ✅ 贴价拒绝，留 0.8R 呼吸后放行，止损 ${pos.stop_loss:,.0f}")
+
+
+def test_20_allow_loss_side_tighten_before_breakeven():
+    print("\n[Test 20] 峰值未到 1.5R 时，亏损侧收紧仍允许")
+    sched = make_scheduler()
+    pos = arm(sched)
+
+    moved = asyncio.run(sched._apply_ai_stop(ai_stop(-0.5), ENTRY + 0.4 * R))
+    assert moved and pos.stop_loss == ENTRY - 0.5 * R, pos.stop_loss
+    print(f"  ✅ 止损从 -1R 收到 -0.5R，未到保本")
+
+
+def test_21_short_premature_breakeven_is_rejected():
+    print("\n[Test 21] SHORT 峰值不足时保本同样被拒")
+    sched = make_scheduler()
+    pos = arm(sched, "SHORT")
+
+    moved = asyncio.run(sched._apply_ai_stop(ai_stop(0.0), ENTRY - 0.5 * R))
+    assert not moved and pos.stop_loss == SHORT_STOP, pos.stop_loss
+
+    moved = asyncio.run(sched._apply_ai_stop(ai_stop(0.0), ENTRY - 1.6 * R))
+    assert moved and pos.stop_loss == ENTRY, pos.stop_loss
+    print("  ✅ 空单 0.5R 保本被拒，1.6R 后放行")
