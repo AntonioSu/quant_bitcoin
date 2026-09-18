@@ -168,14 +168,30 @@ td.bad { color: var(--red); }
   margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border);
 }
 
-/* 流程箭头 */
-.chain { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 12px 0 18px; }
-.chain .node {
+/* 流程：多空并行汇合 */
+.committee {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 8px 10px; margin: 12px 0 18px;
+}
+.committee .node {
   background: var(--surface); border: 1px solid var(--border-strong);
   border-radius: 5px; padding: 5px 11px; font-size: 13.5px;
+  white-space: nowrap;
 }
-.chain .node.veto { border-color: var(--amber); color: var(--text); }
-.chain .arw { color: var(--text-dim); font-size: 13px; }
+.committee .node.veto { border-color: var(--amber); color: var(--text); }
+.committee .arw { color: var(--text-dim); font-size: 13px; }
+.fork-group { display: flex; align-items: stretch; }
+.fork { display: flex; flex-direction: column; gap: 8px; }
+.join { width: 28px; position: relative; flex-shrink: 0; }
+.join::before {
+  content: ""; position: absolute; left: 0; top: 18px; bottom: 18px;
+  width: 14px; border: 1.5px solid var(--text-dim);
+  border-left: none; border-radius: 0 4px 4px 0;
+}
+.join::after {
+  content: ""; position: absolute; left: 14px; top: 50%;
+  width: 14px; border-top: 1.5px solid var(--text-dim);
+}
 
 /* 参数条 */
 .params { display: flex; flex-wrap: wrap; gap: 9px; margin: 8px 0; }
@@ -260,8 +276,10 @@ footer p { margin: 0 0 6px; }
     <a class="l3" href="#data-inputs">输入分组</a>
     <a class="l3" href="#data-refresh">刷新节奏</a>
     <a class="l2" href="#signal">二、信号层</a>
+    <a class="l3" href="#debate-snapshot">多头和空头快照内容</a>
     <a class="l3" href="#risk-reviewer">风险审查员</a>
     <a class="l3" href="#manager">决策经理</a>
+    <a class="l3" href="#committee-decision">CommitteeDecision</a>
     <a class="l2" href="#execution">三、执行层</a>
     <a class="l3" href="#open-threshold">开仓门槛</a>
     <a class="l3" href="#sizing">仓位算法</a>
@@ -269,7 +287,7 @@ footer p { margin: 0 0 6px; }
     <a class="l2" href="#exit">四、出场与止损</a>
     <a class="l3" href="#risk-job">主要功能</a>
     <a class="l3" href="#risk-rules">出场策略</a>
-    <a class="l3" href="#safety-net">两道兜底</a>
+    <a class="l3" href="#safety-net">兜底与硬钳</a>
     <a class="l2" href="#presets">五、三档预设</a>
   </nav>
 </aside>
@@ -337,20 +355,75 @@ footer p { margin: 0 0 6px; }
 
 <!-- ══════════════ 二 · 信号层 ══════════════ -->
 <section id="signal">
-  <h2>二、信号层：四个 LLM 角色顺序辩论</h2>
-  <p class="sub"><code>DecisionCommittee</code> 按固定顺序串行跑四个角色，各自有独立 system prompt 和知识库切片。</p>
+  <h2>二、信号层：多空并行论证，再交给审查与拍板</h2>
+  <p class="sub"><code>DecisionCommittee</code> 里多头和空头互不看见对方输出，两边都完成后才进风险审查员，最后才是决策经理。各自有独立 system prompt 和知识库切片。</p>
 
-  <div class="chain">
-    <span class="node">多头研究员</span><span class="arw">→</span>
-    <span class="node">空头研究员</span><span class="arw">→</span>
-    <span class="node veto">风险审查员</span><span class="arw">→</span>
+  <div class="committee" aria-label="多头与空头并行，再汇入风险审查员和决策经理">
+    <div class="fork-group">
+      <div class="fork">
+        <span class="node">多头研究员</span>
+        <span class="node">空头研究员</span>
+      </div>
+      <span class="join" aria-hidden="true"></span>
+    </div>
+    <span class="node veto">风险审查员</span>
+    <span class="arw">→</span>
     <span class="node">决策经理</span>
   </div>
 
   <p>
-    前两个角色<strong>只构造本方论证，不给结论</strong>。风险审查员看完双方论证后产出
-    <code>entry_ok</code>，并且拥有否决权 —— 决策经理不能把它翻回来。
+    多头和空头拿同一份快照，<strong>只构造本方论证，不给结论，也不读对方的稿</strong>。
+    代码里仍是先调多头再调空头，但两边输入相同、互不依赖，逻辑上是并行。
+    风险审查员看完双方论证后产出 <code>entry_ok</code>，并且拥有否决权 —— 决策经理不能把它翻回来。
   </p>
+
+  <h3 id="debate-snapshot">多头和空头快照内容</h3>
+  <p>
+    两边 user prompt 里的「当前 BTC 市场快照」是同一份 JSON，由
+    <code>MarketAnalyzer._build_snapshot()</code> 从 <code>market</code> 压出来。
+    某路还没刷到时，对应键直接不出现。不含原始新闻、不含持仓、也不含对方的论证。
+  </p>
+
+  <div class="groups">
+    <div class="group">
+      <div class="gt">情绪 / 资金面</div>
+      <div class="gi"><code>fear_greed</code>、<code>funding_rate</code>、<code>top_trader</code>、<code>etf_flow</code>、<code>stablecoin</code>、<code>exchange_netflow</code>、<code>liquidation_1h</code>、<code>options</code>、<code>open_interest</code></div>
+      <div class="gc">9 个键</div>
+    </div>
+    <div class="group">
+      <div class="gt">链上 / 宏观 / 新闻</div>
+      <div class="gi"><code>mvrv</code>、<code>macro</code>（M2 / DXY）、<code>news</code>、<code>cvd_orderflow_4h</code>、<code>taker_4h</code></div>
+      <div class="gc">5 个键</div>
+    </div>
+    <div class="group">
+      <div class="gt">技术面（4H）</div>
+      <div class="gi"><code>macd_4h</code>、<code>rsi_4h</code>、<code>bollinger_4h</code>、<code>ma_4h</code>、<code>volume_4h</code>、<code>cvd_6x4h</code>、<code>atr_4h</code>、<code>price_position</code>（近 48H 区间位置 + 距支撑阻力）</div>
+      <div class="gc">8 个键，另有 <code>last_update</code></div>
+    </div>
+  </div>
+
+  <p><code>news</code> 不是原文，是新闻分析员每 2 小时产出后再压缩进来的：</p>
+  <table>
+    <thead><tr><th>字段</th><th>内容</th></tr></thead>
+    <tbody>
+      <tr><td><code>score</code> / <code>sentiment</code></td><td>新闻分析员打的分数和方向（bullish / bearish / neutral）</td></tr>
+      <tr><td><code>reasoning</code></td><td>一两句理由</td></tr>
+      <tr><td><code>key_signals</code></td><td>最多 3 条关键信号</td></tr>
+      <tr>
+        <td><code>bullish_factors</code> / <code>bearish_factors</code></td>
+        <td>各最多 3 条，带 category / weight / url 等 provenance，不是文章列表</td>
+      </tr>
+    </tbody>
+    <caption>
+      多空提示词允许把证据标成 <code>source=news</code>，但系统知识库只切了
+      <code>indicators/indicator_guide.md</code>，没有 <code>knowledge/news/</code>。
+    </caption>
+  </table>
+
+  <div class="note">
+    <span class="h">快照后面还会再拼一段动态上下文</span>
+    近期策略备忘录、上次研判、最近几次带盈亏的回顾。这不是快照字段，但多头和空头都能看到。
+  </div>
 
   <h3 id="risk-reviewer">风险审查员</h3>
   <table>
@@ -396,14 +469,16 @@ footer p { margin: 0 0 6px; }
 
   <h3 id="manager">决策经理</h3>
   <p>
-    user prompt 三块：市场快照、委员会三方结论、动态上下文（上次研判 / 备忘录）。
-    持仓来自调度器每 5 分钟写入的 <code>market.position_context</code>，嵌进快照。
+    user prompt 三块：<strong>市场快照</strong>、委员会三方结论、动态上下文（上次研判 / 备忘录）。
+    快照就是数据层那 22 路输入的当前值 —— 新闻情绪、资金费率、ETF 流向、技术指标全在里面，
+    四个角色拿到的是同一份。持仓由调度器每 5 分钟写入
+    <code>market.position_context</code>，也嵌在快照里。
     <code>bias</code> 是市场方向，不因已有仓位而翻转；
     <code>action</code> 必须和当前是否有仓一致：空仓只能加多／加空／等待入场，
     有仓只能持仓观望／减仓／离场，不得在已持仓时再输出加多／加空。
   </p>
 
-  <p><strong>输入</strong> · 当前持仓 <code>position_context</code></p>
+  <p><strong>输入</strong> · 下表只展开快照里的持仓这一块，其余输入见<a href="#data-inputs">数据层</a></p>
 
   <table>
     <thead><tr><th>字段</th><th>取值</th><th>含义</th></tr></thead>
@@ -567,6 +642,61 @@ footer p { margin: 0 0 6px; }
     <li>不得因 RSI／MACD 与流动性冲突而翻转 bias，冲突时以流动性为准</li>
     <li>计维时 <strong>RSI + MACD 合计最多算 1 个同向维度</strong></li>
   </ul>
+
+  <h3 id="committee-decision">CommitteeDecision：经理说了不算</h3>
+  <p>
+    经理输出的只是一段 JSON 文本，会漏字段、也会自相矛盾。它先被
+    <code>_merge_risk_into_manager_payload()</code> 落实审查员的否决，再交给
+    <code>schemas.py</code> 里的 <code>CommitteeDecision</code> 校验 ——
+    上面那张输出表就是它的字段定义。校验后的结果才写进 <code>market.ai_analysis</code>，
+    信号聚合器与执行层只读这一份。<strong>所以生效的不是经理写的值，是被改写之后的值。</strong>
+  </p>
+
+  <p><strong>会被改写的几种情况</strong></p>
+
+  <table>
+    <thead><tr><th>触发条件</th><th>被改写成</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>confidence &lt; 35</code></td>
+        <td><code>entry_ok=false</code>、仓位 0%、加多／加空 改为等待入场</td>
+      </tr>
+      <tr>
+        <td><code>entry_ok=true</code> 但仓位是 0%</td>
+        <td>按置信度补全为 25% / 50% / 75% / 100%，避免经理漏填就被 0% 误杀</td>
+      </tr>
+      <tr>
+        <td><code>bias=NEUTRAL</code></td>
+        <td><code>entry_ok=false</code>、仓位 0%、加多／加空 改为持仓观望</td>
+      </tr>
+      <tr>
+        <td><code>entry_ok=true</code> 但 <code>action</code> 不是开仓动作</td>
+        <td>按 <code>bias</code> 反推出加多／加空（经理常省略 action）</td>
+      </tr>
+      <tr>
+        <td>置信度偏低 / <code>HIGH_VOL_EXTREME</code></td>
+        <td>钳制 <code>leverage_hint</code>，见<a href="#open-threshold">开仓门槛</a>一节</td>
+      </tr>
+    </tbody>
+    <caption>
+      其余都是同类的一致性收敛：越界值夹回合法区间，<code>entry_ok</code> 与仓位互相约束，
+      不许出现「不让开仓却写着加多」这种组合。
+    </caption>
+  </table>
+
+  <p>
+    每次挡下入场都会在 <code>entry_gate</code> 上留一个记号，写明是谁挡的：风险审查员否决、
+    经理自己不开、还是上面这些规则改的。它不参与下单判断，只用于事后统计哪道闸真正在起作用。
+  </p>
+
+  <div class="note bad">
+    <span class="h">经理是唯一没有兜底的角色</span>
+    多头、空头、风险审查员各自失败都有保守兜底（审查员兜底直接阻断入场），流程照常往下走。
+    但经理的 JSON 解析或校验一旦失败，就抛 <code>DecisionCommitteeError</code>，
+    <code>MarketAnalyzer</code> 接住后整轮作废，写入 <code>bias=NEUTRAL</code>、
+    <code>confidence=0</code>、<code>entry_gate=COMMITTEE_FAILED</code> ——
+    <strong>这一小时既不开新仓，也不会因此平掉已有仓</strong>，要等下一个整点重跑。
+  </div>
 </section>
 
 <!-- ══════════════ 三 · 执行层 ══════════════ -->
@@ -613,7 +743,7 @@ leverage = max(1, min(20, int(leverage)))</pre>
   </figure>
 
   <h3 id="policy-guard">下单前的硬规则</h3>
-  <p>交易 AI 说了要开、要减，代码还会拦一次。拦的是下单，不管持仓中该不该平（那是下一层的事）。</p>
+  <p>交易 AI 说了要开、要减，代码还会拦一次。拦的是下单，不管持仓中该不该平（那是下一层的事）。持仓中它提议的 <code>stop_r</code> 另有硬钳，见<a href="#safety-net">兜底与硬钳</a>。</p>
   <ul>
     <li><strong>开仓门槛</strong>：允许入场 + 方向对上 + 等级至少中等，否则不开</li>
     <li><strong>追高不让开</strong>：顺方向落在近 48 小时区间的 60–100% 拒绝；真正突破（超过 100%）才放行</li>
@@ -633,14 +763,15 @@ leverage = max(1, min(20, int(leverage)))</pre>
     代码换成真实止损价和 1R 金额。不让它直接写绝对价格，避免现价延迟或拍脑袋把止损写到贴近强平。
   </p>
   <p>
-    之后每 5 分钟再问一次。它看着当前信号和本仓的盈亏位置，输出一个动作：
+    之后每 5 分钟再问一次。分工是：<strong>AI 管要不要走，代码管止损几何</strong>。
+    AI 看着当前信号和本仓的盈亏位置，输出
     <code>持仓观望</code> / <code>减仓</code> / <code>平仓</code>，以及可选的
     <code>stop_r</code>（把硬止损推到 <code>入场价 + stop_r × R</code>）。
-    什么时候落袋、落多少，也是这轮决定，不是开仓时写死的。
+    论点被推翻才离场；止损能不能往前推，要过 <code>_apply_ai_stop()</code> 的硬钳。
   </p>
   <p>
-    代码不再自动保本、不再自动移动止损、不再自动部分止盈。
-    AI 两次决策之间，只靠下面两道机械兜底把仓砍掉。
+    代码不会自动保本、不会自动移动止损、不会自动部分止盈。
+    AI 两次决策之间，只靠硬止损和强平价把仓砍掉。
   </p>
 
   <h3 id="risk-rules">出场策略</h3>
@@ -650,21 +781,28 @@ leverage = max(1, min(20, int(leverage)))</pre>
       <tr><td>信号同向或中性，走势正常</td><td>持仓观望（默认，绝大多数时候都是这个）</td></tr>
       <tr><td>论点被削弱，或浮盈较大想先落袋一部分</td><td>减仓</td></tr>
       <tr><td>方向反转且确信，或突破明确失败</td><td>平仓</td></tr>
-      <tr><td>浮盈够了，想锁住利润或抬到保本</td><td>给 <code>stop_r</code>，止损只许收紧不许放宽</td></tr>
+      <tr><td>峰值 ≥ 1.5R，想锁住利润或抬到保本</td><td>给 <code>stop_r</code>，止损只许收紧不许放宽；离现价至少 0.6R</td></tr>
+      <tr><td>峰值 &lt; 1.5R，却要求 <code>stop_r ≥ 0</code></td><td>代码忽略，止损不动</td></tr>
     </tbody>
     <caption>
-      不因小幅浮盈全平；<code>entry_ok=false</code> 只拦新开仓，不是平仓理由。
+      不因小幅浮盈全平，也不把止损提前收到保本来变相全平。
+      <code>entry_ok=false</code> 只拦新开仓，不是平仓理由。
     </caption>
   </table>
 
-  <h3 id="safety-net">两道兜底</h3>
+  <h3 id="safety-net">兜底与硬钳</h3>
   <table>
-    <thead><tr><th>兜底</th><th>谁执行</th><th>作用</th></tr></thead>
+    <thead><tr><th>规则</th><th>谁执行</th><th>作用</th></tr></thead>
     <tbody>
       <tr>
         <td>硬止损</td>
         <td>AI 定价位，代码 / 交易所执行</td>
         <td>开仓时定下 −1R；之后 AI 只能往有利方向推。价格碰到即全平。实盘挂在交易所，不等 5 分钟轮询</td>
+      </tr>
+      <tr>
+        <td>止损几何硬钳</td>
+        <td>代码拦 AI 的 <code>stop_r</code></td>
+        <td>峰值不到 1.5R 拒绝保本/锁利；新止损离现价不足 0.6R 拒绝贴价。亏损侧收紧仍允许</td>
       </tr>
       <tr>
         <td>强平价</td>
@@ -673,6 +811,46 @@ leverage = max(1, min(20, int(leverage)))</pre>
       </tr>
     </tbody>
   </table>
+
+  <p><code>_apply_ai_stop()</code> 按这个顺序拦，任一命中就忽略这轮 <code>stop_r</code>，止损不动：</p>
+  <figure>
+    <figcaption>server/trading_scheduler/base.py · _apply_ai_stop</figcaption>
+<pre>棘轮          新止损不比当前更靠有利方向 → 忽略
+越过现价      多：candidate ≥ 现价；空：candidate ≤ 现价 → 忽略
+              <i># 那等于立刻平仓，想走请直接输出 平仓</i>
+过早保本/锁利  stop_r ≥ 0 且峰值 &lt; min_breakeven_peak_r（1.5）→ 忽略
+贴价          |现价 − candidate| / R &lt; min_stop_distance_r（0.6）→ 忽略
+
+<i># 峰值取已记录 MFE 和本 tick 现价里更有利的一侧</i></pre>
+  </figure>
+
+  <table>
+    <thead><tr><th>参数</th><th class="num-col">默认</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>min_breakeven_peak_r</code></td>
+        <td class="num-col">1.5</td>
+        <td>峰值低于此值时拒绝 <code>stop_r ≥ 0</code>。0.5R 是呼吸，不是保本位</td>
+      </tr>
+      <tr>
+        <td><code>min_stop_distance_r</code></td>
+        <td class="num-col">0.6</td>
+        <td>新止损离现价至少这么多 R，否则视为贴价</td>
+      </tr>
+    </tbody>
+    <caption>
+      两值写在 <code>RiskConfig</code>，三档相同，提示词无权覆盖。
+      已经推进过的止损不会退回去（棘轮仍在）。
+    </caption>
+  </table>
+
+  <div class="note">
+    <span class="h">为什么要钳，而不是把止损交回代码自动跑</span>
+    提示词曾经写「浮盈过 0.5R 就通常保本」，示例 JSON 还默认带
+    <code>stop_r=0</code>。模型每 5 分钟被问一次，最省事的风控动作就是提前保本；
+    止损只能收不能放，价格一呼吸就被扫掉，委员会就算还在同向也回不去。
+    现在改成：离场判断仍归 AI，保本门槛和呼吸空间归代码。
+  </div>
 </section>
 
 <!-- ══════════════ 五 · 预设真相 ══════════════ -->
@@ -680,7 +858,7 @@ leverage = max(1, min(20, int(leverage)))</pre>
   <h2>五、三档预设的真相：其实只有一套策略</h2>
   <p class="sub">保守／标准／激进三档在运行时几乎没有差异 —— 大部分参数已经没有任何代码在读。</p>
 
-  <p>全仓检索后，运行时真正被读取的配置只有三处：</p>
+  <p>全仓检索后，运行时真正被读取的配置只有这些：</p>
   <table>
     <thead><tr><th>参数</th><th class="num-col">保守 / 标准 / 激进</th><th>实际作用</th></tr></thead>
     <tbody>
@@ -690,6 +868,9 @@ leverage = max(1, min(20, int(leverage)))</pre>
           <td>仅实盘交易所侧兜底杠杆，每笔实际杠杆由 AI 覆盖</td></tr>
       <tr><td><code>RiskConfig</code> 追高拦截</td><td class="num-col">三档完全相同</td>
           <td>开仓前的追高硬规则，AI 无权干预</td></tr>
+      <tr><td><code>min_breakeven_peak_r</code> / <code>min_stop_distance_r</code></td>
+          <td class="num-col">1.5 / 0.6</td>
+          <td>推进止损的硬钳，三档相同，AI 无权覆盖</td></tr>
     </tbody>
   </table>
 
@@ -697,7 +878,7 @@ leverage = max(1, min(20, int(leverage)))</pre>
     <span class="h">结论：并行跑三档，得不到参数敏感性对比</span>
     三档唯一的实质差异 <code>atr_multiplier</code>，只在 AI 不指定止损倍数时才生效 ——
     而现在提示词要求 AI 必须给出，所以连这一个差异也基本不触发。
-    持仓中的保本 / 移动止损 / 落袋更是完全由 AI 每 5 分钟决定，与档位无关。
+    持仓中的保本 / 移动止损仍由 AI 提议，但 1.5R 之前的保本和贴价止损会被代码拒绝，与档位无关。
     三档跑出来的行为几乎完全一样，本质上是同一套策略的三份随机复现。
     要真做档位对比，得先让档位去影响 AI 拿到的约束（例如按档给不同的参数建议区间），
     而不是改一组它随手就会覆盖掉的默认值。
