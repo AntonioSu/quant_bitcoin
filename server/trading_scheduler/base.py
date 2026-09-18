@@ -533,8 +533,8 @@ class BaseTradingScheduler(ABC):
         """检查信号并执行（两层 AI 架构）
 
         1. 硬安全网: 强平 + 开仓时定下的硬止损（每 tick，不依赖 AI）。
-           这是 AI 两次决策之间唯一的机械兜底；保本 / 移动止损 / 部分止盈
-           全部由 Trading AI 自己决定，代码不再自动推进。
+           这是 AI 两次决策之间唯一的机械平仓；保本 / 移动止损由 AI 提议，
+           但过早保本和贴价止损会被代码拒绝，代码本身仍不自动推进。
         2. Trading AI: 每个 tick 都根据 Signal AI 输出 + 仓位 R 坐标做一次
            完整决策（开/平/减/持仓，以及是否把止损推进到某个 R 位置）。
         """
@@ -798,8 +798,7 @@ class BaseTradingScheduler(ABC):
     def _build_position_risk(self, btc_price: float, klines: list) -> Optional[dict]:
         """把持仓的 R 坐标系打包给 Trading AI
 
-        AI 自己决定何时保本 / 移动止损 / 落袋，前提是它能在 R 空间里推理，
-        而不是只拿到美元和绝对价格。
+        AI 在 R 空间里提议平仓 / 减仓 / 推进止损；过早保本和贴价由代码拒绝。
         """
         pos = self.position
         R = pos.risk_unit
@@ -830,6 +829,7 @@ class BaseTradingScheduler(ABC):
             abs(btc_price - pos.liquidation_price) / R
             if pos.liquidation_price > 0 else 0.0
         )
+        risk_cfg = self.config.risk
 
         return {
             "r_unit_usd": R,
@@ -843,6 +843,8 @@ class BaseTradingScheduler(ABC):
             "stop_r": pos.stop_r(),
             "stop_moved_by_ai": pos.stop_moved_by_ai,
             "dist_to_liq_r": dist_to_liq,
+            "min_breakeven_peak_r": risk_cfg.min_breakeven_peak_r,
+            "min_stop_distance_r": risk_cfg.min_stop_distance_r,
             "atr_now": self._atr_now(klines) if klines else 0.0,
             "atr_at_open": pos.atr_at_open,
             "path_r": path_r,
@@ -892,13 +894,28 @@ class BaseTradingScheduler(ABC):
         else:
             pos.mfe_price = min(pos.mfe_price, btc_price)
 
+    def _peak_r_now(self, btc_price: float) -> float:
+        """当前可见的峰值浮盈（R）。取已记录 MFE 与本 tick 现价中更有利的一侧。"""
+        pos = self.position
+        R = pos.risk_unit
+        if R <= 0 or pos.entry_price <= 0 or btc_price <= 0:
+            return 0.0
+        mfe = pos.mfe_price if pos.mfe_price > 0 else pos.entry_price
+        if pos.direction == "LONG":
+            peak_px = max(mfe, btc_price)
+            return (peak_px - pos.entry_price) / R
+        peak_px = min(mfe, btc_price)
+        return (pos.entry_price - peak_px) / R
+
     async def _apply_ai_stop(self, decision: TradingDecision, btc_price: float) -> bool:
         """按 AI 给的 stop_r 推进硬止损，返回是否有改动。
 
         stop_r 是相对入场价的 R 坐标（0 = 成本价，正 = 已锁定利润）。
-        两条结构性约束不由 AI 决定：
+        结构性约束不由 AI 决定：
           1. 棘轮：只接受比现有止损更靠有利方向的值，开仓时的硬止损永远不会被放宽；
-          2. 不能越过现价：那等价于「立刻平仓」，想离场应当直接输出 action=平仓。
+          2. 不能越过现价：那等价于「立刻平仓」，想离场应当直接输出 action=平仓；
+          3. 峰值不到 min_breakeven_peak_r 时拒绝 stop_r ≥ 0（不准过早保本 / 锁利）；
+          4. 新止损离现价不足 min_stop_distance_r 时拒绝（不准贴价）。
         只在真正调过 LLM 的那一次生效（缓存命中不重复写）。
         """
         pos = self.position
@@ -930,6 +947,23 @@ class BaseTradingScheduler(ABC):
             logger.warning(
                 f"🛡️ AI stop_r={decision.stop_r:+.2f} (${candidate:,.0f}) 已越过现价 "
                 f"${btc_price:,.0f}，等同立刻平仓；想离场请直接输出 平仓。忽略"
+            )
+            return False
+
+        risk_cfg = self.config.risk
+        peak_r = self._peak_r_now(btc_price)
+        if decision.stop_r >= 0 and peak_r < risk_cfg.min_breakeven_peak_r:
+            logger.info(
+                f"🛡️ AI stop_r={decision.stop_r:+.2f} 要求保本/锁利，但峰值仅 {peak_r:.2f}R "
+                f"< {risk_cfg.min_breakeven_peak_r:.1f}R，忽略"
+            )
+            return False
+
+        dist_r = abs(btc_price - candidate) / R
+        if dist_r < risk_cfg.min_stop_distance_r:
+            logger.info(
+                f"🛡️ AI stop_r={decision.stop_r:+.2f} (${candidate:,.0f}) 距现价仅 {dist_r:.2f}R "
+                f"< {risk_cfg.min_stop_distance_r:.1f}R，贴价忽略"
             )
             return False
 
