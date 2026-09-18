@@ -6,8 +6,8 @@
 
 TradingAdvisor 由调度器每个 tick（默认 5 分钟）调用一次。决策缓存只在
 「同一研判 + 同一仓位 + 未超过 decision_ttl_sec」时命中，因此正常情况下
-每个 tick 都会真正问一次 LLM。持仓期间的保本 / 移动止损 / 落袋不再由代码
-自动执行，而是由这一层用 action（平仓 / 减仓）和 stop_r（推进硬止损）表达。
+每个 tick 都会真正问一次 LLM。持仓期间用 action（平仓 / 减仓）表达离场，
+用 stop_r 提议推进硬止损；过早保本和贴价止损由调度器拒绝。
 """
 
 from __future__ import annotations
@@ -512,11 +512,19 @@ class TradingAdvisor:
     def _format_position_risk(pr: Dict[str, Any]) -> str:
         """把持仓的 R 坐标系摊给模型。
 
-        模型要自己决定何时保本 / 移动止损 / 落袋，就必须能在 R 空间里推理，
-        而不是只拿到美元和绝对价格。峰值（peak_r）必须给：
-        「冲到 1.4R 又跌回 0.3R」和「一路磨到 0.3R」当前浮盈完全一样，
-        但前者是突破失败该收紧、后者是缓慢推进该给空间。
+        模型要在 R 空间里推理离场和止损，而不是只拿到美元和绝对价格。
+        峰值（peak_r）必须给：「冲到 1.4R 又跌回 0.3R」和「一路磨到 0.3R」
+        当前浮盈完全一样，但前者是突破失败该收紧、后者是缓慢推进该给空间。
         """
+        min_be = pr.get("min_breakeven_peak_r")
+        min_dist = pr.get("min_stop_distance_r")
+        clamp_line = "- 要推进止损就输出 stop_r（只能比当前值更靠有利方向，且不能越过现价）"
+        if min_be is not None and min_dist is not None:
+            clamp_line = (
+                f"- 要推进止损就输出 stop_r（只能更靠有利方向、不能越过现价；"
+                f"峰值 < {float(min_be):.1f}R 禁止 stop_r≥0，"
+                f"离现价至少 {float(min_dist):.1f}R）"
+            )
         lines = [
             "## 本仓风险坐标（R 单位）",
             f"- 1R = ${pr['r_unit_usd']:,.0f}（占入场价 {pr['r_unit_pct']:.2f}%）"
@@ -530,7 +538,7 @@ class TradingAdvisor:
             f"（0 = 成本价）"
             + ("，已由你推进过" if pr.get("stop_moved_by_ai") else "，仍在开仓位置"),
             f"- 距强平: {pr['dist_to_liq_r']:.2f}R",
-            "- 要推进止损就输出 stop_r（只能比当前值更靠有利方向，且不能越过现价）",
+            clamp_line,
         ]
 
         atr_now = pr.get("atr_now") or 0
