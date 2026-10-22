@@ -724,7 +724,6 @@ function initEquityChart() {
         priceLineVisible: false,
         lastValueVisible: true,
         priceScaleId: 'left',
-        title: '资金 $',
         priceFormat: { type: 'custom', formatter: v => '$' + v.toFixed(0) },
     });
 
@@ -735,7 +734,6 @@ function initEquityChart() {
         priceLineVisible: false,
         lastValueVisible: true,
         priceScaleId: 'right',
-        title: '收益率 %',
         priceFormat: { type: 'custom', formatter: v => v.toFixed(2) + '%' },
     });
 

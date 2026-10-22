@@ -22,13 +22,16 @@ class BinanceFuturesExecutorAdapter:
         """设置合约配置，leverage: 杠杆倍数"""
         try:
             self.client.exchange.options["defaultType"] = "future"
+            self.client.exchange.load_markets()
             for conf in self.assets.values():
                 symbol = conf["symbol"]
+                # 下单只传 side + reduceOnly，不带 positionSide，必须是单向持仓；
+                # 双向模式下所有订单都会被拒 (-4061)
                 try:
-                    self.client.exchange.set_position_mode(True, symbol)
-                    logger.info(f"✅ {symbol} 设置为双向持仓模式")
+                    self.client.exchange.set_position_mode(False, symbol)
+                    logger.info(f"✅ {symbol} 设置为单向持仓模式")
                 except Exception as e:
-                    logger.warning(f"{symbol} 设置双向持仓模式失败（可能已配置）: {e}")
+                    logger.warning(f"{symbol} 设置单向持仓模式失败（可能已配置）: {e}")
                 try:
                     self.client.exchange.set_leverage(self.default_leverage, symbol)
                     logger.info(f"✅ {symbol} 设置杠杆为 {self.default_leverage}x")
@@ -166,11 +169,20 @@ class BinanceFuturesExecutorAdapter:
                 "_error": True,
             }
 
-    def execute_buy(self, symbol: str, amount_usdt: float, price: float) -> Dict:
+    def _apply_leverage(self, symbol: str, leverage: Optional[int]) -> int:
+        """开仓前把交易所杠杆设为本笔决策值；失败直接抛出，宁可不开也不按错误杠杆开"""
+        if leverage:
+            self.client.exchange.set_leverage(leverage, symbol)
+            self.default_leverage = leverage
+        return self.default_leverage
+
+    def execute_buy(self, symbol: str, amount_usdt: float, price: float,
+                    leverage: Optional[int] = None) -> Dict:
         """开多仓，市价单"""
         try:
+            lev = self._apply_leverage(symbol, leverage)
             amount = self.client.exchange.amount_to_precision(symbol, amount_usdt / price)
-            logger.info(f"🟢 开多仓: {symbol} {amount} @ ${price:.2f} ({self.default_leverage}x)")
+            logger.info(f"🟢 开多仓: {symbol} {amount} @ ${price:.2f} ({lev}x)")
             order = self.client.exchange.create_market_buy_order(symbol, amount, params={"reduceOnly": False})
             return {"success": True, "order": order, "message": f"开多成功: {amount} @ ${price:.2f}"}
         except Exception as e:
@@ -195,11 +207,13 @@ class BinanceFuturesExecutorAdapter:
             logger.error(f"平多失败: {e}")
             return {"success": False, "order": None, "message": f"平多失败: {e}"}
 
-    def execute_short(self, symbol: str, amount_usdt: float, price: float) -> Dict:
+    def execute_short(self, symbol: str, amount_usdt: float, price: float,
+                      leverage: Optional[int] = None) -> Dict:
         """开空仓，市价单"""
         try:
+            lev = self._apply_leverage(symbol, leverage)
             amount = self.client.exchange.amount_to_precision(symbol, amount_usdt / price)
-            logger.info(f"🟠 开空仓: {symbol} {amount} @ ${price:.2f} ({self.default_leverage}x)")
+            logger.info(f"🟠 开空仓: {symbol} {amount} @ ${price:.2f} ({lev}x)")
             order = self.client.exchange.create_market_sell_order(symbol, amount, params={"reduceOnly": False})
             return {"success": True, "order": order, "message": f"开空成功: {amount} @ ${price:.2f}"}
         except Exception as e:
@@ -272,43 +286,6 @@ class BinanceFuturesExecutorAdapter:
                 logger.warning(f"挂止损单失败 (第{attempt}次), {delay:.0f}s 后重试: {e}")
                 time.sleep(delay)
         logger.error(f"挂止损单失败 (已重试{max_retries}次): {last_err}")
-        return {"success": False, "order": None, "order_id": None, "message": str(last_err)}
-
-    def place_take_profit(self, symbol: str, direction: str,
-                          amount: float, trigger_price: float,
-                          max_retries: int = 3, retry_delay: float = 1.0) -> Dict:
-        """挂止盈单 (TAKE_PROFIT_MARKET)，交易所侧监控触发
-
-        Args:
-            direction: 持仓方向 LONG / SHORT
-            amount: 平仓数量 (BTC)
-            trigger_price: 触发价
-            max_retries: 最大重试次数
-            retry_delay: 重试间隔（秒），每次翻倍
-        """
-        close_side = "sell" if direction == "LONG" else "buy"
-        amount = self.client.exchange.amount_to_precision(symbol, amount)
-        last_err = None
-        for attempt in range(1, max_retries + 1):
-            try:
-                order = self.client.exchange.create_order(
-                    symbol, "TAKE_PROFIT_MARKET", close_side, amount, None,
-                    params={"stopPrice": trigger_price, "reduceOnly": True},
-                )
-                order_id = order.get("id", "")
-                logger.info(
-                    f"📌 挂止盈单: {close_side} {amount} @ trigger ${trigger_price:,.0f}, "
-                    f"order_id={order_id}"
-                )
-                return {"success": True, "order": order, "order_id": order_id}
-            except Exception as e:
-                last_err = e
-                if not self._is_retryable(e) or attempt >= max_retries:
-                    break
-                delay = retry_delay * (2 ** (attempt - 1))
-                logger.warning(f"挂止盈单失败 (第{attempt}次), {delay:.0f}s 后重试: {e}")
-                time.sleep(delay)
-        logger.error(f"挂止盈单失败 (已重试{max_retries}次): {last_err}")
         return {"success": False, "order": None, "order_id": None, "message": str(last_err)}
 
     def cancel_order(self, symbol: str, order_id: str) -> bool:

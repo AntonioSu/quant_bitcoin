@@ -59,8 +59,9 @@ def main():
     parser.add_argument("--live-preset", type=str, default="aggressive", metavar="PRESET",
                         help="真实主网使用的预设 (默认 aggressive)")
     
-    parser.add_argument("--max-capital", type=float, default=500.0,
-                        help="Demo/实盘资金上限 (默认$500)")
+    from server.scheduler import DEFAULT_MAX_CAPITAL
+    parser.add_argument("--max-capital", type=float, default=DEFAULT_MAX_CAPITAL,
+                        help=f"Demo/实盘资金上限 (默认${DEFAULT_MAX_CAPITAL:,.0f})")
     parser.add_argument("--mainnet", action="store_true",
                         help="确认使用真实主网交易 (需要与--live一起使用)")
     
@@ -80,7 +81,7 @@ def main():
     mode_lines = []
     
     if use_sim:
-        mode_lines.append(f"║  📊 模拟盘:   [全部] (conservative/standard/aggressive)       ║")
+        mode_lines.append("║  📊 模拟盘:   [全部] (conservative/standard/aggressive)       ║")
     
     if args.demo:
         mode_lines.append(f"║  🟡 Demo盘:   [{args.demo_preset}] (Binance Demo API, 虚拟资金)      ║")
@@ -89,7 +90,7 @@ def main():
         mode_lines.append(f"║  🔴 真实主网: [{args.live_preset}] (⚠️ Binance Mainnet, 真实资金!)   ║")
     
     if not mode_lines:
-        mode_lines.append(f"║  ⚠️  警告: 所有调度器均已禁用                                 ║")
+        mode_lines.append("║  ⚠️  警告: 所有调度器均已禁用                                 ║")
     
     mode_info = "\n".join(mode_lines)
         

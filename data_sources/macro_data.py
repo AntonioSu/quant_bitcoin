@@ -16,7 +16,7 @@ https://fred.stlouisfed.org/docs/api/fred/
 
 import requests
 from datetime import datetime, timedelta
-from typing import Optional, Dict
+from typing import Dict
 
 from data_sources.base import DataSourceBase, DataPoint
 from utils import logger, retry_request

@@ -22,13 +22,14 @@ from data_sources.macro_data import MacroData
 from data_sources.options_data import OptionsData
 from data_sources.stablecoin_flow import StablecoinFlow
 from data_sources.mvrv_data import MVRVData
-from indicators import ATRCalculator, CVDDivergenceDetector, MACDCalculator, RSICalculator, BollingerCalculator, MACalculator, VolumeCalculator, SupportResistanceCalculator
+from indicators import ATRCalculator, CVDDivergenceDetector, MACDCalculator, RSICalculator, BollingerCalculator, MACalculator, MABreakoutCalculator, VolumeCalculator, SupportResistanceCalculator
 from indicators.atr import ATRResult
 from indicators.cvd_divergence import CVDResult
 from indicators.macd_signal import MACDResult
 from indicators.rsi_signal import RSIResult
 from indicators.bollinger_signal import BollingerResult
 from indicators.ma_signal import MAResult
+from indicators.ma_breakout import MABreakoutResult, DEFAULT_KLINE_LIMIT as MA_BREAKOUT_KLINE_LIMIT
 from indicators.volume_signal import VolumeResult
 from indicators.support_resistance import SupportResistanceResult
 from multi_agent.news_analyzer import NewsAnalyzer
@@ -56,6 +57,8 @@ class MarketData:
     support_resistance: Optional[SupportResistanceResult] = None
     taker: Optional[TakerData] = None
     news: Optional[DataPoint] = None
+    news_status: str = "idle"
+    news_error: Optional[str] = None
     etf_flow: Optional[DataPoint] = None
     open_interest: Optional[DataPoint] = None
     liquidation: Optional[DataPoint] = None
@@ -67,6 +70,8 @@ class MarketData:
     stablecoin: Optional[DataPoint] = None
     mvrv: Optional[DataPoint] = None
     klines_4h: List[List] = field(default_factory=list)
+    klines_1d: List[List] = field(default_factory=list)
+    ma_breakout: Optional[MABreakoutResult] = None
     last_update: Optional[datetime] = None
     position_context: Optional[dict] = None
     
@@ -195,6 +200,8 @@ _volume_calc = VolumeCalculator(
     min_elapsed_min=10.0,       # 前 10 分钟视为 warmup, 返回中性量比 1.0
 )
 _support_resistance_calc = SupportResistanceCalculator(lookback=80, timeframe="4h")
+# 日线均线突破：「标准」模拟盘的机械策略信号源，参数默认取回测最优（MA40 + 1.2× 放量）
+_ma_breakout_calc = MABreakoutCalculator()
 _news_analyzer = NewsAnalyzer()
 _analysis_memory = AnalysisMemory()
 _strategy_summarizer = StrategySummarizer(memory=_analysis_memory)
@@ -312,7 +319,25 @@ def refresh_market_data() -> MarketData:
         )
     except Exception as e:
         logger.warning(f"获取K线数据失败: {e}")
-    
+
+    # 日线（MA突破策略用）。必须 use_cache=False：全局K线缓存不区分周期，
+    # 复用会把 4h 数据当成日线返回。
+    try:
+        market.klines_1d = fetch_klines_sync(
+            symbol="BTCUSDT",
+            interval="1d",
+            limit=MA_BREAKOUT_KLINE_LIMIT,
+            use_cache=False,
+        )
+    except Exception as e:
+        logger.warning(f"获取日线K线失败: {e}")
+
+    if market.klines_1d:
+        try:
+            market.ma_breakout = _ma_breakout_calc.calculate(market.klines_1d)
+        except Exception as e:
+            logger.warning(f"计算MA突破信号失败: {e}")
+
     # 3. 计算技术指标
     if market.klines_4h and len(market.klines_4h) >= 15:
         try:
@@ -390,17 +415,29 @@ async def refresh_market_data_async() -> MarketData:
 
 
 async def refresh_news_data_async() -> None:
-    """刷新新闻多空分析 (独立于市场数据，30分钟一次)"""
+    """刷新新闻多空分析 (独立于市场数据，2 小时一次)"""
     import asyncio
+    market.news_status = "running"
+    market.news_error = None
     try:
-        market.news = await asyncio.to_thread(_news_analyzer.fetch)
+        result = await asyncio.to_thread(_news_analyzer.fetch)
+        if (result.raw or {}).get("error"):
+            raise ValueError(result.raw.get("reasoning", "新闻分析失败"))
+        market.news = result
+        market.news_status = "ok"
         logger.info(f"📰 新闻分析完成: score={market.news.value}")
     except Exception as e:
+        market.news_status = "error"
+        if "403" in str(e) or "401" in str(e):
+            market.news_error = "模型服务拒绝访问，请检查 API Key、接口地址和模型权限后重试"
+        else:
+            market.news_error = "新闻获取或模型分析失败，请稍后点击立即分析重试"
         logger.warning(f"新闻分析失败: {e}")
+        raise
 
 
 async def refresh_ai_analysis_async() -> None:
-    """刷新 AI 综合多空研判 (独立刷新, 默认 15 分钟一次)
+    """刷新 AI 综合多空研判 (独立刷新, 默认 5 分钟一次)
 
     依赖 market 已经被 refresh_market_data 填充过, 否则跳过本轮.
     失败时保留上一次的结果, 不会清空 market.ai_analysis.
@@ -427,23 +464,3 @@ def get_analysis_memory():
 def get_strategy_summarizer():
     """获取全局策略备忘录实例"""
     return _strategy_summarizer
-
-
-def get_sentiment() -> str:
-    """获取市场情绪描述"""
-    if not market.top_trader:
-        return "未知"
-    
-    ratio = market.top_trader.value
-    if ratio > 2.0:
-        return "极度看多（过热）"
-    elif ratio > 1.5:
-        return "看多"
-    elif ratio > 1.0:
-        return "偏多"
-    elif ratio > 0.67:
-        return "偏空"
-    elif ratio > 0.5:
-        return "看空"
-    else:
-        return "极度看空（超跌）"

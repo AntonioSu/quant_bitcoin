@@ -456,7 +456,7 @@ def main():
 
     cvd = CVDOrderFlow(lookback_minutes=60)
 
-    print(f"\n⏳ 采集器已启动，等待数据...\n")
+    print("\n⏳ 采集器已启动，等待数据...\n")
 
     stop_event = threading.Event()
     sig.signal(sig.SIGINT, lambda *_: stop_event.set())
@@ -473,7 +473,7 @@ def main():
         print(f"  连接状态:  {'已连接' if raw['ws_connected'] else '未连接'}")
         print(f"  总成交笔数: {raw['total_trades']:,}")
         print(f"  窗口: {raw['window_minutes']} min")
-        print(f"  ┌─────────────────────────────────────────────")
+        print("  ┌─────────────────────────────────────────────")
         for name in ["retail", "medium", "large"]:
             c = raw[name]
             label = {"retail": "散户(<$10K)", "medium": "中等($10K-$100K)",
@@ -484,14 +484,14 @@ def main():
                 f"(买${c['buy_usd'] / 1e6:.2f}M / 卖${c['sell_usd'] / 1e6:.2f}M)  "
                 f"{c['trade_count']:,}笔"
             )
-        print(f"  └─────────────────────────────────────────────")
+        print("  └─────────────────────────────────────────────")
         print(f"  信号: {cvd.get_signal()}")
 
-    print(f"\n多窗口统计:")
+    print("\n多窗口统计:")
     for label, stats in cvd.fetch_multi_window().items():
         print(f"  [{label}]", stats)
 
-    print(f"\n👋 测试结束")
+    print("\n👋 测试结束")
 
 
 if __name__ == "__main__":

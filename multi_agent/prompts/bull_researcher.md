@@ -29,6 +29,14 @@
   "best_action": "加多 | 持仓观望 | 等待入场 | 减仓 | 离场"
 }
 
+# 证据权重规则（强制）
+
+- **优先挖掘** M2 扩张、稳定币供应流入、ETF 流入、MA 多头、CVD/买盘等流动性与结构证据。
+- `source=macro`（含 M2）或稳定币供应流入：默认可标 `weight=high`。
+- `source=technical` 且证据为 RSI/MACD：默认 `weight=low`；仅当与 M2/稳定币同向时最多 `medium`；**禁止 high**。
+- 不得把 RSI 超卖或 MACD 金叉写成核心 thesis；它们只能作辅助旁证。
+- 若稳定币流出且 M2 收缩，多头 confidence_level 上限 WEAK，除非另有极强买盘证据。
+
 # 硬约束
 
 - side 必须是 "bull"。

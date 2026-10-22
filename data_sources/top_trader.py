@@ -13,7 +13,7 @@
 
 import requests
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import List, Dict
 
 from data_sources.base import DataSourceBase, DataPoint
 from utils import logger, retry_request
@@ -160,7 +160,7 @@ def main():
     print("=" * 50)
     
     data = tt.fetch()
-    print(f"\n当前数据:")
+    print("\n当前数据:")
     print(f"  多空比: {data.value:.2f}")
     print(f"  做多账户: {data.raw['long_account']:.2%}")
     print(f"  做空账户: {data.raw['short_account']:.2%}")

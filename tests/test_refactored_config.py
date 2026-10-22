@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
 """测试重构后的配置加载"""
 
-import sys
-import os
-# tests/ -> quant_bitcoin/
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from server.scheduler import _load_binance_config
-from utils import logger
 
 
 def test_config_loading():
@@ -19,7 +14,7 @@ def test_config_loading():
     # 测试 Demo 配置
     try:
         demo_cfg = _load_binance_config("binance_demo")
-        print(f"\n✅ binance_demo 配置加载成功")
+        print("\n✅ binance_demo 配置加载成功")
         print(f"   有 API Key: {bool(demo_cfg.get('api_key'))}")
         print(f"   有 Demo API Key: {bool(demo_cfg.get('demo_api_key'))}")
         print(f"   有代理配置: {bool(demo_cfg.get('proxy'))}")
@@ -30,7 +25,7 @@ def test_config_loading():
     # 测试主网配置 (预期会回退到 binance)
     try:
         live_cfg = _load_binance_config("binance_mainnet")
-        print(f"\n⚠️  binance_mainnet 配置加载 (可能回退)")
+        print("\n⚠️  binance_mainnet 配置加载 (可能回退)")
         print(f"   有 API Key: {bool(live_cfg.get('api_key'))}")
     except Exception as e:
         print(f"\n⚠️  binance_mainnet 配置不存在 (预期行为): {e}")
@@ -58,7 +53,7 @@ def test_executor_creation():
             leverage=5,
         )
         
-        print(f"\n✅ Demo Trading 执行器创建成功")
+        print("\n✅ Demo Trading 执行器创建成功")
         print(f"   杠杆: {executor.default_leverage}x")
         
         # 测试获取持仓
@@ -98,7 +93,3 @@ def main():
     else:
         print("\n⚠️  部分测试失败，请检查代码")
         return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())

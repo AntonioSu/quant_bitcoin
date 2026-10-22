@@ -12,8 +12,8 @@ https://stablecoins.llama.fi/
 """
 
 import requests
-from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Tuple
+from datetime import datetime
+from typing import Dict, Tuple
 
 from data_sources.base import DataSourceBase, DataPoint
 from utils import logger, retry_request

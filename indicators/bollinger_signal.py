@@ -298,24 +298,6 @@ class BollingerCalculator:
             strength=strength,
         )
 
-    def is_bullish(self, klines: List[List]) -> bool:
-        """是否出现看涨信号 (触下轨 / 突破上轨 / 收窄向上)"""
-        result = self.calculate(klines)
-        return result.signal_type in (
-            BollingerSignalType.TOUCH_LOWER,
-            BollingerSignalType.BREAKOUT_UP,
-            BollingerSignalType.SQUEEZE_BREAKOUT_UP,
-        )
-
-    def is_bearish(self, klines: List[List]) -> bool:
-        """是否出现看跌信号 (触上轨 / 跌破下轨 / 收窄向下)"""
-        result = self.calculate(klines)
-        return result.signal_type in (
-            BollingerSignalType.TOUCH_UPPER,
-            BollingerSignalType.BREAKOUT_DOWN,
-            BollingerSignalType.SQUEEZE_BREAKOUT_DOWN,
-        )
-
     def is_squeeze(self, klines: List[List]) -> bool:
         """当前是否处于收窄状态"""
         result = self.calculate(klines)

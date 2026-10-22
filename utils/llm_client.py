@@ -8,7 +8,7 @@ LLM API 客户端
 import json
 import os
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import requests
 from dotenv import load_dotenv
@@ -16,6 +16,10 @@ from dotenv import load_dotenv
 from utils.log_util import logger
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+
+
+class LLMOutputLimitError(ValueError):
+    """The model exhausted its output budget before completing an answer."""
 
 
 class LLMClient:
@@ -49,7 +53,8 @@ class LLMClient:
         self.extra_body: Dict[str, Any] = dict(extra_body or {})
 
     def _make_request(self, messages: list, temperature: float = 0.6,
-                      extra_body: Optional[Dict[str, Any]] = None) -> Dict:
+                      extra_body: Optional[Dict[str, Any]] = None,
+                      tools: Optional[list] = None) -> Dict:
         headers = {
             'Content-Type': 'application/json',
             'Authorization': f"Bearer {self.key}"
@@ -61,6 +66,10 @@ class LLMClient:
             'temperature': temperature,
             'max_tokens': self.max_tokens,
         }
+        if tools:
+            payload['tools'] = tools
+            payload['tool_choice'] = 'auto'
+
         # 合并默认 extra_body 与本次调用覆写值
         merged_extra = {**self.extra_body, **(extra_body or {})}
         payload.update(merged_extra)
@@ -143,7 +152,98 @@ class LLMClient:
 
         response = self._make_request(messages, extra_body=extra_body)
         self._log_usage(response.get('usage') or {}, tag=usage_tag)
-        return response['choices'][0]['message']['content']
+        choices = response.get('choices') or []
+        if not choices:
+            raise ValueError("模型响应缺少 choices")
+        choice = choices[0]
+        content = (choice.get('message') or {}).get('content')
+        budget = {**self.extra_body, **(extra_body or {})}.get('max_tokens', self.max_tokens)
+        used = (response.get('usage') or {}).get('completion_tokens', 0)
+        if choice.get('finish_reason') == 'length' or (not content and used >= budget):
+            raise LLMOutputLimitError("模型输出达到 token 上限，未返回完整分析")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("模型未返回有效的文本内容")
+        return content
+
+    def chat_with_tools(
+        self,
+        system_prompt: Optional[str],
+        prompt: str,
+        tools: list,
+        dispatch: Callable[[str, Dict[str, Any]], Any],
+        max_rounds: int = 4,
+        extra_body: Optional[Dict[str, Any]] = None,
+        usage_tag: str = "",
+    ) -> str:
+        """带 function calling 的对话，返回模型最终的文本回复。
+
+        Args:
+            tools: OpenAI 格式的 tools 定义
+            dispatch: (工具名, 参数dict) -> 可 JSON 序列化的结果，由调用方执行
+            max_rounds: 工具调用轮数上限，防止模型无限循环调用
+
+        工具执行失败不抛出，而是把错误文本回灌给模型，让它自己纠正或放弃。
+        轮数耗尽时强制再请求一次且不带 tools，逼模型给出最终答案。
+        """
+        messages: list = [
+            {'role': 'system', 'content': system_prompt},
+            {'role': 'user', 'content': prompt},
+        ]
+
+        for round_idx in range(max_rounds):
+            response = self._make_request(
+                messages, extra_body=extra_body, tools=tools,
+            )
+            self._log_usage(response.get('usage') or {}, tag=usage_tag)
+            message = response['choices'][0]['message']
+            tool_calls = message.get('tool_calls') or []
+
+            if not tool_calls:
+                return message.get('content') or ""
+
+            # 必须把带 tool_calls 的 assistant 消息原样回填，否则后续
+            # tool 角色消息没有对应的 call_id，多数厂商会直接报 400。
+            messages.append(message)
+
+            for call in tool_calls:
+                fn = (call.get('function') or {})
+                name = fn.get('name') or ""
+                raw_args = fn.get('arguments') or "{}"
+                try:
+                    args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
+                except json.JSONDecodeError:
+                    args = {}
+                    result: Any = {"error": f"参数不是合法 JSON: {raw_args[:120]}"}
+                else:
+                    try:
+                        result = dispatch(name, args)
+                    except Exception as e:
+                        logger.warning(f"🔧 {usage_tag} 工具 {name} 执行失败: {e}")
+                        result = {"error": f"{type(e).__name__}: {e}"}
+
+                logger.info(
+                    f"🔧 {usage_tag} tool={name} args={json.dumps(args, ensure_ascii=False)}"
+                )
+                messages.append({
+                    'role': 'tool',
+                    'tool_call_id': call.get('id'),
+                    'content': json.dumps(result, ensure_ascii=False),
+                })
+
+        # 轮数用尽：强制收敛。必须显式下指令，否则部分厂商（DeepSeek 系）会
+        # 把工具调用语法当普通文本吐出来（<｜｜DSML｜｜tool_calls>...），
+        # 下游 JSON 解析直接失败。
+        logger.warning(f"🔧 {usage_tag} 工具调用达到 {max_rounds} 轮上限，强制收敛")
+        messages.append({
+            'role': 'user',
+            'content': (
+                "工具调用环节已结束，不要再调用任何工具，也不要输出任何工具调用语法。"
+                "现在基于已有的试算结果，直接输出最终 JSON。"
+            ),
+        })
+        response = self._make_request(messages, extra_body=extra_body)
+        self._log_usage(response.get('usage') or {}, tag=usage_tag)
+        return response['choices'][0]['message'].get('content') or ""
 
 
 if __name__ == '__main__':

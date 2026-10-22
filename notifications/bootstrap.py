@@ -14,8 +14,15 @@ def attach_trade_notifications(app_state) -> bool:
 
     from notifications.feishu_trade import notify_trade_feishu, should_notify_trade
 
+    # 只推送这两套，避免三套模拟盘重复刷屏：
+    # aggressive_sim 看 AI 决策，standard_sim 看 MA 突破机械策略
+    NOTIFY_SCHEDULERS = frozenset({"aggressive_sim", "standard_sim"})
+
     attached = 0
     for scheduler_key, scheduler in app_state.schedulers.items():
+        if scheduler_key not in NOTIFY_SCHEDULERS:
+            continue
+
         async def on_trade(trade, key=scheduler_key):
             if not should_notify_trade(trade):
                 return
@@ -27,5 +34,5 @@ def attach_trade_notifications(app_state) -> bool:
         scheduler.on_trade(on_trade)
         attached += 1
 
-    logger.info("飞书成交通知已挂载 (%d 个调度器)", attached)
+    logger.info("飞书成交通知已挂载 (%d 个调度器: %s)", attached, ", ".join(NOTIFY_SCHEDULERS))
     return True
