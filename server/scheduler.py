@@ -20,6 +20,7 @@ import asyncio
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from core import TradingConfig, ParameterSet, refresh_market_data_async, refresh_news_data_async, refresh_ai_analysis_async
+from core.ma_breakout_strategy import build_default_strategy
 from utils import logger
 from utils.common_utils import seconds_until_next_boundary
 
@@ -52,7 +53,7 @@ class AppState:
     PRESET_NAMES = ["conservative", "standard", "aggressive"]
     MARKET_REFRESH_INTERVAL = 300  # 市场数据刷新间隔 (秒)
     NEWS_REFRESH_INTERVAL = 7200   # 新闻分析刷新间隔 (秒) — 2 小时
-    AI_REFRESH_INTERVAL = 3600     # AI 综合研判刷新间隔 (秒) — 1 小时
+    AI_REFRESH_INTERVAL = 300      # AI 综合研判刷新间隔 (秒) — 5 分钟
 
     def __init__(self):
         self.start_time = datetime.now()
@@ -89,6 +90,8 @@ class AppState:
         # AI 综合研判: 共享锁 (定时 + 手动复用), 上次完成时间戳 (用于手动冷却)
         self.ai_refresh_lock: asyncio.Lock = asyncio.Lock()
         self.ai_last_refresh_ts: float = 0.0
+        self.news_refresh_lock: asyncio.Lock = asyncio.Lock()
+        self.news_last_refresh_ts: float = 0.0
         # 由 server.api 在导入时注入, 研判完成后立刻推送仪表盘
         self.push_dashboard = None
     
@@ -155,17 +158,22 @@ class AppState:
                     if last_ts and (time.time() - last_ts) < min_gap:
                         continue
                 try:
-                    await refresh_news_data_async()
+                    async with self.news_refresh_lock:
+                        await refresh_news_data_async()
+                        self.news_last_refresh_ts = time.time()
                     last_ts = time.time()
                     await self.notify_frontend()
                 except Exception as e:
                     logger.error(f"刷新新闻分析失败: {e}")
+                    # Record failed attempts too, avoiding a tight startup retry loop.
+                    last_ts = time.time()
+                    await self.notify_frontend()
 
         async def ai_loop():
             while True:
                 delay = seconds_until_next_boundary(self.AI_REFRESH_INTERVAL)
                 next_at = datetime.fromtimestamp(time.time() + delay).strftime("%H:%M:%S")
-                logger.info(f"🤖 AI 综合研判等待 {delay:.0f}s 至整点 {next_at}")
+                logger.info(f"🤖 AI 综合研判等待 {delay:.0f}s 至下一轮 {next_at}")
                 await asyncio.sleep(delay)
                 try:
                     # 整点刚启动时市场数据可能还没第一轮, 最多再等 30s
@@ -173,6 +181,10 @@ class AppState:
                     if not market.is_ready():
                         logger.info("🤖 整点到达但市场数据未就绪, 30s 后重试")
                         await asyncio.sleep(30)
+                    # 手动任务仍在执行时跳过本轮，避免排队后连续分析。
+                    if self.ai_refresh_lock.locked():
+                        logger.info("🤖 AI 综合研判正在执行，跳过本轮定时刷新")
+                        continue
                     # 与手动刷新共享同一把锁, 避免并发 LLM 调用
                     async with self.ai_refresh_lock:
                         await refresh_ai_analysis_async()
@@ -189,7 +201,7 @@ class AppState:
             f"📰 新闻分析定时刷新已启动 (整点对齐, 间隔 {self.NEWS_REFRESH_INTERVAL}s)"
         )
         logger.info(
-            f"🤖 AI 综合研判定时刷新已启动 (整点对齐, 间隔 {self.AI_REFRESH_INTERVAL}s)"
+            f"🤖 AI 综合研判定时刷新已启动 (5 分钟边界对齐, 间隔 {self.AI_REFRESH_INTERVAL}s)"
         )
     
     def stop_market_refresh(self):
@@ -277,6 +289,10 @@ def _register_broadcast_callbacks(scheduler, scheduler_key: str, app_state) -> N
     scheduler.on_trade(on_trade)
 
 
+# 走机械策略（不经过 AI）的模拟盘预设。其余预设仍用两层 AI 决策。
+MECHANICAL_SIM_PRESET = "standard"
+
+
 def _create_sim_scheduler(preset_name: str, config: TradingConfig, app_state) -> Optional[Any]:
     """创建模拟盘调度器 (纯计算，不调用 API)"""
     scheduler = SimTradingScheduler(
@@ -284,6 +300,11 @@ def _create_sim_scheduler(preset_name: str, config: TradingConfig, app_state) ->
         check_interval=DEFAULT_CHECK_INTERVAL,
         state_file=_state_file(preset_name, "sim"),
     )
+
+    if preset_name == MECHANICAL_SIM_PRESET:
+        scheduler.strategy = build_default_strategy()
+        logger.info(f"📏 [{preset_name}] 使用机械策略: {scheduler.strategy.label}")
+
     scheduler.restore_position_state()
 
     _register_broadcast_callbacks(scheduler, f"{preset_name}_sim", app_state)
@@ -312,7 +333,8 @@ _EXCHANGE_MODES = {
 
 
 def _create_exchange_scheduler(kind: str, preset_name: str, config: TradingConfig,
-                               max_capital: float, app_state) -> Optional[Any]:
+                               max_capital: float, app_state,
+                               equity_source=None) -> Optional[Any]:
     """创建走交易所 API 的调度器 (Demo Trading 或真实主网)
 
     Demo 与实盘的流程完全一致，只有配置来源和风险提示不同，差异集中在 _EXCHANGE_MODES。
@@ -323,6 +345,7 @@ def _create_exchange_scheduler(kind: str, preset_name: str, config: TradingConfi
         config: 交易配置
         max_capital: 资金上限
         app_state: 应用状态
+        equity_source: 跟随其权益作为资金上限的模拟盘（给定时 max_capital 不生效）
 
     Returns:
         LiveTradingScheduler 实例，创建失败返回 None
@@ -355,13 +378,18 @@ def _create_exchange_scheduler(kind: str, preset_name: str, config: TradingConfi
             check_interval=DEFAULT_CHECK_INTERVAL,
             max_capital=max_capital,
             state_file=_state_file(preset_name, kind),
+            equity_source=equity_source,
         )
 
         _register_broadcast_callbacks(scheduler, f"{preset_name}_{kind}", app_state)
 
+        cap_note = (
+            f"资金跟随 {preset_name} 模拟盘权益=${equity_source.equity:,.0f}"
+            if equity_source is not None else f"上限=${max_capital:,.0f}"
+        )
         logger.info(
             f"{mode['icon']} [{preset_name}] {mode['label']}调度器已创建 "
-            f"({mode['capital_note']}, 上限=${max_capital:,.0f})"
+            f"({mode['capital_note']}, {cap_note})"
         )
         return scheduler
 
@@ -409,8 +437,11 @@ def create_integrated_app(use_sim=True, use_demo=False, use_live=False,
             logger.error(f"❌ 无效的 Demo 预设: {demo_preset}，使用默认 aggressive")
             demo_preset = "aggressive"
 
+        # Demo 跟随同预设模拟盘的权益，保证金/杠杆与模拟盘逐笔一致；
+        # 真实主网仍只受 max_capital 约束
         scheduler = _create_exchange_scheduler(
-            "demo", demo_preset, preset_configs[demo_preset], max_capital, app_state
+            "demo", demo_preset, preset_configs[demo_preset], max_capital, app_state,
+            equity_source=app_state.schedulers.get(f"{demo_preset}_sim"),
         )
         if scheduler:
             app_state.schedulers[f"{demo_preset}_demo"] = scheduler

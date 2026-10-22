@@ -30,12 +30,15 @@ class LiveTradingScheduler(BaseTradingScheduler):
         check_interval: int = DEFAULT_CHECK_INTERVAL,
         max_capital: Optional[float] = None,
         state_file: Optional[str] = None,
+        equity_source: Optional[BaseTradingScheduler] = None,
     ):
         if not futures_executor:
             raise ValueError("实盘模式需要 futures_executor")
         super().__init__(config=config, check_interval=check_interval, state_file=state_file)
         self._futures_executor = futures_executor
         self._max_capital = max_capital
+        # 跟随某个模拟盘的权益做资金上限，使两边每笔保证金一致，便于逐笔对照
+        self._equity_source = equity_source
         self._exchange_portfolio = None
         self._last_open_ts: float = 0
         self._consecutive_sync_errors: int = 0
@@ -53,6 +56,8 @@ class LiveTradingScheduler(BaseTradingScheduler):
 
     @property
     def max_capital(self) -> Optional[float]:
+        if self._equity_source is not None:
+            return self._equity_source.equity
         return self._max_capital
 
     def _btc_mark_price(self) -> float:
@@ -156,7 +161,8 @@ class LiveTradingScheduler(BaseTradingScheduler):
 
             total_balance = portfolio.get("total_balance") or portfolio.get("balance", 0)
             if total_balance > 0:
-                self.equity = min(total_balance, self._max_capital) if self._max_capital else total_balance
+                cap = self.max_capital
+                self.equity = min(total_balance, cap) if cap else total_balance
 
             ex_dir = portfolio.get("direction", "NONE")
             ex_size = portfolio.get("position", 0.0)
@@ -270,7 +276,7 @@ class LiveTradingScheduler(BaseTradingScheduler):
             effective_notional = notional or self.OPEN_NOTIONAL
             effective_leverage = leverage or 5
             margin_needed = effective_notional / effective_leverage
-            cap = self._max_capital or float("inf")
+            cap = self.max_capital or float("inf")
             usable = min(free_balance, cap)
             if usable < margin_needed:
                 return (
@@ -281,7 +287,7 @@ class LiveTradingScheduler(BaseTradingScheduler):
         return None
 
     async def _execute_open(self, direction: str, notional: float,
-                            btc_price: float) -> Optional[tuple]:
+                            btc_price: float, leverage: int) -> Optional[tuple]:
         """在交易所建仓，返回 (成交价, 成交数量)"""
         is_long = direction == "LONG"
         execute = (
@@ -289,7 +295,7 @@ class LiveTradingScheduler(BaseTradingScheduler):
             else self._futures_executor.execute_short
         )
         result = await asyncio.to_thread(
-            execute, self.FUTURES_SYMBOL, notional, btc_price
+            execute, self.FUTURES_SYMBOL, notional, btc_price, leverage=leverage,
         )
         if not result.get("success"):
             logger.error(

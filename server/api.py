@@ -27,7 +27,7 @@ from pydantic import BaseModel
 
 import os
 
-from core import market, refresh_market_data_async, refresh_ai_analysis_async
+from core import market, refresh_market_data_async, refresh_ai_analysis_async, refresh_news_data_async
 from binance_utils import fetch_price_sync, fetch_klines_sync
 from core import TradingMode
 from utils import logger
@@ -90,6 +90,8 @@ class IndicatorData(BaseModel):
     resistance_levels: Optional[list] = None
     sr_tolerance: Optional[float] = None
     sr_timeframe: Optional[str] = None
+    news_status: str = "idle"
+    news_error: Optional[str] = None
     news_score: Optional[float] = None
     news_sentiment: Optional[str] = None
     news_reasoning: Optional[str] = None
@@ -439,6 +441,8 @@ def _get_indicators_from_market() -> IndicatorData:
         resistance_levels=resistance_levels,
         sr_tolerance=sr_tolerance,
         sr_timeframe=sr_timeframe,
+        news_status=market.news_status,
+        news_error=market.news_error,
         news_score=news_score,
         news_sentiment=news_sentiment,
         news_reasoning=news_reasoning,
@@ -869,6 +873,35 @@ def _ai_analysis_payload() -> dict:
         "ai_committee": raw.get("committee"),
         "ai_updated_at": market.ai_analysis.timestamp.isoformat(),
     }
+
+
+@app.post("/api/news-analysis/refresh")
+async def refresh_news_analysis_manual():
+    """Fetch fresh news and analyze it, sharing the scheduled refresh lock."""
+    if app_state.news_refresh_lock.locked():
+        return {"status": "running", "message": "新闻分析正在进行中"}
+    elapsed = time.time() - app_state.news_last_refresh_ts
+    if app_state.news_last_refresh_ts > 0 and elapsed < 30:
+        return {"status": "cooldown", "retry_after": int(30 - elapsed) + 1}
+    try:
+        async with app_state.news_refresh_lock:
+            await refresh_news_data_async()
+            app_state.news_last_refresh_ts = time.time()
+            news = market.news
+            raw = news.raw or {}
+            payload = {
+                "news_score": news.value,
+                "news_sentiment": raw.get("sentiment"),
+                "news_reasoning": raw.get("reasoning"),
+                "news_bullish_factors": raw.get("bullish_factors"),
+                "news_bearish_factors": raw.get("bearish_factors"),
+                "news_updated_at": news.timestamp.isoformat(),
+            }
+        await app_state.notify_frontend()
+        return {"status": "ok", **payload}
+    except Exception as e:
+        logger.error(f"手动新闻分析失败: {e}")
+        return {"status": "error", "message": getattr(market, "news_error", None) or "新闻获取或分析失败，请稍后重试"}
 
 
 @app.post("/api/ai-analysis/refresh")

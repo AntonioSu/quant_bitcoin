@@ -129,6 +129,9 @@ class BaseTradingScheduler(ABC):
 
         # 决策缓存的有效期与节拍对齐：每个 tick 都重新问一次 AI
         self.trading_advisor = TradingAdvisor(decision_ttl_sec=check_interval)
+        # 机械策略（如 MABreakoutStrategy）。非 None 时完全取代两层 AI 决策，
+        # 用于让实盘行为可以和回测逐笔对照。
+        self.strategy = None
         from indicators import ATRCalculator
         self._atr_calc_fallback = ATRCalculator(period=14, timeframe="4h")
         self.long_level = PositionLevel(self._atr_calc_fallback, is_long=True)
@@ -296,7 +299,7 @@ class BaseTradingScheduler(ABC):
 
     @abstractmethod
     async def _execute_open(self, direction: str, notional: float,
-                            btc_price: float) -> Optional[tuple]:
+                            btc_price: float, leverage: int) -> Optional[tuple]:
         """真正建仓（Sim 记账 / Live 下单）
 
         Returns:
@@ -374,7 +377,7 @@ class BaseTradingScheduler(ABC):
             logger.error(f"ATR 计算失败: {e}, 使用兜底价位")
             levels = level.fallback(btc_price, leverage=leverage, notional_value=notional)
 
-        fill = await self._execute_open(direction, notional, btc_price)
+        fill = await self._execute_open(direction, notional, btc_price, leverage)
         if not fill:
             return None
         fill_price, fill_amount = fill
@@ -571,24 +574,31 @@ class BaseTradingScheduler(ABC):
                     just_closed = bool(safety_trades)
                     self.trading_advisor.invalidate_cache()
 
-            # ── 2. Trading AI 决策（每 tick 一次；缓存有效期 = 节拍）──
+            # ── 2. 决策（每 tick 一次）──
             signal_raw = market.ai_analysis.raw if market.ai_analysis and market.ai_analysis.raw else {}
             pos_ctx = market.position_context or {}
 
-            decision = self.trading_advisor.decide(
-                signal=signal_raw,
-                position_direction=self.position.direction,
-                position_entry=self.position.entry_price,
-                position_size_btc=self.position.size_btc,
-                position_leverage=self.position.leverage,
-                position_stop_loss=self.position.stop_loss,
-                position_liquidation=self.position.liquidation_price,
-                btc_price=btc_price,
-                equity=self.equity,
-                holding_duration=pos_ctx.get("holding_duration", "未知"),
-                risk_tool=self._build_risk_tool(btc_price, klines),
-                position_risk=self._build_position_risk(btc_price, klines),
-            )
+            # 机械策略用自己的周期做信号和 ATR，不看 Signal AI
+            exec_klines = klines
+            if self.strategy is not None:
+                decision = self.strategy.decide(market.ma_breakout, self.position.direction)
+                if market.klines_1d:
+                    exec_klines = market.klines_1d
+            else:
+                decision = self.trading_advisor.decide(
+                    signal=signal_raw,
+                    position_direction=self.position.direction,
+                    position_entry=self.position.entry_price,
+                    position_size_btc=self.position.size_btc,
+                    position_leverage=self.position.leverage,
+                    position_stop_loss=self.position.stop_loss,
+                    position_liquidation=self.position.liquidation_price,
+                    btc_price=btc_price,
+                    equity=self.equity,
+                    holding_duration=pos_ctx.get("holding_duration", "未知"),
+                    risk_tool=self._build_risk_tool(btc_price, klines),
+                    position_risk=self._build_position_risk(btc_price, klines),
+                )
 
             # AI 可以把硬止损推进到某个 R 位置（只允许朝有利方向），
             # 之后由安全网按新止损价执行。
@@ -597,7 +607,7 @@ class BaseTradingScheduler(ABC):
 
             # ── 3. 执行交易决策 ──
             if not just_closed:
-                trades = await self._execute_trading_decision(decision, btc_price, klines)
+                trades = await self._execute_trading_decision(decision, btc_price, exec_klines)
                 await self._record_trades(trades)
                 if trades:
                     self.save_position_state()
@@ -612,6 +622,10 @@ class BaseTradingScheduler(ABC):
                     "bias": signal_raw.get("bias", "NEUTRAL"),
                     "confidence": signal_raw.get("confidence", 0),
                     "summary": signal_raw.get("summary", ""),
+                } if self.strategy is None else {
+                    "bias": "LONG" if self.position.is_active else "NEUTRAL",
+                    "confidence": 0,
+                    "summary": self.strategy.label,
                 },
                 "trading_decision": {
                     "action": decision.action,
@@ -1139,7 +1153,11 @@ class BaseTradingScheduler(ABC):
         trades = []
 
         if decision.is_open and not self.position.is_active:
-            reject = self._check_range_guard(decision.direction, btc_price, klines)
+            # 追高护栏是针对 AI 入场统计出来的；机械策略的入场条件已经过回测，
+            # 再叠一层未回测的过滤会让实盘和回测对不上，故跳过。
+            reject = None if self.strategy else self._check_range_guard(
+                decision.direction, btc_price, klines,
+            )
             if reject:
                 logger.warning(f"⚠️ 拒绝{decision.action}: {reject}")
                 return trades

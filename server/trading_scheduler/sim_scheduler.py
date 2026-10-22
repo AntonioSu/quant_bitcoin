@@ -34,7 +34,7 @@ class SimTradingScheduler(BaseTradingScheduler):
         self.equity = saved.get("equity", self.DEFAULT_EQUITY)
 
     async def _execute_open(self, direction: str, notional: float,
-                            btc_price: float) -> Optional[tuple]:
+                            btc_price: float, leverage: int) -> Optional[tuple]:
         """模拟成交：按当前标记价全额成交，无滑点无手续费"""
         return btc_price, notional / btc_price
 
