@@ -56,7 +56,7 @@ body {
   padding: 0 28px 96px;
   align-items: start;
 }
-.wrap { max-width: none; margin: 0; padding: 56px 0 0; }
+.wrap { max-width: none; margin: 0; padding: 56px 0 0; counter-reset: doc-sec; }
 
 .toc {
   position: sticky; top: 0; height: 100vh;
@@ -67,7 +67,15 @@ body {
   font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
   text-transform: uppercase; color: var(--text-dim); margin: 0 0 14px;
 }
-.toc nav { display: flex; flex-direction: column; gap: 2px; }
+.toc nav {
+  display: flex; flex-direction: column; gap: 2px;
+  counter-reset: toc-sec;
+}
+.toc-sec {
+  display: flex; flex-direction: column; gap: 2px;
+  counter-increment: toc-sec;
+  counter-reset: toc-sub;
+}
 .toc a {
   display: block; color: var(--text-mid); text-decoration: none;
   font-size: 13px; line-height: 1.4; padding: 5px 10px 5px 12px;
@@ -79,8 +87,18 @@ body {
   background: var(--accent-bg); font-weight: 600;
 }
 .toc .l2 { font-weight: 600; color: var(--text); margin-top: 10px; padding-left: 12px; }
-.toc .l2:first-child { margin-top: 0; }
-.toc .l3 { font-size: 12.5px; padding-left: 22px; color: var(--text-dim); }
+.toc nav > .l2:first-child { margin-top: 0; }
+.toc .l3 {
+  font-size: 12.5px; padding-left: 22px; color: var(--text-dim);
+  counter-increment: toc-sub;
+}
+.toc .l3::before {
+  content: counter(toc-sec) "." counter(toc-sub);
+  display: inline-block; min-width: 2.15em; margin-right: 6px;
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+  font-size: 11px; color: var(--text-dim);
+}
+.toc .l3.is-active::before { color: var(--accent); }
 
 .doc-head { border-bottom: 1px solid var(--border); padding-bottom: 26px; margin-bottom: 12px; }
 .eyebrow {
@@ -94,14 +112,23 @@ h1 {
 .lede { font-size: 16.5px; color: var(--text-mid); margin: 0; }
 .lede strong { color: var(--text); font-weight: 600; }
 
-section { margin: 46px 0 0; }
+section { margin: 46px 0 0; counter-increment: doc-sec; counter-reset: doc-sub; }
 h2 {
   font-size: 21px; margin: 0 0 8px; letter-spacing: -0.012em;
   padding-bottom: 9px; border-bottom: 1px solid var(--border);
   scroll-margin-top: 20px;
 }
 .sub { color: var(--text-dim); font-size: 13.5px; margin: 0 0 20px; }
-h3 { font-size: 15.5px; margin: 28px 0 8px; scroll-margin-top: 20px; }
+h3 {
+  font-size: 15.5px; margin: 28px 0 8px; scroll-margin-top: 20px;
+  counter-increment: doc-sub;
+}
+h3::before {
+  content: counter(doc-sec) "." counter(doc-sub);
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+  font-size: 12.5px; font-weight: 500; color: var(--text-dim);
+  margin-right: 0.45em;
+}
 p { margin: 0 0 14px; }
 p:last-child { margin-bottom: 0; }
 ul { margin: 0 0 14px; padding-left: 20px; }
@@ -272,23 +299,33 @@ footer p { margin: 0 0 6px; }
   <p class="toc-title">目录</p>
   <nav>
     <a class="l2" href="#overview">概述</a>
-    <a class="l2" href="#data">一、数据层</a>
-    <a class="l3" href="#data-inputs">输入分组</a>
-    <a class="l3" href="#data-refresh">刷新节奏</a>
-    <a class="l2" href="#signal">二、信号层</a>
-    <a class="l3" href="#debate-snapshot">多头和空头快照内容</a>
-    <a class="l3" href="#risk-reviewer">风险审查员</a>
-    <a class="l3" href="#manager">决策经理</a>
-    <a class="l3" href="#committee-decision">CommitteeDecision</a>
-    <a class="l2" href="#execution">三、执行层</a>
-    <a class="l3" href="#open-threshold">开仓门槛</a>
-    <a class="l3" href="#sizing">仓位算法</a>
-    <a class="l3" href="#policy-guard">下单前的硬规则</a>
-    <a class="l2" href="#exit">四、出场与止损</a>
-    <a class="l3" href="#risk-job">主要功能</a>
-    <a class="l3" href="#risk-rules">出场策略</a>
-    <a class="l3" href="#safety-net">兜底与硬钳</a>
-    <a class="l2" href="#presets">五、三档预设</a>
+    <div class="toc-sec">
+      <a class="l2" href="#data">一、数据层</a>
+      <a class="l3" href="#data-inputs">输入分组</a>
+      <a class="l3" href="#data-refresh">刷新节奏</a>
+    </div>
+    <div class="toc-sec">
+      <a class="l2" href="#signal">二、信号层</a>
+      <a class="l3" href="#debate-snapshot">多头和空头快照内容</a>
+      <a class="l3" href="#risk-reviewer">风险审查员</a>
+      <a class="l3" href="#manager">决策经理</a>
+      <a class="l3" href="#committee-decision">CommitteeDecision</a>
+    </div>
+    <div class="toc-sec">
+      <a class="l2" href="#execution">三、执行层</a>
+      <a class="l3" href="#open-threshold">开仓门槛</a>
+      <a class="l3" href="#sizing">仓位算法</a>
+      <a class="l3" href="#policy-guard">下单前的硬规则</a>
+    </div>
+    <div class="toc-sec">
+      <a class="l2" href="#exit">四、出场与止损</a>
+      <a class="l3" href="#risk-job">主要功能</a>
+      <a class="l3" href="#risk-rules">出场策略</a>
+      <a class="l3" href="#safety-net">兜底与硬钳</a>
+    </div>
+    <div class="toc-sec">
+      <a class="l2" href="#presets">五、三档预设</a>
+    </div>
   </nav>
 </aside>
 <div class="wrap">
@@ -356,7 +393,6 @@ footer p { margin: 0 0 6px; }
 <!-- ══════════════ 二 · 信号层 ══════════════ -->
 <section id="signal">
   <h2>二、信号层：多空并行论证，再交给审查与拍板</h2>
-  <p class="sub"><code>DecisionCommittee</code> 里多头和空头互不看见对方输出，两边都完成后才进风险审查员，最后才是决策经理。各自有独立 system prompt 和知识库切片。</p>
 
   <div class="committee" aria-label="多头与空头并行，再汇入风险审查员和决策经理">
     <div class="fork-group">
@@ -373,8 +409,6 @@ footer p { margin: 0 0 6px; }
 
   <p>
     多头和空头拿同一份快照，<strong>只构造本方论证，不给结论，也不读对方的稿</strong>。
-    代码里仍是先调多头再调空头，但两边输入相同、互不依赖，逻辑上是并行。
-    风险审查员看完双方论证后产出 <code>entry_ok</code>，并且拥有否决权 —— 决策经理不能把它翻回来。
   </p>
 
   <h3 id="debate-snapshot">多头和空头快照内容</h3>
