@@ -18,6 +18,10 @@ from utils.log_util import logger
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 
+class LLMOutputLimitError(ValueError):
+    """The model exhausted its output budget before completing an answer."""
+
+
 class LLMClient:
     """LLM API客户端"""
 
@@ -148,7 +152,18 @@ class LLMClient:
 
         response = self._make_request(messages, extra_body=extra_body)
         self._log_usage(response.get('usage') or {}, tag=usage_tag)
-        return response['choices'][0]['message']['content']
+        choices = response.get('choices') or []
+        if not choices:
+            raise ValueError("模型响应缺少 choices")
+        choice = choices[0]
+        content = (choice.get('message') or {}).get('content')
+        budget = {**self.extra_body, **(extra_body or {})}.get('max_tokens', self.max_tokens)
+        used = (response.get('usage') or {}).get('completion_tokens', 0)
+        if choice.get('finish_reason') == 'length' or (not content and used >= budget):
+            raise LLMOutputLimitError("模型输出达到 token 上限，未返回完整分析")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("模型未返回有效的文本内容")
+        return content
 
     def chat_with_tools(
         self,
