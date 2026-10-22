@@ -48,3 +48,17 @@ def test_news_gap_from_even_hour_is_two_hours():
     assert nxt.hour == 18
     assert nxt.minute == 0
     assert abs(delay - 7199.9) < 0.01
+
+
+def test_five_minute_analysis_boundary():
+    now = _ts("2026-10-22T08:23:40")
+    delay = seconds_until_next_boundary(300, now)
+    assert delay == 80
+    nxt = datetime.fromtimestamp(now + delay, tz=timezone.utc)
+    assert nxt.minute == 25
+    assert nxt.second == 0
+
+
+def test_five_minute_boundary_advances_to_next_slot():
+    now = _ts("2026-10-22T08:25:00")
+    assert seconds_until_next_boundary(300, now) == 300

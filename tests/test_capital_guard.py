@@ -14,7 +14,9 @@ import time
 
 
 from core import TradingConfig, ParameterSet, TradingMode
+from multi_agent.trading_advisor import TradingDecision
 from server.trading_scheduler.live_scheduler import LiveTradingScheduler, OPEN_COOLDOWN_SEC
+from server.trading_scheduler.sim_scheduler import SimTradingScheduler
 
 
 class FakeExecutor:
@@ -33,8 +35,8 @@ class FakeExecutor:
         self.call_log.append(("get_portfolio", asset_id))
         return dict(self._portfolio)
 
-    def execute_buy(self, symbol, amount_usdt, price):
-        self.call_log.append(("execute_buy", symbol, amount_usdt, price))
+    def execute_buy(self, symbol, amount_usdt, price, leverage=None):
+        self.call_log.append(("execute_buy", symbol, amount_usdt, price, leverage))
         if not self._order_success:
             return {"success": False, "message": "mock fail"}
         return {
@@ -42,8 +44,8 @@ class FakeExecutor:
             "order": {"average": price, "filled": amount_usdt / price},
         }
 
-    def execute_short(self, symbol, amount_usdt, price):
-        self.call_log.append(("execute_short", symbol, amount_usdt, price))
+    def execute_short(self, symbol, amount_usdt, price, leverage=None):
+        self.call_log.append(("execute_short", symbol, amount_usdt, price, leverage))
         if not self._order_success:
             return {"success": False, "message": "mock fail"}
         return {
@@ -208,3 +210,32 @@ def test_7_normal_open_succeeds():
     assert sched.position.direction == "SHORT"
     assert sched._last_open_ts > 0
     print(f"  ✅ 开空成功: {result['amount']:.6f} BTC @ ${result['price']:,.0f}")
+
+
+def test_8_follows_sim_equity_and_leverage():
+    """跟随模拟盘：保证金按模拟盘权益算，杠杆按 AI 决策下发到交易所"""
+    rich_balance = {
+        "position": 0.0, "direction": "NONE", "entry_price": 0.0,
+        "balance": 5000.0, "total_balance": 5000.0, "unrealized_pnl": 0.0,
+        "leverage": 10, "margin": 0.0, "liquidation_price": 0.0, "mark_price": 0.0,
+    }
+    config = TradingConfig.get_preset(ParameterSet.AGGRESSIVE)
+    sim = SimTradingScheduler(config=config, check_interval=60)
+    sim.equity = 1400.0
+    executor = FakeExecutor(portfolio=rich_balance)
+    sched = LiveTradingScheduler(
+        config=config, futures_executor=executor, check_interval=60,
+        max_capital=500.0, equity_source=sim,
+    )
+    asyncio.run(sched._sync_position())
+    assert sched.equity == 1400.0
+
+    decision = TradingDecision(
+        action="开空", position_size_hint="25%", leverage_hint=3, reason="test",
+    )
+    result = asyncio.run(sched._open_short(80000.0, [], decision=decision))
+    assert result is not None
+    call = next(c for c in executor.call_log if c[0] == "execute_short")
+    assert call[2] == 1050.0  # 1400 * 25% * 3
+    assert call[4] == 3
+    assert sched.position.leverage == 3
