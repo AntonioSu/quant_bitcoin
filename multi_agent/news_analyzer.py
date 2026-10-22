@@ -24,7 +24,7 @@ from data_sources.base import DataSourceBase, DataPoint
 from data_sources.crypto_news import CryptoNewsSentiment
 from utils import logger
 from utils.common_utils import ensure_dotenv_loaded, parse_llm_json, read_file_prompt
-from utils.llm_client import LLMClient
+from utils.llm_client import LLMClient, LLMOutputLimitError
 
 ensure_dotenv_loaded()
 
@@ -54,8 +54,8 @@ class NewsAnalyzer(DataSourceBase):
             model_name=model_name or os.getenv("LLM_MODEL_NAME"),
             key=os.getenv("LLM_API_KEY"),
             api_url=os.getenv("LLM_API_URL"),
-            timeout=90,
-            max_tokens=3000,
+            timeout=180,
+            max_tokens=8000,
             # 启用服务端 Prompt Caching：news 的 system_prompt(角色 + 知识库)字节稳定，
             # 每次调用前缀都能命中，输入费用和首字节延迟大幅下降。
             # 同时关闭 thinking，新闻分类打分不需要 CoT。
@@ -78,7 +78,7 @@ class NewsAnalyzer(DataSourceBase):
                 value=0.0,
                 timestamp=datetime.now(),
                 source=self.name,
-                raw={"sentiment": "neutral", "score": 0, "reasoning": "无可用新闻数据"},
+                raw={"error": True, "sentiment": "neutral", "score": 0, "reasoning": "无可用新闻数据"},
             )
 
         news_text = self._format_news(articles)
@@ -145,15 +145,24 @@ class NewsAnalyzer(DataSourceBase):
             if knowledge:
                 sys_prompt = knowledge + "\n\n## 角色指令\n" + sys_prompt
 
-            resp = self.llm.chat(
-                system_prompt=sys_prompt,
-                prompt=prompt,
-                usage_tag="[news]",
-            )
+            try:
+                resp = self.llm.chat(
+                    system_prompt=sys_prompt,
+                    prompt=prompt,
+                    usage_tag="[news]",
+                )
+            except LLMOutputLimitError:
+                logger.warning("📰 新闻输出达到上限，扩大预算重试一次")
+                resp = self.llm.chat(
+                    system_prompt=sys_prompt,
+                    prompt=prompt,
+                    usage_tag="[news-retry]",
+                    extra_body={"max_tokens": 16000},
+                )
             return self._parse_json(resp)
         except Exception as e:
             logger.error(f"📰 LLM 分析失败: {e}")
-            return {"sentiment": "neutral", "score": 0, "reasoning": f"LLM 调用失败: {e}"}
+            return {"error": True, "sentiment": "neutral", "score": 0, "reasoning": f"LLM 调用失败: {e}"}
 
     @staticmethod
     def _parse_json(text: str) -> Dict:
@@ -171,6 +180,7 @@ class NewsAnalyzer(DataSourceBase):
             f"  head: {stripped[:200]}\n  tail: {stripped[-200:]}"
         )
         return {
+            "error": True,
             "sentiment": "neutral",
             "score": 0,
             "reasoning": (
