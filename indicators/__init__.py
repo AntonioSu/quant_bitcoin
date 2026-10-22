@@ -7,6 +7,7 @@ from indicators.macd_signal import MACDCalculator
 from indicators.rsi_signal import RSICalculator
 from indicators.bollinger_signal import BollingerCalculator
 from indicators.ma_signal import MACalculator
+from indicators.ma_breakout import MABreakoutCalculator, MABreakoutResult
 from indicators.volume_signal import VolumeCalculator
 from indicators.support_resistance import SupportResistanceCalculator
 __all__ = [
@@ -17,6 +18,8 @@ __all__ = [
     "RSICalculator",
     "BollingerCalculator",
     "MACalculator",
+    "MABreakoutCalculator",
+    "MABreakoutResult",
     "VolumeCalculator",
     "SupportResistanceCalculator",
     # 以下三类实际定义在 multi_agent/，通过下方 __getattr__ 懒加载，
