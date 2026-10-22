@@ -500,11 +500,35 @@ function updateIndicators(data) {
     const tradesText = data.cvd_of_total_trades != null ? `${data.cvd_of_total_trades.toLocaleString()}笔` : '--';
     cvdOfSignalSubEl.textContent = `${connText} / ${tradesText} / ${data.cvd_of_window_min || '--'}min`;
 
-    // News sentiment
+    updateNewsAnalysis(data);
+}
+
+function updateNewsAnalysis(data) {
     const sentimentEl = document.getElementById('news-sentiment');
     const scoreEl = document.getElementById('news-score');
     const reasoningEl = document.getElementById('news-reasoning');
     const newsMetaEl = document.getElementById('news-updated-at');
+
+    const statusEl = document.getElementById('news-refresh-status');
+    if (data.news_status !== undefined && statusEl) {
+        const messages = {
+            running: '正在获取最新新闻并分析…',
+            error: (data.news_score != null ? '本次刷新失败，以下为上次成功结果。' : '')
+                + (data.news_error || '新闻分析失败，请点击立即分析重试'),
+            idle: '等待首次分析，可点击立即分析',
+        };
+        statusEl.textContent = messages[data.news_status] || '';
+        statusEl.hidden = !statusEl.textContent;
+    }
+    if (data.news_score == null && data.news_status !== undefined) {
+        sentimentEl.textContent = data.news_status === 'error' ? '分析失败'
+            : data.news_status === 'running' ? '分析中…' : '待分析';
+        sentimentEl.className = 'news-sentiment neutral';
+        scoreEl.textContent = '--';
+        scoreEl.className = 'news-score zero';
+        reasoningEl.textContent = data.news_status === 'error'
+            ? '暂无分析结果。修复模型配置后，请点击立即分析。' : '';
+    }
 
     const sentiment = data.news_sentiment;
     const newsScore = data.news_score;

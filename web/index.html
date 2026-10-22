@@ -124,8 +124,13 @@
         <div class="card half-width">
             <div class="card-header">
                 <span class="card-title">新闻多空分析</span>
+                <button id="news-refresh-btn" class="ai-refresh-btn" type="button" title="获取最新新闻并分析" aria-live="polite">
+                    <span class="ai-refresh-icon">&#x21bb;</span>
+                    <span class="ai-refresh-label">立即分析</span>
+                </button>
             </div>
             <div class="news-panel">
+                <div id="news-refresh-status" role="status" hidden></div>
                 <div class="news-score-row">
                     <span class="news-sentiment" id="news-sentiment">--</span>
                     <span class="news-score" id="news-score">0</span>
@@ -476,14 +481,15 @@
 
     <script src="/static/js/theme.js?v=20260623b"></script>
     <script src="/static/js/config.js?v=20260622a"></script>
-    <script src="/static/js/utils.js?v=20260831a"></script>
+    <script src="/static/js/utils.js?v=20261022a"></script>
     <script src="/static/js/charts.js?v=20260907d"></script>
-    <script src="/static/js/indicators.js?v=20260828a"></script>
+    <script src="/static/js/indicators.js?v=20261022c"></script>
     <script src="/static/js/ai_analysis.js?v=20260828a"></script>
     <script src="/static/js/portfolio.js?v=20260520a"></script>
     <script src="/static/js/performance.js?v=20260907b"></script>
     <script src="/static/js/trades.js?v=20260621b"></script>
     <script src="/static/js/data_loader.js?v=20260828c"></script>
-    <script src="/static/js/main.js?v=20260831a"></script>
+    <script src="/static/js/news_analysis.js?v=20261022a"></script>
+    <script src="/static/js/main.js?v=20261020a"></script>
 </body>
 </html>
