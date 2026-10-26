@@ -50,7 +50,7 @@ def test_news_gap_from_even_hour_is_two_hours():
     assert abs(delay - 7199.9) < 0.01
 
 
-def test_five_minute_analysis_boundary():
+def test_five_minute_market_boundary():
     now = _ts("2026-10-22T08:23:40")
     delay = seconds_until_next_boundary(300, now)
     assert delay == 80
@@ -59,6 +59,6 @@ def test_five_minute_analysis_boundary():
     assert nxt.second == 0
 
 
-def test_five_minute_boundary_advances_to_next_slot():
+def test_five_minute_market_boundary_advances_to_next_slot():
     now = _ts("2026-10-22T08:25:00")
     assert seconds_until_next_boundary(300, now) == 300
