@@ -53,7 +53,7 @@ class AppState:
     PRESET_NAMES = ["conservative", "standard", "aggressive"]
     MARKET_REFRESH_INTERVAL = 300  # 市场数据刷新间隔 (秒)
     NEWS_REFRESH_INTERVAL = 7200   # 新闻分析刷新间隔 (秒) — 2 小时
-    AI_REFRESH_INTERVAL = 300      # AI 综合研判刷新间隔 (秒) — 5 分钟
+    AI_REFRESH_INTERVAL = 3600     # AI 综合研判刷新间隔 (秒) — 1 小时
 
     def __init__(self):
         self.start_time = datetime.now()
@@ -201,7 +201,7 @@ class AppState:
             f"📰 新闻分析定时刷新已启动 (整点对齐, 间隔 {self.NEWS_REFRESH_INTERVAL}s)"
         )
         logger.info(
-            f"🤖 AI 综合研判定时刷新已启动 (5 分钟边界对齐, 间隔 {self.AI_REFRESH_INTERVAL}s)"
+            f"🤖 AI 综合研判定时刷新已启动 (整点对齐, 间隔 {self.AI_REFRESH_INTERVAL}s)"
         )
     
     def stop_market_refresh(self):
