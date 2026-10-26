@@ -53,7 +53,7 @@ function formatClockTime(iso) {
 }
 
 // Clock-aligned refresh timers (must match server/scheduler.py)
-const AI_REFRESH_INTERVAL_SEC = 300;
+const AI_REFRESH_INTERVAL_SEC = 3600;
 const NEWS_REFRESH_INTERVAL_SEC = 7200;
 
 function msUntilNextBoundary(intervalSec) {
