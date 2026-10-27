@@ -4,8 +4,7 @@ Binance 客户端 - 简化版
 
 提供:
 1. 交易所连接管理（testnet/demo/mainnet）
-2. 账户余额查询（唯一保留的业务方法）
-3. 暴露 self.exchange 供外部直接操作 ccxt
+2. 暴露 self.exchange 供外部直接操作 ccxt
 """
 
 import os
@@ -57,36 +56,3 @@ class BinanceClient:
         elif testnet:
             self.exchange.set_sandbox_mode(True)
             logger.info(f"📡 Binance Testnet 模式 ({market_type})")
-
-
-    # ═══════════════════════════════════════════════════════════════
-    # 业务方法（仅保留被使用的）
-    # ═══════════════════════════════════════════════════════════════
-
-    def get_all_balances(self) -> dict:
-        """
-        获取钱包中所有非零资产的余额
-        
-        用途: tools/sell_all.py 工具脚本
-        API: GET /api/v3/account
-        
-        返回格式:
-            {
-                "BTC": {"free": 1.5, "used": 0.0, "total": 1.5},
-                "USDT": {"free": 10000.0, "used": 0.0, "total": 10000.0},
-                ...
-            }
-        """
-        raw_balances = self.exchange.fetch_balance()
-        result = {}
-        for currency, amounts in raw_balances.items():
-            if not isinstance(amounts, dict):
-                continue
-            total = amounts.get("total", 0)
-            if total and float(total) > 0:
-                result[currency] = {
-                    "free": float(amounts.get("free", 0)),
-                    "used": float(amounts.get("used", 0)),
-                    "total": float(total),
-                }
-        return result

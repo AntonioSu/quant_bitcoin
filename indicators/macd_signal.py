@@ -195,17 +195,6 @@ class MACDCalculator:
 
         return min(score, 1.0)
 
-    def is_bullish(self, klines: List[List]) -> bool:
-        """是否出现看涨信号 (金叉)"""
-        result = self.calculate(klines)
-        return result.signal_type == MACDSignalType.BULLISH_CROSS
-
-    def is_bearish(self, klines: List[List]) -> bool:
-        """是否出现看跌信号 (死叉)"""
-        result = self.calculate(klines)
-        return result.signal_type == MACDSignalType.BEARISH_CROSS
-
-
 def main():
     """测试"""
     import random

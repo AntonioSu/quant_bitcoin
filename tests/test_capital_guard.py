@@ -9,15 +9,14 @@
 5. 同步异常 + 冷却期 → 拒绝开仓
 """
 
-import sys
-import os
 import asyncio
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core import TradingConfig, ParameterSet, TradingMode
+from multi_agent.trading_advisor import TradingDecision
 from server.trading_scheduler.live_scheduler import LiveTradingScheduler, OPEN_COOLDOWN_SEC
+from server.trading_scheduler.sim_scheduler import SimTradingScheduler
 
 
 class FakeExecutor:
@@ -36,8 +35,8 @@ class FakeExecutor:
         self.call_log.append(("get_portfolio", asset_id))
         return dict(self._portfolio)
 
-    def execute_buy(self, symbol, amount_usdt, price):
-        self.call_log.append(("execute_buy", symbol, amount_usdt, price))
+    def execute_buy(self, symbol, amount_usdt, price, leverage=None):
+        self.call_log.append(("execute_buy", symbol, amount_usdt, price, leverage))
         if not self._order_success:
             return {"success": False, "message": "mock fail"}
         return {
@@ -45,8 +44,8 @@ class FakeExecutor:
             "order": {"average": price, "filled": amount_usdt / price},
         }
 
-    def execute_short(self, symbol, amount_usdt, price):
-        self.call_log.append(("execute_short", symbol, amount_usdt, price))
+    def execute_short(self, symbol, amount_usdt, price, leverage=None):
+        self.call_log.append(("execute_short", symbol, amount_usdt, price, leverage))
         if not self._order_success:
             return {"success": False, "message": "mock fail"}
         return {
@@ -150,7 +149,7 @@ def test_3_capital_guard_blocks_when_balance_low():
 
     short_calls = [c for c in executor.call_log if c[0] == "execute_short"]
     assert len(short_calls) == 0, "Should NOT call exchange"
-    print(f"  ✅ 余额=$5, 保证金需=$10 (最低$50/5x), 拒绝开仓")
+    print("  ✅ 余额=$5, 保证金需=$10 (最低$50/5x), 拒绝开仓")
 
 
 def test_4_capital_guard_blocks_with_max_capital():
@@ -213,36 +212,30 @@ def test_7_normal_open_succeeds():
     print(f"  ✅ 开空成功: {result['amount']:.6f} BTC @ ${result['price']:,.0f}")
 
 
-if __name__ == "__main__":
-    print("=" * 60)
-    print("LiveTradingScheduler 四层防护测试")
-    print("=" * 60)
+def test_8_follows_sim_equity_and_leverage():
+    """跟随模拟盘：保证金按模拟盘权益算，杠杆按 AI 决策下发到交易所"""
+    rich_balance = {
+        "position": 0.0, "direction": "NONE", "entry_price": 0.0,
+        "balance": 5000.0, "total_balance": 5000.0, "unrealized_pnl": 0.0,
+        "leverage": 10, "margin": 0.0, "liquidation_price": 0.0, "mark_price": 0.0,
+    }
+    config = TradingConfig.get_preset(ParameterSet.AGGRESSIVE)
+    sim = SimTradingScheduler(config=config, check_interval=60)
+    sim.equity = 1400.0
+    executor = FakeExecutor(portfolio=rich_balance)
+    sched = LiveTradingScheduler(
+        config=config, futures_executor=executor, check_interval=60,
+        max_capital=500.0, equity_source=sim,
+    )
+    asyncio.run(sched._sync_position())
+    assert sched.equity == 1400.0
 
-    tests = [
-        test_1_api_error_preserves_local_state,
-        test_2_active_position_blocks_open,
-        test_3_capital_guard_blocks_when_balance_low,
-        test_4_capital_guard_blocks_with_max_capital,
-        test_5_sync_error_blocks_open,
-        test_6_cooldown_blocks_rapid_reopen,
-        test_7_normal_open_succeeds,
-    ]
-
-    passed = 0
-    failed = 0
-    for test_fn in tests:
-        try:
-            test_fn()
-            passed += 1
-        except AssertionError as e:
-            print(f"  ❌ FAILED: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ❌ ERROR: {e}")
-            failed += 1
-
-    print(f"\n{'=' * 60}")
-    print(f"结果: {passed} passed, {failed} failed, {len(tests)} total")
-    print(f"{'=' * 60}")
-
-    sys.exit(1 if failed else 0)
+    decision = TradingDecision(
+        action="开空", position_size_hint="25%", leverage_hint=3, reason="test",
+    )
+    result = asyncio.run(sched._open_short(80000.0, [], decision=decision))
+    assert result is not None
+    call = next(c for c in executor.call_log if c[0] == "execute_short")
+    assert call[2] == 1050.0  # 1400 * 25% * 3
+    assert call[4] == 3
+    assert sched.position.leverage == 3

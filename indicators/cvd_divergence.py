@@ -15,7 +15,7 @@ CVD 说明:
 - 价格下跌 < 3%, CVD 下跌 > 20%
 """
 
-from typing import List, Optional, Tuple
+from typing import List
 from dataclasses import dataclass
 from enum import Enum
 
@@ -169,21 +169,6 @@ class CVDDivergenceDetector:
             is_valid_signal=is_valid
         )
     
-    def is_bullish_divergence(self, klines: List[List]) -> bool:
-        """
-        是否存在底背离 (长矛模式触发条件之一)
-        """
-        result = self.detect(klines)
-        return result.divergence == DivergenceType.BULLISH
-    
-    def is_bearish_divergence(self, klines: List[List]) -> bool:
-        """
-        是否存在顶背离 (可作为神盾模式辅助信号)
-        """
-        result = self.detect(klines)
-        return result.divergence == DivergenceType.BEARISH
-
-
 def main():
     """测试"""
     import random

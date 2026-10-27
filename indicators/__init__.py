@@ -1,23 +1,25 @@
 """技术指标模块"""
 
 from indicators.atr import ATRCalculator
-from indicators.profit_loss_level import LongLevel, ShortLevel
+from indicators.profit_loss_level import PositionLevel
 from indicators.cvd_divergence import CVDDivergenceDetector
 from indicators.macd_signal import MACDCalculator
 from indicators.rsi_signal import RSICalculator
 from indicators.bollinger_signal import BollingerCalculator
 from indicators.ma_signal import MACalculator
+from indicators.ma_breakout import MABreakoutCalculator, MABreakoutResult
 from indicators.volume_signal import VolumeCalculator
 from indicators.support_resistance import SupportResistanceCalculator
 __all__ = [
     "ATRCalculator",
-    "LongLevel",
-    "ShortLevel",
+    "PositionLevel",
     "CVDDivergenceDetector",
     "MACDCalculator",
     "RSICalculator",
     "BollingerCalculator",
     "MACalculator",
+    "MABreakoutCalculator",
+    "MABreakoutResult",
     "VolumeCalculator",
     "SupportResistanceCalculator",
     # 以下三类实际定义在 multi_agent/，通过下方 __getattr__ 懒加载，

@@ -5,7 +5,7 @@
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Optional, Any
 from threading import Lock
 from collections import defaultdict
@@ -147,40 +147,6 @@ class HistoryStore:
             
             # 返回最近的 limit 条
             return records[-limit:]
-    
-    def get_latest(self, data_type: str) -> Optional[Dict]:
-        """获取最新一条记录"""
-        with self._lock:
-            records = self._cache.get(data_type, [])
-            return records[-1] if records else None
-    
-    def get_stats(self, data_type: str, days: int = 7) -> Dict:
-        """
-        获取统计信息
-        
-        Args:
-            data_type: 数据类型
-            days: 统计天数
-        """
-        since = datetime.now() - timedelta(days=days)
-        records = self.get_history(data_type, limit=10000, since=since)
-        
-        if not records:
-            return {"count": 0, "min": None, "max": None, "avg": None}
-        
-        values = [r["value"] for r in records if r.get("value") is not None]
-        
-        if not values:
-            return {"count": 0, "min": None, "max": None, "avg": None}
-        
-        return {
-            "count": len(values),
-            "min": min(values),
-            "max": max(values),
-            "avg": sum(values) / len(values),
-            "first_time": records[0]["timestamp"],
-            "last_time": records[-1]["timestamp"],
-        }
     
     def clear(self, data_type: Optional[str] = None):
         """清除历史数据"""

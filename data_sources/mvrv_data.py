@@ -19,7 +19,6 @@ MVRV Z-Score = (MV - RV) / std(MV)
 
 import requests
 from datetime import datetime
-from typing import Optional, Dict
 
 from data_sources.base import DataSourceBase, DataPoint
 from utils import logger, retry_request

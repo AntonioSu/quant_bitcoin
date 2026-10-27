@@ -132,43 +132,6 @@ async def fetch_price(symbol: str = "BTCUSDT") -> float:
         return 0.0
 
 
-async def fetch_24h_ticker(symbol: str = "BTCUSDT") -> dict:
-    """
-    获取24小时价格变动统计
-    
-    Args:
-        symbol: 交易对（默认 BTCUSDT）
-    
-    Returns:
-        包含价格、涨跌幅、成交量等信息的字典
-    """
-    try:
-        data = await async_get(
-            "https://api.binance.com/api/v3/ticker/24hr",
-            params={"symbol": symbol},
-            timeout=5,
-        )
-        return {
-            "price": float(data["lastPrice"]),
-            "price_change": float(data["priceChange"]),
-            "price_change_percent": float(data["priceChangePercent"]),
-            "high": float(data["highPrice"]),
-            "low": float(data["lowPrice"]),
-            "volume": float(data["volume"]),
-            "quote_volume": float(data["quoteVolume"]),
-        }
-    except Exception as e:
-        logger.error(f"获取24h统计失败 ({symbol}): {e}")
-        return {}
-
-
-def clear_cache():
-    """清除K线缓存（用于测试或手动刷新）"""
-    _klines_cache._klines = None
-    _klines_cache._timestamp = 0
-    logger.info("K线缓存已清除")
-
-
 # ══════════════════════════════════════════════════════════════
 # 同步版本（用于 FastAPI 路由等同步上下文）
 # ══════════════════════════════════════════════════════════════
@@ -251,31 +214,3 @@ def fetch_price_sync(symbol: str = "BTCUSDT") -> float:
         return 0.0
 
 
-def fetch_24h_ticker_sync(symbol: str = "BTCUSDT") -> dict:
-    """
-    获取24小时价格变动统计（同步版本，用于 FastAPI 路由）
-    
-    Args:
-        symbol: 交易对（默认 BTCUSDT）
-    
-    Returns:
-        包含价格、涨跌幅、成交量等信息的字典
-    """
-    try:
-        data = sync_get(
-            "https://api.binance.com/api/v3/ticker/24hr",
-            params={"symbol": symbol},
-            timeout=5,
-        )
-        return {
-            "price": float(data["lastPrice"]),
-            "price_change": float(data["priceChange"]),
-            "price_change_percent": float(data["priceChangePercent"]),
-            "high": float(data["highPrice"]),
-            "low": float(data["lowPrice"]),
-            "volume": float(data["volume"]),
-            "quote_volume": float(data["quoteVolume"]),
-        }
-    except Exception as e:
-        logger.error(f"获取24h统计失败 ({symbol}): {e}")
-        return {}
